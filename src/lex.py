@@ -26,6 +26,7 @@ class Token(Enum):
     RSBRACKET = 19
     LCBRACKET = 20
     RCBRACKET = 21
+    NUMBER = 22
 
 class LexError(Exception):
     pass
@@ -125,6 +126,18 @@ class Lexer:
                     except EOFException:
                         break
                 return (Token.SYMBOL, begin, self.__location(), ret_val.getvalue())
+            elif val >= '0' and val <= '9':
+                begin = self.__location()
+                ret_val = io.StringIO()
+                ret_val.write(val)
+                next_val = val
+                while next_val >= '0' and next_val <= '9':
+                    ret_val.write(self.__take())
+                    try:
+                        next_val = self.__peek()
+                    except EOFException:
+                        break
+                return (Token.NUMBER, begin, self.__location(), ret_val.getvalue())
             else:
                 raise LexError
         except EOFException:
@@ -149,7 +162,7 @@ class TestLexer(unittest.TestCase):
         self.assertEqual(lexer.next(), (Token.RPAREN, (1, 2)))
         self.assertEqual(lexer.next(), (Token.EOF, (1, 2)))
 
-    def test_symbols(self):
+    def test_operators(self):
         lexer = Lexer(":,+-*/<>=![]{}")
         self.assertEqual(lexer.next(), (Token.COLON, (1, 1)))
         self.assertEqual(lexer.next(), (Token.COMMA, (1, 2)))
@@ -184,6 +197,11 @@ class TestLexer(unittest.TestCase):
         lexer = Lexer("thing")
         self.assertEqual(lexer.next(), (Token.SYMBOL, (1, 1), (1, 5), 'thing'))
         self.assertEqual(lexer.next(), (Token.EOF, (1, 5)))
+
+    def test_number_terminal(self):
+        lexer = Lexer("100")
+        self.assertEqual(lexer.next(), (Token.NUMBER, (1, 1), (1, 3), '100'))
+        self.assertEqual(lexer.next(), (Token.EOF, (1, 3)))
 
     def test_string(self):
         lexer = Lexer("\"thing\"")
