@@ -10,9 +10,22 @@ class Token(Enum):
     NEWLINE = 3
     LPAREN = 4
     RPAREN = 5
-    COLON = 6
-    SYMBOL = 7
-    STRING = 8
+    SYMBOL = 6
+    STRING = 7
+    COLON = 8
+    COMMA = 9
+    PLUS = 10
+    MINUS = 11
+    ASTERISK = 12
+    SOLIDUS = 13
+    LESS = 14
+    GREATER = 15
+    EQUAL = 16
+    BANG = 17
+    LSBRACKET = 18
+    RSBRACKET = 19
+    LCBRACKET = 20
+    RCBRACKET = 21
 
 class LexError(Exception):
     pass
@@ -70,6 +83,32 @@ class Lexer:
                 return (Token.NEWLINE, self.__location())
             elif val == ':':
                 return (Token.COLON, self.__location())
+            elif val == ',':
+                return (Token.COMMA, self.__location())
+            elif val == '+':
+                return (Token.PLUS, self.__location())
+            elif val == '-':
+                return (Token.MINUS, self.__location())
+            elif val == '*':
+                return (Token.ASTERISK, self.__location())
+            elif val == '/':
+                return (Token.SOLIDUS, self.__location())
+            elif val == '<':
+                return (Token.LESS, self.__location())
+            elif val == '>':
+                return (Token.GREATER, self.__location())
+            elif val == '=':
+                return (Token.EQUAL, self.__location())
+            elif val == '!':
+                return (Token.BANG, self.__location())
+            elif val == '[':
+                return (Token.LSBRACKET, self.__location())
+            elif val == ']':
+                return (Token.RSBRACKET, self.__location())
+            elif val == '{':
+                return (Token.LCBRACKET, self.__location())
+            elif val == '}':
+                return (Token.RCBRACKET, self.__location())
             elif val == '"':
                 begin = self.__location()
                 string = self.__take_string()
@@ -110,10 +149,23 @@ class TestLexer(unittest.TestCase):
         self.assertEqual(lexer.next(), (Token.RPAREN, (1, 2)))
         self.assertEqual(lexer.next(), (Token.EOF, (1, 2)))
 
-    def test_colon(self):
-        lexer = Lexer(":")
+    def test_symbols(self):
+        lexer = Lexer(":,+-*/<>=![]{}")
         self.assertEqual(lexer.next(), (Token.COLON, (1, 1)))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 1)))
+        self.assertEqual(lexer.next(), (Token.COMMA, (1, 2)))
+        self.assertEqual(lexer.next(), (Token.PLUS, (1, 3)))
+        self.assertEqual(lexer.next(), (Token.MINUS, (1, 4)))
+        self.assertEqual(lexer.next(), (Token.ASTERISK, (1, 5)))
+        self.assertEqual(lexer.next(), (Token.SOLIDUS, (1, 6)))
+        self.assertEqual(lexer.next(), (Token.LESS, (1, 7)))
+        self.assertEqual(lexer.next(), (Token.GREATER, (1, 8)))
+        self.assertEqual(lexer.next(), (Token.EQUAL, (1, 9)))
+        self.assertEqual(lexer.next(), (Token.BANG, (1, 10)))
+        self.assertEqual(lexer.next(), (Token.LSBRACKET, (1, 11)))
+        self.assertEqual(lexer.next(), (Token.RSBRACKET, (1, 12)))
+        self.assertEqual(lexer.next(), (Token.LCBRACKET, (1, 13)))
+        self.assertEqual(lexer.next(), (Token.RCBRACKET, (1, 14)))
+        self.assertEqual(lexer.next(), (Token.EOF, (1, 14)))
 
     def test_whitespace(self):
         lexer = Lexer(" \t\n")
