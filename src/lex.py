@@ -5,9 +5,6 @@ from enum import Enum, unique
 @unique
 class Token(Enum):
     EOF = 0
-    SPACE = 1
-    INDENT = 2
-    NEWLINE = 3
     LPAREN = 4
     RPAREN = 5
     SYMBOL = 6
@@ -26,7 +23,7 @@ class Token(Enum):
     RSBRACKET = 19
     LCBRACKET = 20
     RCBRACKET = 21
-    NUMBER = 22
+    INTEGER = 22
 
 class LexError(Exception):
     pass
@@ -38,6 +35,7 @@ class Lexer:
     curr = 0
     line = 1 # 1 indexed, latent increment
     col = 0 # 1 indexed, immediate increment
+    indent = 0 # 0 indexed, immediate increment
 
     def __init__(self, buf: str):
         self.buf = buf
@@ -66,8 +64,14 @@ class Lexer:
             val.write(self.__take())
         self.__take() # throwaway terminal quote
         return val.getvalue()
+    def __take_indents(self):
+        self.indent = 0
+        while self.__peek() == '\t':
+            self.indent += 1
+            self.__take() # throwaway indents
+
     def __location(self) -> (int, int):
-        return (self.line, self.col)
+        return (self.indent, self.line, self.col)
 
     def next(self):
         try:
@@ -77,11 +81,12 @@ class Lexer:
             elif val == ')':
                 return (Token.RPAREN, self.__location())
             elif val == ' ':
-                return (Token.SPACE, self.__location())
+                return self.next()
             elif val == '\t':
-                return (Token.INDENT, self.__location())
+                return self.next()
             elif val == '\n':
-                return (Token.NEWLINE, self.__location())
+                self.__take_indents()
+                return self.next()
             elif val == ':':
                 return (Token.COLON, self.__location())
             elif val == ',':
@@ -137,7 +142,7 @@ class Lexer:
                         next_val = self.__peek()
                     except EOFException:
                         break
-                return (Token.NUMBER, begin, self.__location(), ret_val.getvalue())
+                return (Token.INTEGER, begin, self.__location(), ret_val.getvalue())
             else:
                 raise LexError
         except EOFException:
@@ -158,55 +163,59 @@ class TestLexer(unittest.TestCase):
 
     def test_parens(self):
         lexer = Lexer("()")
-        self.assertEqual(lexer.next(), (Token.LPAREN, (1, 1)))
-        self.assertEqual(lexer.next(), (Token.RPAREN, (1, 2)))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 2)))
+        self.assertEqual(lexer.next(), (Token.LPAREN, (0, 1, 1)))
+        self.assertEqual(lexer.next(), (Token.RPAREN, (0, 1, 2)))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 2)))
 
     def test_operators(self):
         lexer = Lexer(":,+-*/<>=![]{}")
-        self.assertEqual(lexer.next(), (Token.COLON, (1, 1)))
-        self.assertEqual(lexer.next(), (Token.COMMA, (1, 2)))
-        self.assertEqual(lexer.next(), (Token.PLUS, (1, 3)))
-        self.assertEqual(lexer.next(), (Token.MINUS, (1, 4)))
-        self.assertEqual(lexer.next(), (Token.ASTERISK, (1, 5)))
-        self.assertEqual(lexer.next(), (Token.SOLIDUS, (1, 6)))
-        self.assertEqual(lexer.next(), (Token.LESS, (1, 7)))
-        self.assertEqual(lexer.next(), (Token.GREATER, (1, 8)))
-        self.assertEqual(lexer.next(), (Token.EQUAL, (1, 9)))
-        self.assertEqual(lexer.next(), (Token.BANG, (1, 10)))
-        self.assertEqual(lexer.next(), (Token.LSBRACKET, (1, 11)))
-        self.assertEqual(lexer.next(), (Token.RSBRACKET, (1, 12)))
-        self.assertEqual(lexer.next(), (Token.LCBRACKET, (1, 13)))
-        self.assertEqual(lexer.next(), (Token.RCBRACKET, (1, 14)))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 14)))
+        self.assertEqual(lexer.next(), (Token.COLON, (0, 1, 1)))
+        self.assertEqual(lexer.next(), (Token.COMMA, (0, 1, 2)))
+        self.assertEqual(lexer.next(), (Token.PLUS, (0, 1, 3)))
+        self.assertEqual(lexer.next(), (Token.MINUS, (0, 1, 4)))
+        self.assertEqual(lexer.next(), (Token.ASTERISK, (0, 1, 5)))
+        self.assertEqual(lexer.next(), (Token.SOLIDUS, (0, 1, 6)))
+        self.assertEqual(lexer.next(), (Token.LESS, (0, 1, 7)))
+        self.assertEqual(lexer.next(), (Token.GREATER, (0, 1, 8)))
+        self.assertEqual(lexer.next(), (Token.EQUAL, (0, 1, 9)))
+        self.assertEqual(lexer.next(), (Token.BANG, (0, 1, 10)))
+        self.assertEqual(lexer.next(), (Token.LSBRACKET, (0, 1, 11)))
+        self.assertEqual(lexer.next(), (Token.RSBRACKET, (0, 1, 12)))
+        self.assertEqual(lexer.next(), (Token.LCBRACKET, (0, 1, 13)))
+        self.assertEqual(lexer.next(), (Token.RCBRACKET, (0, 1, 14)))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 14)))
 
-    def test_whitespace(self):
+    def test_whitespace_ignored(self):
         lexer = Lexer(" \t\n")
-        self.assertEqual(lexer.next(), (Token.SPACE, (1, 1)))
-        self.assertEqual(lexer.next(), (Token.INDENT, (1, 2)))
-        self.assertEqual(lexer.next(), (Token.NEWLINE, (1, 3)))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 3)))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 3)))
+
+    def test_indents(self):
+        lexer = Lexer("\t+\n\t\t+\n\t\t\t+\n")
+        # TODO: a bit wrong :/
+        self.assertEqual(lexer.next(), (Token.PLUS, (0, 1, 2)))
+        self.assertEqual(lexer.next(), (Token.PLUS, (2, 2, 2)))
+        self.assertEqual(lexer.next(), (Token.PLUS, (3, 3, 3)))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 3, 4)))
 
     def test_symbol(self):
         lexer = Lexer("thing ")
-        self.assertEqual(lexer.next(), (Token.SYMBOL, (1, 1), (1, 5), 'thing'))
-        self.assertEqual(lexer.next(), (Token.SPACE, (1, 6)))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 6)))
+        self.assertEqual(lexer.next(), (Token.SYMBOL, (0, 1, 1), (0, 1, 5), 'thing'))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 6)))
 
     def test_symbol_terminal(self):
         lexer = Lexer("thing")
-        self.assertEqual(lexer.next(), (Token.SYMBOL, (1, 1), (1, 5), 'thing'))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 5)))
+        self.assertEqual(lexer.next(), (Token.SYMBOL, (0, 1, 1), (0, 1, 5), 'thing'))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 5)))
 
-    def test_number_terminal(self):
+    def test_integer_terminal(self):
         lexer = Lexer("100")
-        self.assertEqual(lexer.next(), (Token.NUMBER, (1, 1), (1, 3), '100'))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 3)))
+        self.assertEqual(lexer.next(), (Token.INTEGER, (0, 1, 1), (0, 1, 3), '100'))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 3)))
 
     def test_string(self):
         lexer = Lexer("\"thing\"")
-        self.assertEqual(lexer.next(), (Token.STRING, (1, 1), (1, 7), 'thing'))
-        self.assertEqual(lexer.next(), (Token.EOF, (1, 7)))
+        self.assertEqual(lexer.next(), (Token.STRING, (0, 1, 1), (0, 1, 7), 'thing'))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 7)))
 
 if __name__ == '__main__':
     unittest.main()
