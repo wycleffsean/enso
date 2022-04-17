@@ -135,13 +135,11 @@ class Lexer:
                 begin = self.__location()
                 ret_val = io.StringIO()
                 ret_val.write(val)
-                next_val = val
-                while next_val >= '0' and next_val <= '9':
-                    ret_val.write(self.__take())
-                    try:
-                        next_val = self.__peek()
-                    except EOFException:
-                        break
+                try:
+                    while self.__peek() >= '0' and self.__peek() <= '9':
+                        ret_val.write(self.__take())
+                except EOFException:
+                    pass
                 return (Token.INTEGER, begin, self.__location(), ret_val.getvalue())
             else:
                 raise LexError
@@ -201,6 +199,13 @@ class TestLexer(unittest.TestCase):
         lexer = Lexer("thing ")
         self.assertEqual(lexer.next(), (Token.SYMBOL, (0, 1, 1), (0, 1, 5), 'thing'))
         self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 6)))
+
+    def test_expression(self):
+        lexer = Lexer("1 + 2")
+        self.assertEqual(lexer.next(), (Token.INTEGER, (0, 1, 1), (0, 1, 1), '1'))
+        self.assertEqual(lexer.next(), (Token.PLUS, (0, 1, 3)))
+        self.assertEqual(lexer.next(), (Token.INTEGER, (0, 1, 5), (0, 1, 5), '2'))
+        self.assertEqual(lexer.next(), (Token.EOF, (0, 1, 5)))
 
     def test_symbol_terminal(self):
         lexer = Lexer("thing")
