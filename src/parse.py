@@ -1,5 +1,7 @@
 import unittest
 import lex
+import ast
+from ast import Type
 from enum import Enum, unique
 
 class ParseError(Exception):
@@ -69,29 +71,30 @@ class Parser:
         _ = self.__consume(lex.Token.LPAREN)
         val = self.parse_expression(Precedence.LOWEST)
         _ = self.__consume(lex.Token.RPAREN)
-        return val
+        return ast.Group(val)
 
     def parse_integer(self):
         tok = self.__consume(lex.Token.INTEGER)
-        return int(tok[3])
+        return ast.Literal(Type.INTEGER, int(tok[3]))
 
     def parse_infix_division(self, left):
         tok = self.__consume(lex.Token.SOLIDUS)
         precedence = PRECEDENCE_MAP[tok[0]]
         right = self.parse_expression(precedence)
-        return left / right
+        # TODO: rename
+        return ast.InfixMethod("division", left, right)
 
     def parse_infix_product(self, left):
         tok = self.__consume(lex.Token.ASTERISK)
         precedence = PRECEDENCE_MAP[tok[0]]
         right = self.parse_expression(precedence)
-        return left * right
+        return ast.InfixMethod("product", left, right)
 
     def parse_infix_sum(self, left):
         tok = self.__consume(lex.Token.PLUS)
         precedence = PRECEDENCE_MAP[tok[0]]
         right = self.parse_expression(precedence)
-        return left + right
+        return ast.InfixMethod("sum", left, right)
 
     def parse_expression(self, precedence):
         nud = NULL_DENOTATIONS.get(self.__cur_type())
@@ -119,21 +122,33 @@ class Parser:
         return arr
 
 class TestParser(unittest.TestCase):
+    maxDiff = None
+    def setUp(self):
+        self.one = ast.Literal(Type.INTEGER, 1)
+        self.two = ast.Literal(Type.INTEGER, 2)
+        self.three = ast.Literal(Type.INTEGER, 3)
+
     def test_infix_sum(self):
         val = parse('1 + 2')
-        self.assertEqual(val, [3])
+        self.assertEqual(val, [ast.InfixMethod('sum', self.one, self.two)])
 
     def test_infix_product(self):
         val = parse('1 + 2 * 3')
-        self.assertEqual(val, [7])
+        self.assertEqual(val, [ast.InfixMethod('sum', self.one, ast.InfixMethod('product', self.two, self.three))])
 
     def test_infix_division(self):
         val = parse('2 + 2 / 2')
-        self.assertEqual(val, [3])
+        self.assertEqual(val, [ast.InfixMethod('sum', self.two, ast.InfixMethod('division', self.two, self.two))])
 
     def test_group(self):
         val = parse('(2 + 2) / 2')
-        self.assertEqual(val, [2])
+        self.assertEqual(val, [
+            ast.InfixMethod('division',
+                ast.Group(
+                    ast.InfixMethod('sum', self.two, self.two)
+                ),
+                self.two
+                )])
 
 if __name__ == '__main__':
     unittest.main()
