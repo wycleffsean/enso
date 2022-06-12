@@ -22,7 +22,6 @@ class Precedence(Enum):
     CALL = 6
 
 PRECEDENCE_MAP = {
-    # lex.Token.LPAREN: Precedence.LOWEST,
     lex.Token.PLUS: Precedence.SUM,
     lex.Token.MINUS: Precedence.SUM,
     lex.Token.ASTERISK: Precedence.PRODUCT,
