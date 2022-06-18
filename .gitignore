@@ -1,3 +1,7 @@
 *.pyc
 src/gen/zig-cache
 src/gen/zig-out
+
+# zig only
+zig-cache
+zig-out
