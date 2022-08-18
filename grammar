@@ -1,0 +1,6 @@
+program: expression[]
+
+struct_decl: "{" field_decl ("," field_decl)* ","? "}"
+field_decl: name ":" type_ref
+type_ref: name ("|" type_ref)*  # TODO
+function_decl: "pub"? "fn" (name ".")? name ":"

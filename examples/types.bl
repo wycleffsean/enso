@@ -1,0 +1,16 @@
+const Fizz = Int i where i % 3 == 0
+fn Fizz.string(self):
+  "Fizz"
+
+const Buzz = Int i where i % 5 == 0
+fn Buzz.string(self):
+  "Buzz"
+
+const FizzBuzz = Int i where i % 15 == 0
+fn FizzBuzz.string(self):
+  "Fizz Buzz"
+
+const All = FizzBuzz | Fizz | Buzz | Int
+
+fn main():
+  100 | rangeOf(All) -< puts

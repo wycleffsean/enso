@@ -1,6 +1,4 @@
 const std = @import("std");
-const bufferedReader = std.io.bufferedReader;
-const StreamSource = std.io.StreamSource;
 
 const testing = std.testing;
 const fixedBufferStream = std.io.fixedBufferStream;
@@ -10,12 +8,11 @@ const ColLength = u32;
 
 const TokenTag = enum {
     EOF,
-    LPAREN,
-    RPAREN,
-    SYMBOL,
+    NAME,
     //STRING,
     COLON,
     COMMA,
+    PIPE,
     PLUS,
     MINUS,
     ASTERISK,
@@ -24,6 +21,8 @@ const TokenTag = enum {
     GREATER,
     EQUAL,
     BANG,
+    LPAREN,
+    RPAREN,
     LSBRACKET,
     RSBRACKET,
     LCBRACKET,
@@ -37,9 +36,10 @@ const Token = union(TokenTag) {
     EOF: Location,
     LPAREN: Location,
     RPAREN: Location,
-    SYMBOL: struct { name: []const u8, begin: Location, end: Location },
+    NAME: struct { name: []const u8, loc: Location },
     COLON: Location,
     COMMA: Location,
+    PIPE: Location,
     PLUS: Location,
     MINUS: Location,
     ASTERISK: Location,
@@ -54,14 +54,14 @@ const Token = union(TokenTag) {
     RCBRACKET: Location,
 };
 
-const Lexer = struct {
-    reader: std.io.BufferedReader(4096, StreamSource.Reader).Reader,
+pub const Lexer = struct {
+    buffer: []const u8,
+    index: usize = 0,
     curr: ?u8 = null,
     prior: ?u8 = null,
     col: ColLength = 0,
     line: LineLength = 1, // 1 indexed, latent increment col = 0 # 1 indexed, immediate increment
-    indent: u32 = 0, // 0 indexed, immediate increment
-    internbuf: [16384]u8 = undefined,
+    //indent: u32 = 0, // 0 indexed, immediate increment
     const Self = @This();
 
     const Error = error{
@@ -74,7 +74,11 @@ const Lexer = struct {
             return curr;
         }
 
-        const byte = self.reader.readByte() catch return Error.EOF;
+        if (self.index >= self.buffer.len) {
+            return Error.EOF;
+        }
+
+        const byte = self.buffer[self.index];
         self.curr = byte;
         return byte;
     }
@@ -88,6 +92,7 @@ const Lexer = struct {
 
     fn take(self: *Self) Error!u8 {
         var byte = try self.peek();
+        self.index += 1;
         if (is(self.prior, '\n')) {
             self.line += 1;
             self.col = 0;
@@ -103,13 +108,12 @@ const Lexer = struct {
         return .{ .line = self.line, .col = self.col };
     }
 
-    fn readChars(self: *Self, buf: []const u8) Error!void {
-        var i: u8 = 1;
-        while (i < buf.len) : (i += 1) {
-            const byte = try self.peek();
+    fn readWhileAlpha(self: *Self) Error!void {
+        while (true) {
+            const byte = self.peek() catch return;
             switch (byte) {
                 'A'...'Z', 'a'...'z' => {
-                    buf[i] = try self.take();
+                    _ = try self.take();
                 },
                 else => return,
             }
@@ -126,6 +130,7 @@ const Lexer = struct {
             ')' => return Token{ .RPAREN = self.location() },
             ':' => return Token{ .COLON = self.location() },
             ',' => return Token{ .COMMA = self.location() },
+            '|' => return Token{ .PIPE = self.location() },
             '+' => return Token{ .PLUS = self.location() },
             '-' => return Token{ .MINUS = self.location() },
             '*' => return Token{ .ASTERISK = self.location() },
@@ -139,11 +144,10 @@ const Lexer = struct {
             '{' => return Token{ .LCBRACKET = self.location() },
             '}' => return Token{ .RCBRACKET = self.location() },
             'A'...'Z', 'a'...'z' => {
-                const begin = self.location();
-                var tok = Token{ .SYMBOL = .{ .name = undefined, .begin = begin, .end = self.location() } };
-                tok.SYMBOL.name[0] = byte;
-                try self.readChars(&tok.SYMBOL.name);
-                return tok;
+                const loc = self.location();
+                const start = self.index - 1;
+                try self.readWhileAlpha();
+                return Token{ .NAME = .{ .name = self.buffer[start..self.index], .loc = loc } };
             },
             else => return Error.BadToken,
         }
@@ -159,9 +163,7 @@ const Lexer = struct {
 //}
 
 test "peek" {
-    const buf = "F";
-    var stream = StreamSource{ .const_buffer = fixedBufferStream(buf[0..]) };
-    var lex = Lexer{ .reader = bufferedReader(stream.reader()).reader() };
+    var lex = Lexer{ .buffer = "F" };
     try testing.expectEqual(lex.curr, null);
     try testing.expectEqual(lex.col, 0);
     const x = lex.peek();
@@ -171,9 +173,7 @@ test "peek" {
 }
 
 test "take" {
-    const buf = "F";
-    var stream = StreamSource{ .const_buffer = fixedBufferStream(buf[0..]) };
-    var lex = Lexer{ .reader = bufferedReader(stream.reader()).reader() };
+    var lex = Lexer{ .buffer = "F" };
     try testing.expectEqual(lex.col, 0);
     try testing.expectEqual(lex.take(), 'F');
     try testing.expectEqual(lex.curr, null);
@@ -182,17 +182,13 @@ test "take" {
 }
 
 test "parens" {
-    const buf = "()";
-    var stream = StreamSource{ .const_buffer = fixedBufferStream(buf[0..]) };
-    var lex = Lexer{ .reader = bufferedReader(stream.reader()).reader() };
+    var lex = Lexer{ .buffer = "()" };
     try testing.expectEqual(lex.next(), .{ .LPAREN = .{ .line = 1, .col = 1 } });
     try testing.expectEqual(lex.next(), .{ .RPAREN = .{ .line = 1, .col = 2 } });
 }
 
 test "operators" {
-    const buf = ":,+-*/<>=![]{}";
-    var stream = StreamSource{ .const_buffer = fixedBufferStream(buf[0..]) };
-    var lex = Lexer{ .reader = bufferedReader(stream.reader()).reader() };
+    var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|" };
     try testing.expectEqual(lex.next(), .{ .COLON = .{ .line = 1, .col = 1 } });
     try testing.expectEqual(lex.next(), .{ .COMMA = .{ .line = 1, .col = 2 } });
     try testing.expectEqual(lex.next(), .{ .PLUS = .{ .line = 1, .col = 3 } });
@@ -207,20 +203,18 @@ test "operators" {
     try testing.expectEqual(lex.next(), .{ .RSBRACKET = .{ .line = 1, .col = 12 } });
     try testing.expectEqual(lex.next(), .{ .LCBRACKET = .{ .line = 1, .col = 13 } });
     try testing.expectEqual(lex.next(), .{ .RCBRACKET = .{ .line = 1, .col = 14 } });
+    try testing.expectEqual(lex.next(), .{ .PIPE = .{ .line = 1, .col = 15 } });
 }
 
 test "whitespace ignored" {
-    const buf = " \t\n";
-    var stream = StreamSource{ .const_buffer = fixedBufferStream(buf[0..]) };
-    var lex = Lexer{ .reader = bufferedReader(stream.reader()).reader() };
+    var lex = Lexer{ .buffer = " \t\n" };
     try testing.expectEqual(lex.next(), .{ .EOF = .{ .line = 1, .col = 3 } });
 }
 
-test "symbol" {
-    const buf = "thing ";
-    var stream = StreamSource{ .const_buffer = fixedBufferStream(buf[0..]) };
-    var lex = Lexer{ .reader = bufferedReader(stream.reader()).reader() };
-    // TODO
+test "name" {
+    var lex = Lexer{ .buffer = "thing " };
     var name = "thing";
-    try testing.expectEqual(lex.next(), .{ .SYMBOL = .{ .name = name, .begin = .{ .line = 1, .col = 1 }, .end = .{ .line = 1, .col = 5 } } });
+    const next = try lex.next();
+    try testing.expectEqualSlices(u8, name, next.NAME.name);
+    try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.NAME.loc);
 }
