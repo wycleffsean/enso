@@ -7,12 +7,14 @@ const AstNodeTag = enum {
     INTEGER,
     SUM,
     PRODUCT,
+    DIVISION,
 };
 
 pub const AstNode = union(AstNodeTag) {
     INTEGER: struct { value: usize },
     SUM: struct { left: *AstNode, right: *AstNode },
     PRODUCT: struct { left: *AstNode, right: *AstNode },
+    DIVISION: struct { left: *AstNode, right: *AstNode },
 };
 
 pub const Parser = struct {
@@ -55,6 +57,7 @@ pub const Parser = struct {
             .INTEGER => return .LOWEST,
             .PLUS => return .SUM,
             .ASTERISK => return .PRODUCT,
+            .SOLIDUS => return .PRODUCT,
             else => return Error.UnhandledPrecedence, // TODO: remove
         }
     }
@@ -73,6 +76,7 @@ pub const Parser = struct {
         switch (token) {
             .PLUS => return parseSum,
             .ASTERISK => return parseProduct,
+            .SOLIDUS => return parseDivision,
             else => return Error.BadNullDenotation,
         }
     }
@@ -143,6 +147,19 @@ pub const Parser = struct {
             else => return Error.UnexpectedToken,
         }
     }
+
+    fn parseDivision(self: *Self, left: *AstNode) Error!*AstNode {
+        const product_token = try self.take(); // skip SOLIDUS token
+        switch (product_token) {
+            .SOLIDUS => {
+                var right = try self.parseExpression(.SUM);
+                var sum_node = try self.allocator.create(AstNode);
+                sum_node.* = .{ .DIVISION = .{ .left = left, .right = right } };
+                return sum_node;
+            },
+            else => return Error.UnexpectedToken,
+        }
+    }
 };
 
 test "infix sum" {
@@ -174,4 +191,22 @@ test "infix product" {
     try testing.expectEqual(@intCast(usize, 2), result.SUM.right.PRODUCT.left.INTEGER.value);
     try testing.expect(result.SUM.right.PRODUCT.right.* == AstNode.INTEGER);
     try testing.expectEqual(@intCast(usize, 3), result.SUM.right.PRODUCT.right.INTEGER.value);
+}
+
+test "infix division" {
+    var parser = Parser.init(testing.allocator, "1 + 2 / 3");
+    var result = try parser.parse();
+    defer testing.allocator.destroy(result);
+    defer testing.allocator.destroy(result.SUM.left);
+    defer testing.allocator.destroy(result.SUM.right);
+    defer testing.allocator.destroy(result.SUM.right.DIVISION.left);
+    defer testing.allocator.destroy(result.SUM.right.DIVISION.right);
+    try testing.expect(result.* == AstNode.SUM);
+    try testing.expect(result.SUM.left.* == AstNode.INTEGER);
+    try testing.expectEqual(@intCast(usize, 1), result.SUM.left.INTEGER.value);
+    try testing.expect(result.SUM.right.* == AstNode.DIVISION);
+    try testing.expect(result.SUM.right.DIVISION.left.* == AstNode.INTEGER);
+    try testing.expectEqual(@intCast(usize, 2), result.SUM.right.DIVISION.left.INTEGER.value);
+    try testing.expect(result.SUM.right.DIVISION.right.* == AstNode.INTEGER);
+    try testing.expectEqual(@intCast(usize, 3), result.SUM.right.DIVISION.right.INTEGER.value);
 }
