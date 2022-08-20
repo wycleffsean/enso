@@ -6,11 +6,13 @@ const Token = lex.Token;
 const AstNodeTag = enum {
     INTEGER,
     SUM,
+    PRODUCT,
 };
 
 pub const AstNode = union(AstNodeTag) {
     INTEGER: struct { value: usize },
     SUM: struct { left: *AstNode, right: *AstNode },
+    PRODUCT: struct { left: *AstNode, right: *AstNode },
 };
 
 pub const Parser = struct {
@@ -52,6 +54,7 @@ pub const Parser = struct {
             .EOF => return .LOWEST,
             .INTEGER => return .LOWEST,
             .PLUS => return .SUM,
+            .ASTERISK => return .PRODUCT,
             else => return Error.UnhandledPrecedence, // TODO: remove
         }
     }
@@ -69,6 +72,7 @@ pub const Parser = struct {
     inline fn leftDenotation(token: Token) Error!InfixFn {
         switch (token) {
             .PLUS => return parseSum,
+            .ASTERISK => return parseProduct,
             else => return Error.BadNullDenotation,
         }
     }
@@ -126,6 +130,19 @@ pub const Parser = struct {
             else => return Error.UnexpectedToken,
         }
     }
+
+    fn parseProduct(self: *Self, left: *AstNode) Error!*AstNode {
+        const product_token = try self.take(); // skip ASTERISK token
+        switch (product_token) {
+            .ASTERISK => {
+                var right = try self.parseExpression(.SUM);
+                var sum_node = try self.allocator.create(AstNode);
+                sum_node.* = .{ .PRODUCT = .{ .left = left, .right = right } };
+                return sum_node;
+            },
+            else => return Error.UnexpectedToken,
+        }
+    }
 };
 
 test "infix sum" {
@@ -139,4 +156,22 @@ test "infix sum" {
     try testing.expectEqual(@intCast(usize, 1), result.SUM.left.INTEGER.value);
     try testing.expect(result.SUM.right.* == AstNode.INTEGER);
     try testing.expectEqual(@intCast(usize, 2), result.SUM.right.INTEGER.value);
+}
+
+test "infix product" {
+    var parser = Parser.init(testing.allocator, "1 + 2 * 3");
+    var result = try parser.parse();
+    defer testing.allocator.destroy(result);
+    defer testing.allocator.destroy(result.SUM.left);
+    defer testing.allocator.destroy(result.SUM.right);
+    defer testing.allocator.destroy(result.SUM.right.PRODUCT.left);
+    defer testing.allocator.destroy(result.SUM.right.PRODUCT.right);
+    try testing.expect(result.* == AstNode.SUM);
+    try testing.expect(result.SUM.left.* == AstNode.INTEGER);
+    try testing.expectEqual(@intCast(usize, 1), result.SUM.left.INTEGER.value);
+    try testing.expect(result.SUM.right.* == AstNode.PRODUCT);
+    try testing.expect(result.SUM.right.PRODUCT.left.* == AstNode.INTEGER);
+    try testing.expectEqual(@intCast(usize, 2), result.SUM.right.PRODUCT.left.INTEGER.value);
+    try testing.expect(result.SUM.right.PRODUCT.right.* == AstNode.INTEGER);
+    try testing.expectEqual(@intCast(usize, 3), result.SUM.right.PRODUCT.right.INTEGER.value);
 }
