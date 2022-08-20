@@ -9,6 +9,7 @@ const ColLength = u32;
 const TokenTag = enum {
     EOF,
     NAME,
+    INTEGER,
     //STRING,
     COLON,
     COMMA,
@@ -27,16 +28,16 @@ const TokenTag = enum {
     RSBRACKET,
     LCBRACKET,
     RCBRACKET,
-    //INTEGER,
 };
 
 const Location = struct { line: LineLength, col: ColLength };
 
-const Token = union(TokenTag) {
+pub const Token = union(TokenTag) {
     EOF: Location,
     LPAREN: Location,
     RPAREN: Location,
-    NAME: struct { name: []const u8, loc: Location },
+    NAME: struct { value: []const u8, loc: Location },
+    INTEGER: struct { value: []const u8, loc: Location },
     COLON: Location,
     COMMA: Location,
     PIPE: Location,
@@ -64,7 +65,7 @@ pub const Lexer = struct {
     //indent: u32 = 0, // 0 indexed, immediate increment
     const Self = @This();
 
-    const Error = error{
+    pub const Error = error{
         BadToken,
         EOF,
     };
@@ -120,6 +121,18 @@ pub const Lexer = struct {
         }
     }
 
+    fn readWhileNumeric(self: *Self) Error!void {
+        while (true) {
+            const byte = self.peek() catch return;
+            switch (byte) {
+                '0'...'9' => {
+                    _ = try self.take();
+                },
+                else => return,
+            }
+        }
+    }
+
     pub fn next(self: *Self) Error!Token {
         const byte = self.take() catch return Token{ .EOF = self.location() };
         switch (byte) {
@@ -147,7 +160,13 @@ pub const Lexer = struct {
                 const loc = self.location();
                 const start = self.index - 1;
                 try self.readWhileAlpha();
-                return Token{ .NAME = .{ .name = self.buffer[start..self.index], .loc = loc } };
+                return Token{ .NAME = .{ .value = self.buffer[start..self.index], .loc = loc } };
+            },
+            '1'...'9' => {
+                const loc = self.location();
+                const start = self.index - 1;
+                try self.readWhileNumeric();
+                return Token{ .INTEGER = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
             else => return Error.BadToken,
         }
@@ -213,8 +232,23 @@ test "whitespace ignored" {
 
 test "name" {
     var lex = Lexer{ .buffer = "thing " };
-    var name = "thing";
+    var value = "thing";
     const next = try lex.next();
-    try testing.expectEqualSlices(u8, name, next.NAME.name);
+    try testing.expectEqualSlices(u8, value, next.NAME.value);
     try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.NAME.loc);
+}
+
+test "integer" {
+    {
+        var value = "987654321";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.INTEGER.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.INTEGER.loc);
+    }
+    {
+        var value = "0123";
+        var lex = Lexer{ .buffer = value };
+        try testing.expectError(error.BadToken, lex.next());
+    }
 }
