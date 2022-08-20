@@ -4,22 +4,23 @@ const lex = @import("./lex.zig");
 const Token = lex.Token;
 
 const AstNodeTag = enum {
-    INTEGER,
-    SUM,
-    PRODUCT,
-    DIVISION,
-    GROUP,
+    integer,
+    sum,
+    product,
+    division,
+    group,
 };
 
 pub const AstNode = union(AstNodeTag) {
-    INTEGER: struct { value: usize },
-    SUM: struct { left: *AstNode, right: *AstNode },
-    PRODUCT: struct { left: *AstNode, right: *AstNode },
-    DIVISION: struct { left: *AstNode, right: *AstNode },
-    GROUP: struct { value: *AstNode },
+    integer: struct { value: usize },
+    sum: struct { left: *AstNode, right: *AstNode },
+    product: struct { left: *AstNode, right: *AstNode },
+    division: struct { left: *AstNode, right: *AstNode },
+    group: struct { value: *AstNode },
 };
 
 pub const Parser = struct {
+    arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     lexer: lex.Lexer,
     peeked: ?Token = null,
@@ -34,33 +35,40 @@ pub const Parser = struct {
     } || lex.Lexer.Error ||
         std.fmt.ParseIntError || std.mem.Allocator.Error;
 
-    pub fn init(allocator: std.mem.Allocator, buffer: []const u8) Self {
-        return .{ .allocator = allocator, .lexer = lex.Lexer{ .buffer = buffer } };
+    pub fn init(allocator: ?std.mem.Allocator, buffer: []const u8) Self {
+        var base_allocator = allocator orelse std.heap.page_allocator; // TODO testing.allocator leaves us in an infinite spin loop for some reason
+        base_allocator = std.heap.page_allocator;
+        var arena = std.heap.ArenaAllocator.init(base_allocator);
+        return .{ .allocator = arena.allocator(), .arena = arena, .lexer = lex.Lexer{ .buffer = buffer } };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
     }
 
     pub fn parse(self: *Self) Error!*AstNode {
-        const node = try self.parseExpression(.LOWEST);
+        const node = try self.parseExpression(.lowest);
         return node;
     }
 
     const Precedence = enum {
-        LOWEST,
-        EQUALITY,
-        LESSGREATER,
-        SUM,
-        PRODUCT,
-        PREFIX,
-        CALL,
+        lowest,
+        equality,
+        lessgreater,
+        sum,
+        product,
+        prefix,
+        call,
     };
 
     inline fn precedenceMap(token: Token) Error!Precedence {
         switch (token) {
-            .EOF => return .LOWEST,
-            .INTEGER => return .LOWEST,
-            .PLUS => return .SUM,
-            .ASTERISK => return .PRODUCT,
-            .SOLIDUS => return .PRODUCT,
-            .RPAREN => return .LOWEST,
+            .eof => return .lowest,
+            .integer => return .lowest,
+            .plus => return .sum,
+            .asterisk => return .product,
+            .solidus => return .product,
+            .rparen => return .lowest,
             else => return Error.UnhandledPrecedence, // TODO: remove
         }
     }
@@ -69,8 +77,8 @@ pub const Parser = struct {
 
     inline fn nullDenotation(token: Token) Error!ParseFn {
         switch (token) {
-            .INTEGER => return parseInteger,
-            .LPAREN => return parseGroup,
+            .integer => return parseInteger,
+            .lparen => return parseGroup,
             else => return Error.BadNullDenotation,
         }
     }
@@ -78,9 +86,9 @@ pub const Parser = struct {
     const InfixFn = fn (*Self, *AstNode) Error!*AstNode;
     inline fn leftDenotation(token: Token) Error!InfixFn {
         switch (token) {
-            .PLUS => return parseSum,
-            .ASTERISK => return parseProduct,
-            .SOLIDUS => return parseDivision,
+            .plus => return parsesum,
+            .asterisk => return parseProduct,
+            .solidus => return parseDivision,
             else => return Error.BadNullDenotation,
         }
     }
@@ -102,7 +110,7 @@ pub const Parser = struct {
     }
 
     fn peekPrecedence(self: *Self) Error!Precedence {
-        var peeked = self.peek() catch return .LOWEST;
+        var peeked = self.peek() catch return .lowest;
         return try precedenceMap(peeked);
     }
 
@@ -120,19 +128,19 @@ pub const Parser = struct {
 
     fn parseInteger(self: *Self) Error!*AstNode {
         var int_token = try self.take();
-        const val = try std.fmt.parseInt(usize, int_token.INTEGER.value, 10);
+        const val = try std.fmt.parseInt(usize, int_token.integer.value, 10);
         var int_node = try self.allocator.create(AstNode);
-        int_node.* = .{ .INTEGER = .{ .value = val } };
+        int_node.* = .{ .integer = .{ .value = val } };
         return int_node;
     }
 
-    fn parseSum(self: *Self, left: *AstNode) Error!*AstNode {
-        const sum_token = try self.take(); // skip SUM token
+    fn parsesum(self: *Self, left: *AstNode) Error!*AstNode {
+        const sum_token = try self.take(); // skip sum token
         switch (sum_token) {
-            .PLUS => {
-                var right = try self.parseExpression(.SUM);
+            .plus => {
+                var right = try self.parseExpression(.sum);
                 var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .SUM = .{ .left = left, .right = right } };
+                sum_node.* = .{ .sum = .{ .left = left, .right = right } };
                 return sum_node;
             },
             else => return Error.UnexpectedToken,
@@ -140,12 +148,12 @@ pub const Parser = struct {
     }
 
     fn parseProduct(self: *Self, left: *AstNode) Error!*AstNode {
-        const product_token = try self.take(); // skip ASTERISK token
+        const product_token = try self.take(); // skip asterisk token
         switch (product_token) {
-            .ASTERISK => {
-                var right = try self.parseExpression(.SUM);
+            .asterisk => {
+                var right = try self.parseExpression(.sum);
                 var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .PRODUCT = .{ .left = left, .right = right } };
+                sum_node.* = .{ .product = .{ .left = left, .right = right } };
                 return sum_node;
             },
             else => return Error.UnexpectedToken,
@@ -153,12 +161,12 @@ pub const Parser = struct {
     }
 
     fn parseDivision(self: *Self, left: *AstNode) Error!*AstNode {
-        const product_token = try self.take(); // skip SOLIDUS token
+        const product_token = try self.take(); // skip solidus token
         switch (product_token) {
-            .SOLIDUS => {
-                var right = try self.parseExpression(.SUM);
+            .solidus => {
+                var right = try self.parseExpression(.sum);
                 var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .DIVISION = .{ .left = left, .right = right } };
+                sum_node.* = .{ .division = .{ .left = left, .right = right } };
                 return sum_node;
             },
             else => return Error.UnexpectedToken,
@@ -166,83 +174,68 @@ pub const Parser = struct {
     }
 
     fn parseGroup(self: *Self) Error!*AstNode {
-        const lparen_token = try self.take(); // skip LPAREN token
-        if (lparen_token != .LPAREN) return Error.UnexpectedToken;
-        var right = try self.parseExpression(.LOWEST);
+        const lparen_token = try self.take(); // skip lparen token
+        if (lparen_token != .lparen) return Error.UnexpectedToken;
+        var right = try self.parseExpression(.lowest);
         var group_node = try self.allocator.create(AstNode);
-        group_node.* = .{ .GROUP = .{ .value = right } };
-        const rparen_token = try self.take(); // skip RPAREN token
-        if (rparen_token != .RPAREN) return Error.UnexpectedToken;
+        group_node.* = .{ .group = .{ .value = right } };
+        const rparen_token = try self.take(); // skip rparen token
+        if (rparen_token != .rparen) return Error.UnexpectedToken;
         return group_node;
     }
 };
 
 test "infix sum" {
     var parser = Parser.init(testing.allocator, "1 + 2");
+    defer parser.deinit();
     var result = try parser.parse();
-    defer testing.allocator.destroy(result);
-    defer testing.allocator.destroy(result.SUM.left);
-    defer testing.allocator.destroy(result.SUM.right);
-    try testing.expect(result.* == AstNode.SUM);
-    try testing.expect(result.SUM.left.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 1), result.SUM.left.INTEGER.value);
-    try testing.expect(result.SUM.right.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 2), result.SUM.right.INTEGER.value);
+    try testing.expect(result.* == AstNode.sum);
+    try testing.expect(result.sum.left.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.sum.left.integer.value);
+    try testing.expect(result.sum.right.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 2), result.sum.right.integer.value);
 }
 
 test "infix product" {
     var parser = Parser.init(testing.allocator, "1 + 2 * 3");
+    defer parser.deinit();
     var result = try parser.parse();
-    defer testing.allocator.destroy(result);
-    defer testing.allocator.destroy(result.SUM.left);
-    defer testing.allocator.destroy(result.SUM.right);
-    defer testing.allocator.destroy(result.SUM.right.PRODUCT.left);
-    defer testing.allocator.destroy(result.SUM.right.PRODUCT.right);
-    try testing.expect(result.* == AstNode.SUM);
-    try testing.expect(result.SUM.left.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 1), result.SUM.left.INTEGER.value);
-    try testing.expect(result.SUM.right.* == AstNode.PRODUCT);
-    try testing.expect(result.SUM.right.PRODUCT.left.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 2), result.SUM.right.PRODUCT.left.INTEGER.value);
-    try testing.expect(result.SUM.right.PRODUCT.right.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 3), result.SUM.right.PRODUCT.right.INTEGER.value);
+    try testing.expect(result.* == AstNode.sum);
+    try testing.expect(result.sum.left.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.sum.left.integer.value);
+    try testing.expect(result.sum.right.* == AstNode.product);
+    try testing.expect(result.sum.right.product.left.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 2), result.sum.right.product.left.integer.value);
+    try testing.expect(result.sum.right.product.right.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 3), result.sum.right.product.right.integer.value);
 }
 
 test "infix division" {
     var parser = Parser.init(testing.allocator, "1 + 2 / 3");
+    defer parser.deinit();
     var result = try parser.parse();
-    defer testing.allocator.destroy(result);
-    defer testing.allocator.destroy(result.SUM.left);
-    defer testing.allocator.destroy(result.SUM.right);
-    defer testing.allocator.destroy(result.SUM.right.DIVISION.left);
-    defer testing.allocator.destroy(result.SUM.right.DIVISION.right);
-    try testing.expect(result.* == AstNode.SUM);
-    try testing.expect(result.SUM.left.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 1), result.SUM.left.INTEGER.value);
-    try testing.expect(result.SUM.right.* == AstNode.DIVISION);
-    try testing.expect(result.SUM.right.DIVISION.left.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 2), result.SUM.right.DIVISION.left.INTEGER.value);
-    try testing.expect(result.SUM.right.DIVISION.right.* == AstNode.INTEGER);
-    try testing.expectEqual(@intCast(usize, 3), result.SUM.right.DIVISION.right.INTEGER.value);
+    try testing.expect(result.* == AstNode.sum);
+    try testing.expect(result.sum.left.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.sum.left.integer.value);
+    try testing.expect(result.sum.right.* == AstNode.division);
+    try testing.expect(result.sum.right.division.left.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 2), result.sum.right.division.left.integer.value);
+    try testing.expect(result.sum.right.division.right.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 3), result.sum.right.division.right.integer.value);
 }
 
 test "group" {
     var parser = Parser.init(testing.allocator, "(1 + 2) / 3");
+    defer parser.deinit();
     var result = try parser.parse();
-    defer testing.allocator.destroy(result);
-    defer testing.allocator.destroy(result.DIVISION.left);
-    defer testing.allocator.destroy(result.DIVISION.left.GROUP.value);
-    defer testing.allocator.destroy(result.DIVISION.left.GROUP.value.SUM.left);
-    defer testing.allocator.destroy(result.DIVISION.left.GROUP.value.SUM.right);
-    defer testing.allocator.destroy(result.DIVISION.right);
 
-    try testing.expect(result.* == .DIVISION);
-    try testing.expect(result.DIVISION.left.* == .GROUP);
-    try testing.expect(result.DIVISION.left.GROUP.value.* == .SUM);
-    try testing.expect(result.DIVISION.left.GROUP.value.SUM.left.* == .INTEGER);
-    try testing.expectEqual(@intCast(usize, 1), result.DIVISION.left.GROUP.value.SUM.left.INTEGER.value);
-    try testing.expect(result.DIVISION.left.GROUP.value.SUM.right.* == .INTEGER);
-    try testing.expectEqual(@intCast(usize, 2), result.DIVISION.left.GROUP.value.SUM.right.INTEGER.value);
-    try testing.expect(result.DIVISION.right.* == .INTEGER);
-    try testing.expectEqual(@intCast(usize, 3), result.DIVISION.right.INTEGER.value);
+    try testing.expect(result.* == .division);
+    try testing.expect(result.division.left.* == .group);
+    try testing.expect(result.division.left.group.value.* == .sum);
+    try testing.expect(result.division.left.group.value.sum.left.* == .integer);
+    try testing.expectEqual(@intCast(usize, 1), result.division.left.group.value.sum.left.integer.value);
+    try testing.expect(result.division.left.group.value.sum.right.* == .integer);
+    try testing.expectEqual(@intCast(usize, 2), result.division.left.group.value.sum.right.integer.value);
+    try testing.expect(result.division.right.* == .integer);
+    try testing.expectEqual(@intCast(usize, 3), result.division.right.integer.value);
 }
