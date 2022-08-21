@@ -11,11 +11,13 @@ const AstNodeTag = enum {
     group,
 };
 
+const BinaryOp = struct { lhs: *AstNode, rhs: *AstNode };
+
 pub const AstNode = union(AstNodeTag) {
     integer: struct { value: usize },
-    sum: struct { left: *AstNode, right: *AstNode },
-    product: struct { left: *AstNode, right: *AstNode },
-    division: struct { left: *AstNode, right: *AstNode },
+    sum: BinaryOp,
+    product: BinaryOp,
+    division: BinaryOp,
     group: struct { value: *AstNode },
 };
 
@@ -84,7 +86,7 @@ pub const Parser = struct {
     }
 
     const InfixFn = fn (*Self, *AstNode) Error!*AstNode;
-    inline fn leftDenotation(token: Token) Error!InfixFn {
+    inline fn lhsDenotation(token: Token) Error!InfixFn {
         switch (token) {
             .plus => return parsesum,
             .asterisk => return parseProduct,
@@ -116,14 +118,14 @@ pub const Parser = struct {
 
     fn parseExpression(self: *Self, precedence: Precedence) Error!*AstNode {
         var token = try self.peek();
-        const leftFn = try nullDenotation(token);
-        var left = try leftFn(self);
+        const lhsFn = try nullDenotation(token);
+        var lhs = try lhsFn(self);
         while (@enumToInt(precedence) < @enumToInt(try self.peekPrecedence())) {
             token = try self.peek();
-            const infixFn = try leftDenotation(token);
-            left = try infixFn(self, left);
+            const infixFn = try lhsDenotation(token);
+            lhs = try infixFn(self, lhs);
         }
-        return left;
+        return lhs;
     }
 
     fn parseInteger(self: *Self) Error!*AstNode {
@@ -134,39 +136,39 @@ pub const Parser = struct {
         return int_node;
     }
 
-    fn parsesum(self: *Self, left: *AstNode) Error!*AstNode {
+    fn parsesum(self: *Self, lhs: *AstNode) Error!*AstNode {
         const sum_token = try self.take(); // skip sum token
         switch (sum_token) {
             .plus => {
-                var right = try self.parseExpression(.sum);
+                var rhs = try self.parseExpression(.sum);
                 var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .sum = .{ .left = left, .right = right } };
+                sum_node.* = .{ .sum = .{ .lhs = lhs, .rhs = rhs } };
                 return sum_node;
             },
             else => return Error.UnexpectedToken,
         }
     }
 
-    fn parseProduct(self: *Self, left: *AstNode) Error!*AstNode {
+    fn parseProduct(self: *Self, lhs: *AstNode) Error!*AstNode {
         const product_token = try self.take(); // skip asterisk token
         switch (product_token) {
             .asterisk => {
-                var right = try self.parseExpression(.sum);
+                var rhs = try self.parseExpression(.sum);
                 var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .product = .{ .left = left, .right = right } };
+                sum_node.* = .{ .product = .{ .lhs = lhs, .rhs = rhs } };
                 return sum_node;
             },
             else => return Error.UnexpectedToken,
         }
     }
 
-    fn parseDivision(self: *Self, left: *AstNode) Error!*AstNode {
+    fn parseDivision(self: *Self, lhs: *AstNode) Error!*AstNode {
         const product_token = try self.take(); // skip solidus token
         switch (product_token) {
             .solidus => {
-                var right = try self.parseExpression(.sum);
+                var rhs = try self.parseExpression(.sum);
                 var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .division = .{ .left = left, .right = right } };
+                sum_node.* = .{ .division = .{ .lhs = lhs, .rhs = rhs } };
                 return sum_node;
             },
             else => return Error.UnexpectedToken,
@@ -176,9 +178,9 @@ pub const Parser = struct {
     fn parseGroup(self: *Self) Error!*AstNode {
         const lparen_token = try self.take(); // skip lparen token
         if (lparen_token != .lparen) return Error.UnexpectedToken;
-        var right = try self.parseExpression(.lowest);
+        var rhs = try self.parseExpression(.lowest);
         var group_node = try self.allocator.create(AstNode);
-        group_node.* = .{ .group = .{ .value = right } };
+        group_node.* = .{ .group = .{ .value = rhs } };
         const rparen_token = try self.take(); // skip rparen token
         if (rparen_token != .rparen) return Error.UnexpectedToken;
         return group_node;
@@ -190,10 +192,10 @@ test "infix sum" {
     defer parser.deinit();
     var result = try parser.parse();
     try testing.expect(result.* == AstNode.sum);
-    try testing.expect(result.sum.left.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.sum.left.integer.value);
-    try testing.expect(result.sum.right.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 2), result.sum.right.integer.value);
+    try testing.expect(result.sum.lhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
+    try testing.expect(result.sum.rhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 2), result.sum.rhs.integer.value);
 }
 
 test "infix product" {
@@ -201,13 +203,13 @@ test "infix product" {
     defer parser.deinit();
     var result = try parser.parse();
     try testing.expect(result.* == AstNode.sum);
-    try testing.expect(result.sum.left.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.sum.left.integer.value);
-    try testing.expect(result.sum.right.* == AstNode.product);
-    try testing.expect(result.sum.right.product.left.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 2), result.sum.right.product.left.integer.value);
-    try testing.expect(result.sum.right.product.right.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 3), result.sum.right.product.right.integer.value);
+    try testing.expect(result.sum.lhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
+    try testing.expect(result.sum.rhs.* == AstNode.product);
+    try testing.expect(result.sum.rhs.product.lhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 2), result.sum.rhs.product.lhs.integer.value);
+    try testing.expect(result.sum.rhs.product.rhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 3), result.sum.rhs.product.rhs.integer.value);
 }
 
 test "infix division" {
@@ -215,13 +217,13 @@ test "infix division" {
     defer parser.deinit();
     var result = try parser.parse();
     try testing.expect(result.* == AstNode.sum);
-    try testing.expect(result.sum.left.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.sum.left.integer.value);
-    try testing.expect(result.sum.right.* == AstNode.division);
-    try testing.expect(result.sum.right.division.left.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 2), result.sum.right.division.left.integer.value);
-    try testing.expect(result.sum.right.division.right.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 3), result.sum.right.division.right.integer.value);
+    try testing.expect(result.sum.lhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
+    try testing.expect(result.sum.rhs.* == AstNode.division);
+    try testing.expect(result.sum.rhs.division.lhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 2), result.sum.rhs.division.lhs.integer.value);
+    try testing.expect(result.sum.rhs.division.rhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 3), result.sum.rhs.division.rhs.integer.value);
 }
 
 test "group" {
@@ -230,12 +232,12 @@ test "group" {
     var result = try parser.parse();
 
     try testing.expect(result.* == .division);
-    try testing.expect(result.division.left.* == .group);
-    try testing.expect(result.division.left.group.value.* == .sum);
-    try testing.expect(result.division.left.group.value.sum.left.* == .integer);
-    try testing.expectEqual(@intCast(usize, 1), result.division.left.group.value.sum.left.integer.value);
-    try testing.expect(result.division.left.group.value.sum.right.* == .integer);
-    try testing.expectEqual(@intCast(usize, 2), result.division.left.group.value.sum.right.integer.value);
-    try testing.expect(result.division.right.* == .integer);
-    try testing.expectEqual(@intCast(usize, 3), result.division.right.integer.value);
+    try testing.expect(result.division.lhs.* == .group);
+    try testing.expect(result.division.lhs.group.value.* == .sum);
+    try testing.expect(result.division.lhs.group.value.sum.lhs.* == .integer);
+    try testing.expectEqual(@intCast(usize, 1), result.division.lhs.group.value.sum.lhs.integer.value);
+    try testing.expect(result.division.lhs.group.value.sum.rhs.* == .integer);
+    try testing.expectEqual(@intCast(usize, 2), result.division.lhs.group.value.sum.rhs.integer.value);
+    try testing.expect(result.division.rhs.* == .integer);
+    try testing.expectEqual(@intCast(usize, 3), result.division.rhs.integer.value);
 }
