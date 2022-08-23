@@ -20,7 +20,7 @@ const TokenTag = enum {
     solidus,
     less,
     greater,
-    equal,
+    assign,
     bang,
     lparen,
     rparen,
@@ -28,6 +28,7 @@ const TokenTag = enum {
     rsbracket,
     lcbracket,
     rcbracket,
+    var_kw,
 };
 
 const Location = struct { line: LineLength, col: ColLength };
@@ -47,12 +48,13 @@ pub const Token = union(TokenTag) {
     solidus: Location,
     less: Location,
     greater: Location,
-    equal: Location,
+    assign: Location,
     bang: Location,
     lsbracket: Location,
     rsbracket: Location,
     lcbracket: Location,
     rcbracket: Location,
+    var_kw: Location,
 };
 
 pub const Lexer = struct {
@@ -133,6 +135,32 @@ pub const Lexer = struct {
         }
     }
 
+    fn matchExact(self: *Self, comptime tag: TokenTag, comptime needle: []const u8) ?Token {
+        const start = self.index - 1;
+        const end = start + needle.len;
+        if (end > self.buffer.len) return null;
+        if (end < self.buffer.len)
+            switch (self.buffer[end]) {
+                '\n', '\t', ' ' => {},
+                else => return null,
+            };
+        if (std.mem.eql(u8, needle, self.buffer[start..end])) {
+            comptime var i = needle.len - 1;
+            inline while (i > 0) : (i -= 1) {
+                _ = self.take() catch unreachable;
+            }
+            return @unionInit(Token, @tagName(tag), self.location());
+        }
+        return null;
+    }
+
+    fn readKeyword(self: *Self) ?Token {
+        if (self.matchExact(.var_kw, "var")) |token| {
+            return token;
+        }
+        return null;
+    }
+
     pub fn next(self: *Self) Error!Token {
         const byte = self.take() catch return Token{ .eof = self.location() };
         switch (byte) {
@@ -150,13 +178,16 @@ pub const Lexer = struct {
             '/' => return Token{ .solidus = self.location() },
             '<' => return Token{ .less = self.location() },
             '>' => return Token{ .greater = self.location() },
-            '=' => return Token{ .equal = self.location() },
+            '=' => return Token{ .assign = self.location() },
             '!' => return Token{ .bang = self.location() },
             '[' => return Token{ .lsbracket = self.location() },
             ']' => return Token{ .rsbracket = self.location() },
             '{' => return Token{ .lcbracket = self.location() },
             '}' => return Token{ .rcbracket = self.location() },
             'A'...'Z', 'a'...'z' => {
+                if (self.readKeyword()) |kw| {
+                    return kw;
+                }
                 const loc = self.location();
                 const start = self.index - 1;
                 try self.readWhileAlpha();
@@ -216,7 +247,7 @@ test "operators" {
     try testing.expectEqual(lex.next(), .{ .solidus = .{ .line = 1, .col = 6 } });
     try testing.expectEqual(lex.next(), .{ .less = .{ .line = 1, .col = 7 } });
     try testing.expectEqual(lex.next(), .{ .greater = .{ .line = 1, .col = 8 } });
-    try testing.expectEqual(lex.next(), .{ .equal = .{ .line = 1, .col = 9 } });
+    try testing.expectEqual(lex.next(), .{ .assign = .{ .line = 1, .col = 9 } });
     try testing.expectEqual(lex.next(), .{ .bang = .{ .line = 1, .col = 10 } });
     try testing.expectEqual(lex.next(), .{ .lsbracket = .{ .line = 1, .col = 11 } });
     try testing.expectEqual(lex.next(), .{ .rsbracket = .{ .line = 1, .col = 12 } });
@@ -250,5 +281,30 @@ test "integer" {
         var value = "0123";
         var lex = Lexer{ .buffer = value };
         try testing.expectError(error.BadToken, lex.next());
+    }
+}
+
+// keywords
+
+test "var kw" {
+    {
+        var lex = Lexer{ .buffer = "var" };
+        const next = try lex.next();
+        try testing.expect(next == .var_kw);
+    }
+    {
+        var lex = Lexer{ .buffer = "var " };
+        const next = try lex.next();
+        try testing.expect(next == .var_kw);
+    }
+    {
+        var lex = Lexer{ .buffer = "var\t" };
+        const next = try lex.next();
+        try testing.expect(next == .var_kw);
+    }
+    {
+        var lex = Lexer{ .buffer = "vars" };
+        const next = try lex.next();
+        try testing.expect(next != .var_kw);
     }
 }

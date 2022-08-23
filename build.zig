@@ -12,6 +12,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("blithe", "src/main.zig");
+    //exe.use_stage1 = false;
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
@@ -31,4 +32,9 @@ pub fn build(b: *std.build.Builder) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.step);
+
+    const tests_exe = b.addTestExe("blithe_tests", "src/main.zig");
+    tests_exe.setTarget(target);
+    tests_exe.setBuildMode(mode);
+    tests_exe.install();
 }

@@ -2,6 +2,7 @@ const std = @import("std");
 const lex = @import("./lex.zig");
 const parse = @import("./parse.zig");
 const ir = @import("./ir.zig");
+const gen = @import("./gen.zig");
 const testing = std.testing;
 
 const ReferenceCapabilities = enum {
@@ -22,10 +23,12 @@ pub fn main() anyerror!void {
     std.log.info("All your codebase are belong to us.", .{});
 }
 
-test "basic test" {
-    try std.testing.expectEqual(10, 3 + 7);
-}
-
 test {
-    testing.refAllDecls(@This());
+    // Broke after zig 0.9.1 :(
+    // testing.refAllDecls(@This());
+
+    _ = lex;
+    _ = parse;
+    _ = ir;
+    _ = gen;
 }

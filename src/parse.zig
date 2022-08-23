@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const testing = std.testing;
 const lex = @import("./lex.zig");
 const Token = lex.Token;
@@ -9,6 +10,9 @@ const AstNodeTag = enum {
     product,
     division,
     group,
+    name,
+    variable_declaration,
+    assignment,
 };
 
 const BinaryOp = struct { lhs: *AstNode, rhs: *AstNode };
@@ -19,6 +23,9 @@ pub const AstNode = union(AstNodeTag) {
     product: BinaryOp,
     division: BinaryOp,
     group: struct { value: *AstNode },
+    name: struct { value: []const u8 },
+    variable_declaration: struct { name: []const u8 },
+    assignment: BinaryOp,
 };
 
 pub const Parser = struct {
@@ -32,6 +39,7 @@ pub const Parser = struct {
 
     const Error = error{
         BadNullDenotation,
+        BadLeftDenotation,
         UnhandledPrecedence,
         UnexpectedToken,
     } || lex.Lexer.Error ||
@@ -71,27 +79,32 @@ pub const Parser = struct {
             .asterisk => return .product,
             .solidus => return .product,
             .rparen => return .lowest,
+            .name => return .lowest,
+            .var_kw => return .lowest,
+            .assign => return .equality,
             else => return Error.UnhandledPrecedence, // TODO: remove
         }
     }
 
     const ParseFn = fn (*Self) Error!*AstNode;
-
     inline fn nullDenotation(token: Token) Error!ParseFn {
         switch (token) {
             .integer => return parseInteger,
             .lparen => return parseGroup,
+            .name => return parseName,
+            .var_kw => return parseVariableDeclaration,
             else => return Error.BadNullDenotation,
         }
     }
 
     const InfixFn = fn (*Self, *AstNode) Error!*AstNode;
-    inline fn lhsDenotation(token: Token) Error!InfixFn {
+    inline fn leftDenotation(token: Token) Error!InfixFn {
         switch (token) {
             .plus => return parsesum,
             .asterisk => return parseProduct,
             .solidus => return parseDivision,
-            else => return Error.BadNullDenotation,
+            .assign => return parseAssignment,
+            else => return Error.BadLeftDenotation,
         }
     }
 
@@ -122,7 +135,7 @@ pub const Parser = struct {
         var lhs = try lhsFn(self);
         while (@enumToInt(precedence) < @enumToInt(try self.peekPrecedence())) {
             token = try self.peek();
-            const infixFn = try lhsDenotation(token);
+            const infixFn = try leftDenotation(token);
             lhs = try infixFn(self, lhs);
         }
         return lhs;
@@ -151,41 +164,63 @@ pub const Parser = struct {
 
     fn parseProduct(self: *Self, lhs: *AstNode) Error!*AstNode {
         const product_token = try self.take(); // skip asterisk token
-        switch (product_token) {
-            .asterisk => {
-                var rhs = try self.parseExpression(.sum);
-                var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .product = .{ .lhs = lhs, .rhs = rhs } };
-                return sum_node;
-            },
-            else => return Error.UnexpectedToken,
-        }
+        assert(product_token == .asterisk);
+        var rhs = try self.parseExpression(.product);
+        var sum_node = try self.allocator.create(AstNode);
+        sum_node.* = .{ .product = .{ .lhs = lhs, .rhs = rhs } };
+        return sum_node;
     }
 
     fn parseDivision(self: *Self, lhs: *AstNode) Error!*AstNode {
-        const product_token = try self.take(); // skip solidus token
-        switch (product_token) {
-            .solidus => {
-                var rhs = try self.parseExpression(.sum);
-                var sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .division = .{ .lhs = lhs, .rhs = rhs } };
-                return sum_node;
-            },
-            else => return Error.UnexpectedToken,
-        }
+        const solidus_token = try self.take(); // skip solidus token
+        assert(solidus_token == .solidus);
+        var rhs = try self.parseExpression(.product);
+        var sum_node = try self.allocator.create(AstNode);
+        sum_node.* = .{ .division = .{ .lhs = lhs, .rhs = rhs } };
+        return sum_node;
     }
 
     fn parseGroup(self: *Self) Error!*AstNode {
         const lparen_token = try self.take(); // skip lparen token
-        if (lparen_token != .lparen) return Error.UnexpectedToken;
+        assert(lparen_token == .lparen);
         var rhs = try self.parseExpression(.lowest);
         var group_node = try self.allocator.create(AstNode);
         group_node.* = .{ .group = .{ .value = rhs } };
         const rparen_token = try self.take(); // skip rparen token
+        // we raise here because this could be user error
         if (rparen_token != .rparen) return Error.UnexpectedToken;
         return group_node;
     }
+
+    fn parseName(self: *Self) Error!*AstNode {
+        const name_token = try self.take();
+        assert(name_token == .name);
+        var name_node = try self.allocator.create(AstNode);
+        name_node.* = .{ .name = .{ .value = name_token.name.value } };
+        return name_node;
+    }
+
+    fn parseVariableDeclaration(self: *Self) Error!*AstNode {
+        const var_kw_token = try self.take(); // skip var_kw token
+        assert(var_kw_token == .var_kw);
+        const name_token = try self.take();
+        if (name_token != .name) return Error.UnexpectedToken;
+        var variable_declaration_node = try self.allocator.create(AstNode);
+        variable_declaration_node.* = .{ .variable_declaration = .{ .name = name_token.name.value } };
+        return variable_declaration_node;
+    }
+
+    fn parseAssignment(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const assign_token = try self.take(); // skip assign token
+        assert(assign_token == .assign);
+        var rhs = try self.parseExpression(.equality);
+        var assignment_node = try self.allocator.create(AstNode);
+        assignment_node.* = .{ .assignment = .{ .lhs = lhs, .rhs = rhs } };
+        return assignment_node;
+    }
 };
+
+// Test arithmetic
 
 test "infix sum" {
     var parser = Parser.init(testing.allocator, "1 + 2");
@@ -240,4 +275,30 @@ test "group" {
     try testing.expectEqual(@intCast(usize, 2), result.division.lhs.group.value.sum.rhs.integer.value);
     try testing.expect(result.division.rhs.* == .integer);
     try testing.expectEqual(@intCast(usize, 3), result.division.rhs.integer.value);
+}
+
+// Test Assignment
+
+test "assign" {
+    var parser = Parser.init(testing.allocator, "a = 1");
+    defer parser.deinit();
+    var result = try parser.parse();
+
+    try testing.expect(result.* == AstNode.assignment);
+    try testing.expect(result.assignment.lhs.* == AstNode.name);
+    try testing.expectEqualSlices(u8, "a", result.assignment.lhs.name.value);
+    try testing.expect(result.assignment.rhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.assignment.rhs.integer.value);
+}
+
+test "declare and assign" {
+    var parser = Parser.init(testing.allocator, "var a = 1");
+    defer parser.deinit();
+    var result = try parser.parse();
+
+    try testing.expect(result.* == AstNode.assignment);
+    try testing.expect(result.assignment.lhs.* == AstNode.variable_declaration);
+    try testing.expectEqualSlices(u8, "a", result.assignment.lhs.variable_declaration.name);
+    try testing.expect(result.assignment.rhs.* == AstNode.integer);
+    try testing.expectEqual(@intCast(usize, 1), result.assignment.rhs.integer.value);
 }

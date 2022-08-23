@@ -9,7 +9,7 @@ const InsnType = enum {
     sum,
 };
 
-const Insn = union(InsnType) {
+pub const Insn = union(InsnType) {
     push_integer: struct { value: usize },
     sum: struct {},
 };
@@ -55,7 +55,7 @@ pub const IrGen = struct {
 
     fn buildStack(self: *Self, ast: *const AstNode) Error!void {
         switch (ast.*) {
-            .sum, .product, .division => |node| {
+            .sum, .product, .division, .assignment => |node| {
                 // @call(.{ .always_tail }, buildStack, .{self, ast
                 try self.buildStack(node.lhs);
                 try self.buildStack(node.rhs);
@@ -66,6 +66,12 @@ pub const IrGen = struct {
             },
             .group => |group| {
                 try self.stack.append(group.value);
+            },
+            .name => |_| {
+                try self.stack.append(ast);
+            },
+            .variable_declaration => |_| {
+                try self.stack.append(ast);
             },
         }
     }
