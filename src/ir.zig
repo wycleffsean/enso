@@ -1,5 +1,6 @@
 const std = @import("std");
 const parse = @import("./parse.zig");
+const intern = @import("./ir/intern.zig");
 const AstNode = parse.AstNode;
 const Parser = parse.Parser;
 const testing = std.testing;
@@ -11,7 +12,7 @@ const InsnType = enum {
 
 pub const Insn = union(InsnType) {
     push_integer: struct { value: usize },
-    sum: struct {},
+    sum: void,
 };
 
 pub const IrGen = struct {
@@ -82,6 +83,10 @@ pub const IrGen = struct {
     }
 };
 
+test {
+    _ = intern;
+}
+
 test "push integer" {
     var parser = Parser.init(testing.allocator, "1");
     defer parser.deinit();
@@ -98,7 +103,7 @@ test "push integer" {
     try testing.expectEqualSlices(Insn, expected[0..], ir.items);
 }
 
-test "push integer" {
+test "push sum" {
     var parser = Parser.init(testing.allocator, "1 + 2");
     defer parser.deinit();
     const ast = try parser.parse();
