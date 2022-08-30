@@ -5,6 +5,7 @@ const fixedBufferStream = std.io.fixedBufferStream;
 
 const LineLength = u32;
 const ColLength = u32;
+pub const IndentLength = u32;
 
 const TokenTag = enum {
     eof,
@@ -29,32 +30,63 @@ const TokenTag = enum {
     lcbracket,
     rcbracket,
     var_kw,
+    fn_kw,
 };
 
-const Location = struct { line: LineLength, col: ColLength };
+const Location = struct { indent: IndentLength = 0, line: LineLength, col: ColLength };
+const Bare = struct { loc: Location };
 
 pub const Token = union(TokenTag) {
-    eof: Location,
-    lparen: Location,
-    rparen: Location,
+    eof: Bare,
+    lparen: Bare,
+    rparen: Bare,
     name: struct { value: []const u8, loc: Location },
     integer: struct { value: []const u8, loc: Location },
-    colon: Location,
-    comma: Location,
-    pipe: Location,
-    plus: Location,
-    minus: Location,
-    asterisk: Location,
-    solidus: Location,
-    less: Location,
-    greater: Location,
-    assign: Location,
-    bang: Location,
-    lsbracket: Location,
-    rsbracket: Location,
-    lcbracket: Location,
-    rcbracket: Location,
-    var_kw: Location,
+    colon: Bare,
+    comma: Bare,
+    pipe: Bare,
+    plus: Bare,
+    minus: Bare,
+    asterisk: Bare,
+    solidus: Bare,
+    less: Bare,
+    greater: Bare,
+    assign: Bare,
+    bang: Bare,
+    lsbracket: Bare,
+    rsbracket: Bare,
+    lcbracket: Bare,
+    rcbracket: Bare,
+    var_kw: Bare,
+    fn_kw: Bare,
+
+    // this is really smelly
+    pub inline fn getLocation(self: *const Token) Location {
+        return switch (self.*) {
+            .eof => self.eof.loc,
+            .lparen => self.lparen.loc,
+            .rparen => self.rparen.loc,
+            .name => self.name.loc,
+            .integer => self.integer.loc,
+            .colon => self.colon.loc,
+            .comma => self.comma.loc,
+            .pipe => self.pipe.loc,
+            .plus => self.plus.loc,
+            .minus => self.minus.loc,
+            .asterisk => self.asterisk.loc,
+            .solidus => self.solidus.loc,
+            .less => self.less.loc,
+            .greater => self.greater.loc,
+            .assign => self.assign.loc,
+            .bang => self.bang.loc,
+            .lsbracket => self.lsbracket.loc,
+            .rsbracket => self.rsbracket.loc,
+            .lcbracket => self.lcbracket.loc,
+            .rcbracket => self.rcbracket.loc,
+            .var_kw => self.var_kw.loc,
+            .fn_kw => self.fn_kw.loc,
+        };
+    }
 };
 
 pub const Lexer = struct {
@@ -64,7 +96,7 @@ pub const Lexer = struct {
     prior: ?u8 = null,
     col: ColLength = 0,
     line: LineLength = 1, // 1 indexed, latent increment col = 0 # 1 indexed, immediate increment
-    //indent: u32 = 0, // 0 indexed, immediate increment
+    indent: u32 = 0, // 0 indexed, immediate increment
     const Self = @This();
 
     pub const Error = error{
@@ -107,8 +139,20 @@ pub const Lexer = struct {
         return byte;
     }
 
-    fn location(self: Self) Location {
-        return .{ .line = self.line, .col = self.col };
+    fn takeIndents(self: *Self) Error!void {
+        self.indent = 0;
+        while ((self.peek() catch 0) == '\t') {
+            self.indent += 1;
+            _ = try self.take();
+        }
+    }
+
+    fn location(self: *Self) Location {
+        return .{ .indent = self.indent, .line = self.line, .col = self.col };
+    }
+
+    fn bare(self: *Self) Bare {
+        return .{ .loc = self.location() };
     }
 
     fn readWhileAlpha(self: *Self) Error!void {
@@ -149,41 +193,45 @@ pub const Lexer = struct {
             inline while (i > 0) : (i -= 1) {
                 _ = self.take() catch unreachable;
             }
-            return @unionInit(Token, @tagName(tag), self.location());
+            return @unionInit(Token, @tagName(tag), self.bare());
         }
         return null;
     }
 
     fn readKeyword(self: *Self) ?Token {
-        if (self.matchExact(.var_kw, "var")) |token| {
+        if (self.matchExact(.var_kw, "var") orelse self.matchExact(.fn_kw, "fn")) |token| {
             return token;
         }
         return null;
     }
 
     pub fn next(self: *Self) Error!Token {
-        const byte = self.take() catch return Token{ .eof = self.location() };
+        const byte = self.take() catch return Token{ .eof = self.bare() };
         switch (byte) {
             // whitespace
-            '\n', '\t', ' ' => return self.next(),
+            '\n' => {
+                try self.takeIndents();
+                return self.next();
+            },
+            '\t', ' ' => return self.next(),
             // brackets and operators
-            '(' => return Token{ .lparen = self.location() },
-            ')' => return Token{ .rparen = self.location() },
-            ':' => return Token{ .colon = self.location() },
-            ',' => return Token{ .comma = self.location() },
-            '|' => return Token{ .pipe = self.location() },
-            '+' => return Token{ .plus = self.location() },
-            '-' => return Token{ .minus = self.location() },
-            '*' => return Token{ .asterisk = self.location() },
-            '/' => return Token{ .solidus = self.location() },
-            '<' => return Token{ .less = self.location() },
-            '>' => return Token{ .greater = self.location() },
-            '=' => return Token{ .assign = self.location() },
-            '!' => return Token{ .bang = self.location() },
-            '[' => return Token{ .lsbracket = self.location() },
-            ']' => return Token{ .rsbracket = self.location() },
-            '{' => return Token{ .lcbracket = self.location() },
-            '}' => return Token{ .rcbracket = self.location() },
+            '(' => return Token{ .lparen = self.bare() },
+            ')' => return Token{ .rparen = self.bare() },
+            ':' => return Token{ .colon = self.bare() },
+            ',' => return Token{ .comma = self.bare() },
+            '|' => return Token{ .pipe = self.bare() },
+            '+' => return Token{ .plus = self.bare() },
+            '-' => return Token{ .minus = self.bare() },
+            '*' => return Token{ .asterisk = self.bare() },
+            '/' => return Token{ .solidus = self.bare() },
+            '<' => return Token{ .less = self.bare() },
+            '>' => return Token{ .greater = self.bare() },
+            '=' => return Token{ .assign = self.bare() },
+            '!' => return Token{ .bang = self.bare() },
+            '[' => return Token{ .lsbracket = self.bare() },
+            ']' => return Token{ .rsbracket = self.bare() },
+            '{' => return Token{ .lcbracket = self.bare() },
+            '}' => return Token{ .rcbracket = self.bare() },
             'A'...'Z', 'a'...'z' => {
                 if (self.readKeyword()) |kw| {
                     return kw;
@@ -231,34 +279,43 @@ test "take" {
     try testing.expectEqual(lex.col, 1);
 }
 
+test "indents" {
+    // taken from py lexer, with comment -> # TODO: a bit wrong :/
+    var lex = Lexer{ .buffer = "\t+\n\t\t+\n\t\t\t+\n" };
+    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .indent = 0, .line = 1, .col = 2 } } });
+    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .indent = 2, .line = 2, .col = 2 } } });
+    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .indent = 3, .line = 3, .col = 3 } } });
+    try testing.expectEqual(lex.next(), .{ .eof = .{ .loc = .{ .indent = 0, .line = 3, .col = 4 } } });
+}
+
 test "parens" {
     var lex = Lexer{ .buffer = "()" };
-    try testing.expectEqual(lex.next(), .{ .lparen = .{ .line = 1, .col = 1 } });
-    try testing.expectEqual(lex.next(), .{ .rparen = .{ .line = 1, .col = 2 } });
+    try testing.expectEqual(lex.next(), .{ .lparen = .{ .loc = .{ .line = 1, .col = 1 } } });
+    try testing.expectEqual(lex.next(), .{ .rparen = .{ .loc = .{ .line = 1, .col = 2 } } });
 }
 
 test "operators" {
     var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|" };
-    try testing.expectEqual(lex.next(), .{ .colon = .{ .line = 1, .col = 1 } });
-    try testing.expectEqual(lex.next(), .{ .comma = .{ .line = 1, .col = 2 } });
-    try testing.expectEqual(lex.next(), .{ .plus = .{ .line = 1, .col = 3 } });
-    try testing.expectEqual(lex.next(), .{ .minus = .{ .line = 1, .col = 4 } });
-    try testing.expectEqual(lex.next(), .{ .asterisk = .{ .line = 1, .col = 5 } });
-    try testing.expectEqual(lex.next(), .{ .solidus = .{ .line = 1, .col = 6 } });
-    try testing.expectEqual(lex.next(), .{ .less = .{ .line = 1, .col = 7 } });
-    try testing.expectEqual(lex.next(), .{ .greater = .{ .line = 1, .col = 8 } });
-    try testing.expectEqual(lex.next(), .{ .assign = .{ .line = 1, .col = 9 } });
-    try testing.expectEqual(lex.next(), .{ .bang = .{ .line = 1, .col = 10 } });
-    try testing.expectEqual(lex.next(), .{ .lsbracket = .{ .line = 1, .col = 11 } });
-    try testing.expectEqual(lex.next(), .{ .rsbracket = .{ .line = 1, .col = 12 } });
-    try testing.expectEqual(lex.next(), .{ .lcbracket = .{ .line = 1, .col = 13 } });
-    try testing.expectEqual(lex.next(), .{ .rcbracket = .{ .line = 1, .col = 14 } });
-    try testing.expectEqual(lex.next(), .{ .pipe = .{ .line = 1, .col = 15 } });
+    try testing.expectEqual(lex.next(), .{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } });
+    try testing.expectEqual(lex.next(), .{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } });
+    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .line = 1, .col = 3 } } });
+    try testing.expectEqual(lex.next(), .{ .minus = .{ .loc = .{ .line = 1, .col = 4 } } });
+    try testing.expectEqual(lex.next(), .{ .asterisk = .{ .loc = .{ .line = 1, .col = 5 } } });
+    try testing.expectEqual(lex.next(), .{ .solidus = .{ .loc = .{ .line = 1, .col = 6 } } });
+    try testing.expectEqual(lex.next(), .{ .less = .{ .loc = .{ .line = 1, .col = 7 } } });
+    try testing.expectEqual(lex.next(), .{ .greater = .{ .loc = .{ .line = 1, .col = 8 } } });
+    try testing.expectEqual(lex.next(), .{ .assign = .{ .loc = .{ .line = 1, .col = 9 } } });
+    try testing.expectEqual(lex.next(), .{ .bang = .{ .loc = .{ .line = 1, .col = 10 } } });
+    try testing.expectEqual(lex.next(), .{ .lsbracket = .{ .loc = .{ .line = 1, .col = 11 } } });
+    try testing.expectEqual(lex.next(), .{ .rsbracket = .{ .loc = .{ .line = 1, .col = 12 } } });
+    try testing.expectEqual(lex.next(), .{ .lcbracket = .{ .loc = .{ .line = 1, .col = 13 } } });
+    try testing.expectEqual(lex.next(), .{ .rcbracket = .{ .loc = .{ .line = 1, .col = 14 } } });
+    try testing.expectEqual(lex.next(), .{ .pipe = .{ .loc = .{ .line = 1, .col = 15 } } });
 }
 
 test "whitespace ignored" {
     var lex = Lexer{ .buffer = " \t\n" };
-    try testing.expectEqual(lex.next(), .{ .eof = .{ .line = 1, .col = 3 } });
+    try testing.expectEqual(lex.next(), .{ .eof = .{ .loc = .{ .line = 1, .col = 3 } } });
 }
 
 test "name" {
@@ -306,5 +363,28 @@ test "var kw" {
         var lex = Lexer{ .buffer = "vars" };
         const next = try lex.next();
         try testing.expect(next != .var_kw);
+    }
+}
+
+test "fn kw" {
+    {
+        var lex = Lexer{ .buffer = "fn" };
+        const next = try lex.next();
+        try testing.expect(next == .fn_kw);
+    }
+    {
+        var lex = Lexer{ .buffer = "fn " };
+        const next = try lex.next();
+        try testing.expect(next == .fn_kw);
+    }
+    {
+        var lex = Lexer{ .buffer = "fn\t" };
+        const next = try lex.next();
+        try testing.expect(next == .fn_kw);
+    }
+    {
+        var lex = Lexer{ .buffer = "fns" };
+        const next = try lex.next();
+        try testing.expect(next != .fn_kw);
     }
 }

@@ -11,11 +11,13 @@ const AstNodeTag = enum {
     division,
     group,
     name,
-    variable_declaration,
+    var_decl,
+    fn_decl,
     assignment,
 };
 
 const BinaryOp = struct { lhs: *AstNode, rhs: *AstNode };
+const Statement = std.ArrayList(*AstNode);
 
 pub const AstNode = union(AstNodeTag) {
     integer: struct { value: usize },
@@ -24,7 +26,8 @@ pub const AstNode = union(AstNodeTag) {
     division: BinaryOp,
     group: struct { value: *AstNode },
     name: struct { value: []const u8 },
-    variable_declaration: struct { name: []const u8 },
+    var_decl: struct { name: []const u8 },
+    fn_decl: struct { name: []const u8, statement: Statement },
     assignment: BinaryOp,
 };
 
@@ -42,6 +45,7 @@ pub const Parser = struct {
         BadLeftDenotation,
         UnhandledPrecedence,
         UnexpectedToken,
+        UnexpectedEndOfStream,
     } || lex.Lexer.Error ||
         std.fmt.ParseIntError || std.mem.Allocator.Error;
 
@@ -93,6 +97,7 @@ pub const Parser = struct {
             .lparen => return parseGroup,
             .name => return parseName,
             .var_kw => return parseVariableDeclaration,
+            .fn_kw => return parseFunctionDeclaration,
             else => return Error.BadNullDenotation,
         }
     }
@@ -100,7 +105,7 @@ pub const Parser = struct {
     const InfixFn = fn (*Self, *AstNode) Error!*AstNode;
     inline fn leftDenotation(token: Token) Error!InfixFn {
         switch (token) {
-            .plus => return parsesum,
+            .plus => return parseSum,
             .asterisk => return parseProduct,
             .solidus => return parseDivision,
             .assign => return parseAssignment,
@@ -108,33 +113,36 @@ pub const Parser = struct {
         }
     }
 
-    fn peek(self: *Self) Error!Token {
+    fn peek(self: *Self) ?Token {
         if (self.peeked) |peeked| {
             return peeked;
         } else {
-            const peeked = try self.lexer.next();
+            const peeked = self.lexer.next() catch null;
+            if (peeked) |tok| {
+                if (tok == .eof) return null;
+            }
             self.peeked = peeked;
             return peeked;
         }
     }
 
     fn take(self: *Self) Error!Token {
-        const peeked = try self.peek();
+        const peeked = self.peek() orelse return Error.UnexpectedEndOfStream;
         self.peeked = null;
         return peeked;
     }
 
     fn peekPrecedence(self: *Self) Error!Precedence {
-        var peeked = self.peek() catch return .lowest;
+        var peeked = self.peek() orelse return .lowest;
         return try precedenceMap(peeked);
     }
 
     fn parseExpression(self: *Self, precedence: Precedence) Error!*AstNode {
-        var token = try self.peek();
+        var token = self.peek() orelse return Error.UnexpectedEndOfStream;
         const lhsFn = try nullDenotation(token);
         var lhs = try lhsFn(self);
         while (@enumToInt(precedence) < @enumToInt(try self.peekPrecedence())) {
-            token = try self.peek();
+            token = self.peek() orelse unreachable;
             const infixFn = try leftDenotation(token);
             lhs = try infixFn(self, lhs);
         }
@@ -149,7 +157,7 @@ pub const Parser = struct {
         return int_node;
     }
 
-    fn parsesum(self: *Self, lhs: *AstNode) Error!*AstNode {
+    fn parseSum(self: *Self, lhs: *AstNode) Error!*AstNode {
         const sum_token = try self.take(); // skip sum token
         switch (sum_token) {
             .plus => {
@@ -205,9 +213,9 @@ pub const Parser = struct {
         assert(var_kw_token == .var_kw);
         const name_token = try self.take();
         if (name_token != .name) return Error.UnexpectedToken;
-        var variable_declaration_node = try self.allocator.create(AstNode);
-        variable_declaration_node.* = .{ .variable_declaration = .{ .name = name_token.name.value } };
-        return variable_declaration_node;
+        var var_decl = try self.allocator.create(AstNode);
+        var_decl.* = .{ .var_decl = .{ .name = name_token.name.value } };
+        return var_decl;
     }
 
     fn parseAssignment(self: *Self, lhs: *AstNode) Error!*AstNode {
@@ -217,6 +225,35 @@ pub const Parser = struct {
         var assignment_node = try self.allocator.create(AstNode);
         assignment_node.* = .{ .assignment = .{ .lhs = lhs, .rhs = rhs } };
         return assignment_node;
+    }
+
+    fn parseFunctionDeclaration(self: *Self) Error!*AstNode {
+        const fn_kw_token = try self.take(); // skip fn_decl token
+        assert(fn_kw_token == .fn_kw);
+        const name_token = try self.take();
+        if (name_token != .name) return Error.UnexpectedToken;
+
+        // TODO: properly parse argument definitions
+        const lparen_token = try self.take(); // skip lparen token
+        if (lparen_token != .lparen) return Error.UnexpectedToken;
+        const rparen_token = try self.take(); // skip rparen token
+        if (rparen_token != .rparen) return Error.UnexpectedToken;
+
+        const colon_token = try self.take(); // skip colon token
+        if (colon_token != .colon) return Error.UnexpectedToken;
+
+        var fn_decl = try self.allocator.create(AstNode);
+        fn_decl.* = .{ .fn_decl = .{
+            .name = name_token.name.value,
+            .statement = std.ArrayList(*AstNode).init(self.allocator),
+        } };
+
+        while (self.peek()) |next_token| {
+            if (next_token.getLocation().indent <= fn_kw_token.getLocation().indent) break;
+            try fn_decl.fn_decl.statement.append(try self.parse());
+        }
+
+        return fn_decl;
     }
 };
 
@@ -297,8 +334,29 @@ test "declare and assign" {
     var result = try parser.parse();
 
     try testing.expect(result.* == AstNode.assignment);
-    try testing.expect(result.assignment.lhs.* == AstNode.variable_declaration);
-    try testing.expectEqualSlices(u8, "a", result.assignment.lhs.variable_declaration.name);
+    try testing.expect(result.assignment.lhs.* == AstNode.var_decl);
+    try testing.expectEqualSlices(u8, "a", result.assignment.lhs.var_decl.name);
     try testing.expect(result.assignment.rhs.* == AstNode.integer);
     try testing.expectEqual(@intCast(usize, 1), result.assignment.rhs.integer.value);
+}
+
+test "declare function" {
+    const fn_decl =
+        \\fn myFunction():
+        \\	var a = 1
+        \\	a * 3
+    ;
+    var parser = Parser.init(testing.allocator, fn_decl);
+    defer parser.deinit();
+    var result = try parser.parse();
+
+    try testing.expect(result.* == AstNode.fn_decl);
+    try testing.expectEqualSlices(u8, "myFunction", result.fn_decl.name);
+
+    // Statement
+    try testing.expect(result.fn_decl.statement.items.len == 2);
+    const expr1 = result.fn_decl.statement.items[0];
+    try testing.expect(expr1.* == AstNode.assignment);
+    const expr2 = result.fn_decl.statement.items[1];
+    try testing.expect(expr2.* == AstNode.product);
 }
