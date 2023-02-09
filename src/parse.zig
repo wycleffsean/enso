@@ -90,7 +90,7 @@ pub const Parser = struct {
         }
     }
 
-    const ParseFn = fn (*Self) Error!*AstNode;
+    const ParseFn = *const fn (*Self) Error!*AstNode;
     inline fn nullDenotation(token: Token) Error!ParseFn {
         switch (token) {
             .integer => return parseInteger,
@@ -102,7 +102,7 @@ pub const Parser = struct {
         }
     }
 
-    const InfixFn = fn (*Self, *AstNode) Error!*AstNode;
+    const InfixFn = *const fn (*Self, *AstNode) Error!*AstNode;
     inline fn leftDenotation(token: Token) Error!InfixFn {
         switch (token) {
             .plus => return parseSum,

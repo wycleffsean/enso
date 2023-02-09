@@ -86,7 +86,7 @@ pub const IrGen = struct {
                 .integer => break :blk Insn{ .push_integer = .{ .value = ast_node.integer.value } },
                 .name => break :blk Insn{ .push_symbol = .{ .value = try self.intern_pool.put(ast_node.name.value) } },
                 .var_decl => break :blk Insn{ .decl_var = {} },
-                .sum => break :blk Insn{ .sum = .{} },
+                .sum => break :blk Insn{ .sum = {} },
                 .product => break :blk Insn{ .product = {} },
                 .division => break :blk Insn{ .division = {} },
                 .group => break :blk try self.generateInsn(ast_node.group.value),
@@ -166,7 +166,7 @@ test "push sum" {
     var expected = [_]Insn{
         Insn{ .push_integer = .{ .value = 1 } },
         Insn{ .push_integer = .{ .value = 2 } },
-        Insn{ .sum = .{} },
+        Insn{ .sum = {} },
     };
     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir.items);
 }

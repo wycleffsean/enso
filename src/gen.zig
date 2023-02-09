@@ -34,7 +34,7 @@ test "trivial main" {
     var insns = std.ArrayList(Insn).init(fba.allocator());
     try insns.append(.{ .push_integer = .{ .value = 1 } });
     try insns.append(.{ .push_integer = .{ .value = 2 } });
-    try insns.append(.{ .sum = .{} });
+    try insns.append(.{ .sum = {} });
     var gen = CodeGen.init(testing.allocator, insns);
     defer gen.deinit();
 
