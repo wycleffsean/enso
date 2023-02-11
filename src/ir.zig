@@ -108,7 +108,6 @@ pub const IrGen = struct {
 };
 
 const TestContext = struct {
-    parser: Parser,
     arena: *std.heap.ArenaAllocator,
     irgen: IrGen,
     ir: std.ArrayList(Insn),
@@ -116,18 +115,19 @@ const TestContext = struct {
 };
 
 fn testSetup(code: []const u8) !TestContext {
-    var parser = Parser.init(testing.allocator, code);
-    const ast = try parser.parse();
 
     // this is a strange thing to do but prevents segfault :/
     var arena = try testing.allocator.create(std.heap.ArenaAllocator);
     arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+
+    var parser = Parser.init(arena.allocator(), code);
+    const ast = try parser.parse();
+
     var intern_pool = try testing.allocator.create(intern.StringInternPool);
     intern_pool.* = intern.StringInternPool.init(arena.allocator());
     var irgen = IrGen.init(testing.allocator, arena, intern_pool, ast);
     var ir = try irgen.generate();
     return TestContext{
-        .parser = parser,
         .arena = arena,
         .irgen = irgen,
         .ir = ir,
@@ -136,7 +136,6 @@ fn testSetup(code: []const u8) !TestContext {
 }
 
 fn testTeardown(ctx: *TestContext) void {
-    ctx.parser.deinit();
     ctx.irgen.deinit();
     ctx.intern_pool.deinit();
     ctx.arena.deinit();

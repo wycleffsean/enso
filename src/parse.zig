@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
-const lex = @import("./lex.zig");
+const lex = @import("lex.zig");
 const Token = lex.Token;
 
 const AstNodeTag = enum {
@@ -32,7 +32,6 @@ pub const AstNode = union(AstNodeTag) {
 };
 
 pub const Parser = struct {
-    arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     lexer: lex.Lexer,
     peeked: ?Token = null,
@@ -49,15 +48,8 @@ pub const Parser = struct {
     } || lex.Lexer.Error ||
         std.fmt.ParseIntError || std.mem.Allocator.Error;
 
-    pub fn init(allocator: ?std.mem.Allocator, buffer: []const u8) Self {
-        var base_allocator = allocator orelse std.heap.page_allocator; // TODO testing.allocator leaves us in an infinite spin loop for some reason
-        base_allocator = std.heap.page_allocator;
-        var arena = std.heap.ArenaAllocator.init(base_allocator);
-        return .{ .allocator = arena.allocator(), .arena = arena, .lexer = lex.Lexer{ .buffer = buffer } };
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.arena.deinit();
+    pub fn init(allocator: std.mem.Allocator, buffer: []const u8) Self {
+        return .{ .allocator = allocator, .lexer = lex.Lexer{ .buffer = buffer } };
     }
 
     pub fn parse(self: *Self) Error!*AstNode {
@@ -260,8 +252,11 @@ pub const Parser = struct {
 // Test arithmetic
 
 test "infix sum" {
-    var parser = Parser.init(testing.allocator, "1 + 2");
-    defer parser.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "1 + 2");
     var result = try parser.parse();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
@@ -271,8 +266,11 @@ test "infix sum" {
 }
 
 test "infix product" {
-    var parser = Parser.init(testing.allocator, "1 + 2 * 3");
-    defer parser.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "1 + 2 * 3");
     var result = try parser.parse();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
@@ -285,8 +283,11 @@ test "infix product" {
 }
 
 test "infix division" {
-    var parser = Parser.init(testing.allocator, "1 + 2 / 3");
-    defer parser.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "1 + 2 / 3");
     var result = try parser.parse();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
@@ -299,8 +300,11 @@ test "infix division" {
 }
 
 test "group" {
-    var parser = Parser.init(testing.allocator, "(1 + 2) / 3");
-    defer parser.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "(1 + 2) / 3");
     var result = try parser.parse();
 
     try testing.expect(result.* == .division);
@@ -317,8 +321,11 @@ test "group" {
 // Test Assignment
 
 test "assign" {
-    var parser = Parser.init(testing.allocator, "a = 1");
-    defer parser.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "a = 1");
     var result = try parser.parse();
 
     try testing.expect(result.* == AstNode.assignment);
@@ -329,8 +336,11 @@ test "assign" {
 }
 
 test "declare and assign" {
-    var parser = Parser.init(testing.allocator, "var a = 1");
-    defer parser.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "var a = 1");
     var result = try parser.parse();
 
     try testing.expect(result.* == AstNode.assignment);
@@ -341,13 +351,16 @@ test "declare and assign" {
 }
 
 test "declare function" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
     const fn_decl =
         \\fn myFunction():
         \\	var a = 1
         \\	a * 3
     ;
-    var parser = Parser.init(testing.allocator, fn_decl);
-    defer parser.deinit();
+    var parser = Parser.init(allocator, fn_decl);
     var result = try parser.parse();
 
     try testing.expect(result.* == AstNode.fn_decl);
