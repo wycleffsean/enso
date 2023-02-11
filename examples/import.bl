@@ -1,4 +1,4 @@
-import 'yo'
+const std = @import('yo')
 
 fn foo(list):
   select id from list
