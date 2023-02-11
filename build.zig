@@ -12,7 +12,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("blithe", "src/main.zig");
-    //exe.use_stage1 = false;
+    exe.use_stage1 = false;
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
