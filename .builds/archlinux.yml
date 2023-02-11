@@ -1,0 +1,14 @@
+image: archlinux
+packages:
+  - zig
+secrets:
+  - 90030171-7f58-4156-a8ac-f8b9a38eca13
+sources:
+  - git@git.sr.ht:~scarey/blithe
+tasks:
+  - build: |
+      cd blithe
+      zig build
+  - test: |
+      cd blithe
+      zig build test
