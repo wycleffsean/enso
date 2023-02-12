@@ -16,15 +16,15 @@ const AstNodeTag = enum {
     assignment,
 };
 
-const BinaryOp = struct { lhs: *AstNode, rhs: *AstNode };
-const Statement = std.ArrayList(*AstNode);
+const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
+const Statement = std.ArrayList(*const AstNode);
 
 pub const AstNode = union(AstNodeTag) {
     integer: struct { value: usize },
     sum: BinaryOp,
     product: BinaryOp,
     division: BinaryOp,
-    group: struct { value: *AstNode },
+    group: struct { value: *const AstNode },
     name: struct { value: []const u8 },
     var_decl: struct { name: []const u8 },
     fn_decl: struct { name: []const u8, statement: Statement },
@@ -52,7 +52,15 @@ pub const Parser = struct {
         return .{ .allocator = allocator, .lexer = lex.Lexer{ .buffer = buffer } };
     }
 
-    pub fn parse(self: *Self) Error!*AstNode {
+    pub fn parse(self: *Self) Error![]*const AstNode {
+        var list = std.ArrayList(*const AstNode).init(self.allocator);
+        while (self.peek()) {
+            try list.append(try self.parseExpression(.lowest));
+        }
+        return list.toOwnedSlice();
+    }
+
+    pub fn parseStatement(self: *Self) Error!*const AstNode {
         const node = try self.parseExpression(.lowest);
         return node;
     }
@@ -237,12 +245,12 @@ pub const Parser = struct {
         var fn_decl = try self.allocator.create(AstNode);
         fn_decl.* = .{ .fn_decl = .{
             .name = name_token.name.value,
-            .statement = std.ArrayList(*AstNode).init(self.allocator),
+            .statement = std.ArrayList(*const AstNode).init(self.allocator),
         } };
 
         while (self.peek()) |next_token| {
             if (next_token.getLocation().indent <= fn_kw_token.getLocation().indent) break;
-            try fn_decl.fn_decl.statement.append(try self.parse());
+            try fn_decl.fn_decl.statement.append(try self.parseStatement());
         }
 
         return fn_decl;
@@ -257,7 +265,7 @@ test "infix sum" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2");
-    var result = try parser.parse();
+    var result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
@@ -271,7 +279,7 @@ test "infix product" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2 * 3");
-    var result = try parser.parse();
+    var result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
@@ -288,7 +296,7 @@ test "infix division" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2 / 3");
-    var result = try parser.parse();
+    var result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
@@ -305,7 +313,7 @@ test "group" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "(1 + 2) / 3");
-    var result = try parser.parse();
+    var result = try parser.parseStatement();
 
     try testing.expect(result.* == .division);
     try testing.expect(result.division.lhs.* == .group);
@@ -326,7 +334,7 @@ test "assign" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "a = 1");
-    var result = try parser.parse();
+    var result = try parser.parseStatement();
 
     try testing.expect(result.* == AstNode.assignment);
     try testing.expect(result.assignment.lhs.* == AstNode.name);
@@ -341,7 +349,7 @@ test "declare and assign" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "var a = 1");
-    var result = try parser.parse();
+    var result = try parser.parseStatement();
 
     try testing.expect(result.* == AstNode.assignment);
     try testing.expect(result.assignment.lhs.* == AstNode.var_decl);
@@ -361,7 +369,7 @@ test "declare function" {
         \\	a * 3
     ;
     var parser = Parser.init(allocator, fn_decl);
-    var result = try parser.parse();
+    var result = try parser.parseStatement();
 
     try testing.expect(result.* == AstNode.fn_decl);
     try testing.expectEqualSlices(u8, "myFunction", result.fn_decl.name);
