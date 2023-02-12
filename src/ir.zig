@@ -14,6 +14,7 @@ const InsnType = enum {
     sum,
     product,
     division,
+    call,
 };
 
 pub const Insn = union(InsnType) {
@@ -25,6 +26,7 @@ pub const Insn = union(InsnType) {
     sum: void,
     product: void,
     division: void,
+    call: void,
 };
 
 pub const IrGen = struct {
@@ -84,6 +86,10 @@ pub const IrGen = struct {
                     try self.buildStack(expr);
                 }
             },
+            .call => |call| {
+                try self.stack.append(call.ref);
+                try self.stack.append(ast);
+            },
         }
     }
 
@@ -99,6 +105,7 @@ pub const IrGen = struct {
                 .group => break :blk try self.generateInsn(ast_node.group.value),
                 .assignment => break :blk Insn{ .assign = {} },
                 .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
+                .call => break :blk Insn{ .call = {} },
             }
         };
         return insn;
@@ -295,6 +302,17 @@ test "declare function" {
         Insn{ .push_symbol = .{ .value = 1 } },
         Insn{ .push_integer = .{ .value = 3 } },
         Insn{ .product = {} },
+    };
+    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir.items);
+}
+
+test "call function" {
+    var ctx = try testSetup("myFunction()");
+    defer testTeardown(&ctx);
+
+    var expected = [_]Insn{
+        Insn{ .push_symbol = .{ .value = 0 } },
+        Insn{ .call = {} },
     };
     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir.items);
 }

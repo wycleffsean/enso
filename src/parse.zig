@@ -14,6 +14,7 @@ const AstNodeTag = enum {
     var_decl,
     fn_decl,
     assignment,
+    call,
 };
 
 const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
@@ -29,6 +30,7 @@ pub const AstNode = union(AstNodeTag) {
     var_decl: struct { name: []const u8 },
     fn_decl: struct { name: []const u8, statement: Statement },
     assignment: BinaryOp,
+    call: struct { ref: *const AstNode },
 };
 
 pub const Parser = struct {
@@ -86,6 +88,7 @@ pub const Parser = struct {
             .name => return .lowest,
             .var_kw => return .lowest,
             .assign => return .equality,
+            .lparen => return .call,
             else => return Error.UnhandledPrecedence, // TODO: remove
         }
     }
@@ -109,6 +112,7 @@ pub const Parser = struct {
             .asterisk => return parseProduct,
             .solidus => return parseDivision,
             .assign => return parseAssignment,
+            .lparen => return parseFunctionCall,
             else => return Error.BadLeftDenotation,
         }
     }
@@ -255,6 +259,16 @@ pub const Parser = struct {
 
         return fn_decl;
     }
+
+    fn parseFunctionCall(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const lparen_token = try self.take(); // skip lparen token
+        assert(lparen_token == .lparen);
+        const rparen_token = try self.take(); // skip rparen token
+        if (rparen_token != .rparen) return Error.UnexpectedToken;
+        var call_node = try self.allocator.create(AstNode);
+        call_node.* = .{ .call = .{ .ref = lhs } };
+        return call_node;
+    }
 };
 
 // Test arithmetic
@@ -380,4 +394,16 @@ test "declare function" {
     try testing.expect(expr1.* == AstNode.assignment);
     const expr2 = result.fn_decl.statement.items[1];
     try testing.expect(expr2.* == AstNode.product);
+}
+
+test "call function" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "myFunction()");
+    var result = try parser.parseStatement();
+
+    try testing.expect(result.* == AstNode.call);
+    try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
 }
