@@ -14,3 +14,52 @@ pub fn Iterator(comptime T: type) type {
         }
     };
 }
+
+pub const testing = struct {
+    const std = @import("std");
+    const ir = @import("ir.zig");
+    const intern = @import("ir/intern.zig");
+    const Parser = @import("parse.zig").Parser;
+
+    pub const TestParse = struct {
+        const Self = @This();
+
+        arena: *std.heap.ArenaAllocator,
+        irgen: ir.IrGen,
+        insns: []const ir.Insn,
+        intern_pool: *intern.StringInternPool,
+
+        pub fn init(code: []const u8) !Self {
+            // this is a strange thing to do but prevents segfault :/
+            var arena = try std.testing.allocator.create(std.heap.ArenaAllocator);
+            arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+
+            var parser = Parser.init(arena.allocator(), code);
+            const ast = try parser.parse();
+
+            var intern_pool = try std.testing.allocator.create(intern.StringInternPool);
+            intern_pool.* = intern.StringInternPool.init(arena.allocator());
+            var irgen = ir.IrGen.init(arena, intern_pool, ast);
+            var insns = try irgen.generate(std.testing.allocator);
+            return .{
+                .arena = arena,
+                .irgen = irgen,
+                .insns = insns,
+                .intern_pool = intern_pool,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.irgen.deinit();
+            self.intern_pool.deinit();
+            self.arena.deinit();
+            std.testing.allocator.free(self.insns);
+            std.testing.allocator.destroy(self.intern_pool);
+            std.testing.allocator.destroy(self.arena);
+        }
+
+        pub fn symbol(self: Self, sym: []const u8) ?intern.Index {
+            return self.intern_pool.getIndex(sym);
+        }
+    };
+};

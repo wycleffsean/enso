@@ -1,10 +1,9 @@
 const std = @import("std");
 const ir = @import("ir.zig");
-const Iterator = @import("utils.zig").Iterator;
-
-// for testing
 const intern = @import("ir/intern.zig");
-const Parser = @import("parse.zig").Parser;
+const utils = @import("utils.zig");
+const Iterator = utils.Iterator;
+const TestParse = utils.testing.TestParse;
 const testing = std.testing;
 
 // analogue of Block in IR
@@ -105,51 +104,6 @@ pub fn eval(allocator: std.mem.Allocator, insns: []const ir.Insn) !EvalContext {
     return ctx;
 }
 
-const TestContext = struct {
-    arena: *std.heap.ArenaAllocator,
-    irgen: ir.IrGen,
-    ir: []const ir.Insn,
-    intern_pool: *intern.StringInternPool,
-    res: EvalContext,
-
-    fn symbol(self: TestContext, sym: []const u8) ?intern.Index {
-        return self.intern_pool.getIndex(sym);
-    }
-};
-
-fn testSetup(code: []const u8) !TestContext {
-    // this is a strange thing to do but prevents segfault :/
-    var arena = try testing.allocator.create(std.heap.ArenaAllocator);
-    arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-
-    var parser = Parser.init(arena.allocator(), code);
-    const ast = try parser.parse();
-
-    var intern_pool = try testing.allocator.create(intern.StringInternPool);
-    intern_pool.* = intern.StringInternPool.init(arena.allocator());
-    var irgen = ir.IrGen.init(arena, intern_pool, ast);
-    var insns = try irgen.generate(testing.allocator);
-    var eval_ctx = try eval(testing.allocator, insns);
-
-    return TestContext{
-        .arena = arena,
-        .irgen = irgen,
-        .ir = insns,
-        .intern_pool = intern_pool,
-        .res = eval_ctx,
-    };
-}
-
-fn testTeardown(ctx: *TestContext) void {
-    ctx.res.deinit();
-    ctx.irgen.deinit();
-    ctx.intern_pool.deinit();
-    ctx.arena.deinit();
-    testing.allocator.free(ctx.ir);
-    testing.allocator.destroy(ctx.intern_pool);
-    testing.allocator.destroy(ctx.arena);
-}
-
 test "variable scopes" {
     const source =
         \\var a = 9
@@ -158,14 +112,16 @@ test "variable scopes" {
         \\	var b = 1
         \\	a * b
     ;
-    var ctx = try testSetup(source);
-    defer testTeardown(&ctx);
+    var parse_ctx = try TestParse.init(source);
+    defer parse_ctx.deinit();
+    var eval_ctx = try eval(testing.allocator, parse_ctx.insns);
+    defer eval_ctx.deinit();
 
-    const root_scope = ctx.res.root_scope;
+    const root_scope = eval_ctx.root_scope;
     const function_scope = root_scope.children.items[0];
 
-    const a = ctx.symbol("a").?;
-    const b = ctx.symbol("b").?;
+    const a = parse_ctx.symbol("a").?;
+    const b = parse_ctx.symbol("b").?;
 
     try testing.expect(root_scope.avariable(a));
     try testing.expect(!root_scope.avariable(b));
