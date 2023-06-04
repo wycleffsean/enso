@@ -13,7 +13,7 @@ pub const StringInternPool = struct {
     allocator: std.mem.Allocator,
 
     const Self = @This();
-    pub const Error = error{MissingSymbol} || std.mem.Allocator.Error;
+    pub const Error = error{} || std.mem.Allocator.Error;
 
     // allocator must be an ArenaAllocator
     pub fn init(allocator: std.mem.Allocator) Self {
@@ -35,6 +35,20 @@ pub const StringInternPool = struct {
             entry.key_ptr = &string_dup;
         }
         return entry.index;
+    }
+
+    // O(n)
+    pub fn getIndex(self: *Self, needle: []const u8) ?Index {
+        const slice = self.pool.unmanaged.entries.slice();
+        const keys_array = slice.items(.key);
+        var index: Index = 0;
+        for (keys_array) |key| {
+            if (std.mem.eql(u8, key, needle)) {
+                return index;
+            }
+            index += 1;
+        }
+        return null;
     }
 
     pub fn get(self: *Self, index: Index) Error![]const u8 {

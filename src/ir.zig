@@ -16,6 +16,7 @@ const InsnType = enum {
     division,
     call,
     yield, // ie return
+    noop, // ie ast root node
 };
 
 pub const Insn = union(InsnType) {
@@ -29,6 +30,7 @@ pub const Insn = union(InsnType) {
     division: void,
     call: void,
     yield: void,
+    noop: void,
 };
 
 const Block = struct {
@@ -70,6 +72,11 @@ pub const IrGen = struct {
 
     fn buildStack(self: *Self, ast: *const AstNode, block: *const Block) Error!void {
         switch (ast.*) {
+            .root => |ast_list| {
+                for (ast_list) |node| {
+                    try self.buildStack(node, block);
+                }
+            },
             .sum, .product, .division, .assignment => |node| {
                 // @call(.{ .always_tail }, buildStack, .{self, ast
                 try self.buildStack(node.lhs, block);
@@ -108,6 +115,7 @@ pub const IrGen = struct {
     fn generateInsn(self: *Self, ast_node: *const AstNode) Error!Insn {
         var insn: Insn = blk: {
             switch (ast_node.*) {
+                .root => break :blk Insn{ .noop = {} },
                 .integer => break :blk Insn{ .push_integer = .{ .value = ast_node.integer.value } },
                 .name => break :blk Insn{ .push_symbol = .{ .value = try self.intern_pool.put(ast_node.name.value) } },
                 .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
@@ -160,7 +168,7 @@ fn testSetup(code: []const u8) !TestContext {
     arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
     var parser = Parser.init(arena.allocator(), code);
-    const ast = try parser.parseStatement();
+    const ast = try parser.parse();
 
     var intern_pool = try testing.allocator.create(intern.StringInternPool);
     intern_pool.* = intern.StringInternPool.init(arena.allocator());
@@ -320,28 +328,76 @@ test "assignment" {
         };
         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
     }
+    {
+        var ctx = try testSetup("var a = 1+2*3");
+        defer testTeardown(&ctx);
+
+        var expected = [_]Insn{
+            Insn{ .decl_var = .{ .symbol = 0 } }, // does decl_var also push the symbol onto the stack?
+            Insn{ .push_integer = .{ .value = 1 } },
+            Insn{ .push_integer = .{ .value = 2 } },
+            Insn{ .push_integer = .{ .value = 3 } },
+            Insn{ .product = {} },
+            Insn{ .sum = {} },
+            Insn{ .assign = {} },
+            Insn{ .yield = {} },
+        };
+        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+    }
 }
 test "declare function" {
-    const fn_decl =
-        \\fn myFunction():
-        \\	var a = 1
-        \\	a * 3
-    ;
-    var ctx = try testSetup(fn_decl);
-    defer testTeardown(&ctx);
+    {
+        const fn_decl =
+            \\fn myFunction():
+            \\	var a = 1
+            \\	a * 3
+        ;
+        var ctx = try testSetup(fn_decl);
+        defer testTeardown(&ctx);
 
-    var expected = [_]Insn{
-        Insn{ .decl_fn = .{ .symbol = 0 } },
-        Insn{ .decl_var = .{ .symbol = 1 } },
-        Insn{ .push_integer = .{ .value = 1 } },
-        Insn{ .assign = {} },
-        Insn{ .push_symbol = .{ .value = 1 } },
-        Insn{ .push_integer = .{ .value = 3 } },
-        Insn{ .product = {} },
-        Insn{ .yield = {} },
-        Insn{ .yield = {} },
-    };
-    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+        var expected = [_]Insn{
+            Insn{ .decl_fn = .{ .symbol = 0 } },
+            Insn{ .decl_var = .{ .symbol = 1 } },
+            Insn{ .push_integer = .{ .value = 1 } },
+            Insn{ .assign = {} },
+            Insn{ .push_symbol = .{ .value = 1 } },
+            Insn{ .push_integer = .{ .value = 3 } },
+            Insn{ .product = {} },
+            Insn{ .yield = {} },
+            Insn{ .yield = {} },
+        };
+        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+    }
+    {
+        // declare function in parent scope
+        const fn_decl =
+            \\var a = 9
+            \\
+            \\fn myFunction():
+            \\	var b = 1
+            \\	a * b
+        ;
+        var ctx = try testSetup(fn_decl);
+        defer testTeardown(&ctx);
+
+        var expected = [_]Insn{
+            Insn{ .decl_var = .{ .symbol = 0 } },
+            Insn{ .push_integer = .{ .value = 9 } },
+            Insn{ .assign = {} },
+            //
+            Insn{ .decl_fn = .{ .symbol = 1 } },
+            Insn{ .decl_var = .{ .symbol = 2 } },
+            Insn{ .push_integer = .{ .value = 1 } },
+            Insn{ .assign = {} },
+            Insn{ .push_symbol = .{ .value = 0 } },
+            Insn{ .push_symbol = .{ .value = 2 } },
+            Insn{ .product = {} },
+            Insn{ .yield = {} },
+            //
+            Insn{ .yield = {} },
+        };
+        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+    }
 }
 
 test "call function" {

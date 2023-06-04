@@ -2,6 +2,7 @@ const std = @import("std");
 const lex = @import("lex.zig");
 const parse = @import("parse.zig");
 const ir = @import("ir.zig");
+const eval = @import("eval.zig");
 const gen = @import("gen.zig");
 const testing = std.testing;
 
@@ -30,5 +31,6 @@ test {
     _ = lex;
     _ = parse;
     _ = ir;
+    _ = eval;
     _ = gen;
 }

@@ -5,6 +5,7 @@ const lex = @import("lex.zig");
 const Token = lex.Token;
 
 const AstNodeTag = enum {
+    root,
     integer,
     sum,
     product,
@@ -21,6 +22,7 @@ const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
 const Statement = std.ArrayList(*const AstNode);
 
 pub const AstNode = union(AstNodeTag) {
+    root: []*const AstNode,
     integer: struct { value: usize },
     sum: BinaryOp,
     product: BinaryOp,
@@ -54,12 +56,15 @@ pub const Parser = struct {
         return .{ .allocator = allocator, .lexer = lex.Lexer{ .buffer = buffer } };
     }
 
-    pub fn parse(self: *Self) Error![]*const AstNode {
+    pub fn parse(self: *Self) Error!*const AstNode {
+        var root = try self.allocator.create(AstNode);
         var list = std.ArrayList(*const AstNode).init(self.allocator);
-        while (self.peek()) {
+        while (self.peek()) |token| {
+            _ = token;
             try list.append(try self.parseExpression(.lowest));
         }
-        return list.toOwnedSlice();
+        root.* = AstNode{ .root = list.toOwnedSlice() };
+        return root;
     }
 
     pub fn parseStatement(self: *Self) Error!*const AstNode {
@@ -81,6 +86,7 @@ pub const Parser = struct {
         switch (token) {
             .eof => return .lowest,
             .integer => return .lowest,
+            .fn_kw => return .lowest,
             .plus => return .sum,
             .asterisk => return .product,
             .solidus => return .product,
