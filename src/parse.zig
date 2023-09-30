@@ -63,7 +63,7 @@ pub const Parser = struct {
             _ = token;
             try list.append(try self.parseExpression(.lowest));
         }
-        root.* = AstNode{ .root = list.toOwnedSlice() };
+        root.* = AstNode{ .root = try list.toOwnedSlice() };
         return root;
     }
 
@@ -151,7 +151,7 @@ pub const Parser = struct {
         var token = self.peek() orelse return Error.UnexpectedEndOfStream;
         const lhsFn = try nullDenotation(token);
         var lhs = try lhsFn(self);
-        while (@enumToInt(precedence) < @enumToInt(try self.peekPrecedence())) {
+        while (@intFromEnum(precedence) < @intFromEnum(try self.peekPrecedence())) {
             token = self.peek() orelse unreachable;
             const infixFn = try leftDenotation(token);
             lhs = try infixFn(self, lhs);
@@ -288,9 +288,9 @@ test "infix sum" {
     var result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
     try testing.expect(result.sum.rhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 2), result.sum.rhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(2)), result.sum.rhs.integer.value);
 }
 
 test "infix product" {
@@ -302,12 +302,12 @@ test "infix product" {
     var result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
     try testing.expect(result.sum.rhs.* == AstNode.product);
     try testing.expect(result.sum.rhs.product.lhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 2), result.sum.rhs.product.lhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(2)), result.sum.rhs.product.lhs.integer.value);
     try testing.expect(result.sum.rhs.product.rhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 3), result.sum.rhs.product.rhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(3)), result.sum.rhs.product.rhs.integer.value);
 }
 
 test "infix division" {
@@ -319,12 +319,12 @@ test "infix division" {
     var result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.sum.lhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
     try testing.expect(result.sum.rhs.* == AstNode.division);
     try testing.expect(result.sum.rhs.division.lhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 2), result.sum.rhs.division.lhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(2)), result.sum.rhs.division.lhs.integer.value);
     try testing.expect(result.sum.rhs.division.rhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 3), result.sum.rhs.division.rhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(3)), result.sum.rhs.division.rhs.integer.value);
 }
 
 test "group" {
@@ -339,11 +339,11 @@ test "group" {
     try testing.expect(result.division.lhs.* == .group);
     try testing.expect(result.division.lhs.group.value.* == .sum);
     try testing.expect(result.division.lhs.group.value.sum.lhs.* == .integer);
-    try testing.expectEqual(@intCast(usize, 1), result.division.lhs.group.value.sum.lhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(1)), result.division.lhs.group.value.sum.lhs.integer.value);
     try testing.expect(result.division.lhs.group.value.sum.rhs.* == .integer);
-    try testing.expectEqual(@intCast(usize, 2), result.division.lhs.group.value.sum.rhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(2)), result.division.lhs.group.value.sum.rhs.integer.value);
     try testing.expect(result.division.rhs.* == .integer);
-    try testing.expectEqual(@intCast(usize, 3), result.division.rhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(3)), result.division.rhs.integer.value);
 }
 
 // Test Assignment
@@ -360,7 +360,7 @@ test "assign" {
     try testing.expect(result.assignment.lhs.* == AstNode.name);
     try testing.expectEqualSlices(u8, "a", result.assignment.lhs.name.value);
     try testing.expect(result.assignment.rhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.assignment.rhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
 }
 
 test "declare and assign" {
@@ -375,7 +375,7 @@ test "declare and assign" {
     try testing.expect(result.assignment.lhs.* == AstNode.var_decl);
     try testing.expectEqualSlices(u8, "a", result.assignment.lhs.var_decl.name);
     try testing.expect(result.assignment.rhs.* == AstNode.integer);
-    try testing.expectEqual(@intCast(usize, 1), result.assignment.rhs.integer.value);
+    try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
 }
 
 test "declare function" {
