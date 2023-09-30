@@ -223,6 +223,18 @@ pub const Lexer = struct {
         }
     }
 
+    fn readWhileZero(self: *Self) Error!void {
+        while (true) {
+            const byte = self.peek() orelse return;
+            switch (byte) {
+                '0' => {
+                    _ = try self.take();
+                },
+                else => return,
+            }
+        }
+    }
+
     fn matchExact(self: *Self, comptime needle: []const u8) bool {
         // backup one space because we already took the first value of the needle
         const start = self.index - 1;
@@ -315,6 +327,16 @@ pub const Lexer = struct {
                 try self.readWhileIdentifier();
                 return Token{ .name = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
+            '0' => {
+                    try self.readWhileZero();
+                if (self.peek()) |val| {
+                    if (ascii.isDigit(val)) {
+                        log.err("SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers", .{});
+                        return Error.SyntaxError;
+                    }
+                }
+                return Token{ .integer = .{ .value = self.buffer[self.index - 1 .. self.index], .loc = self.location() } };
+            },
             '1'...'9' => {
                 const loc = self.location();
                 const start = self.index - 1;
@@ -324,6 +346,9 @@ pub const Lexer = struct {
             '#' => {
                 // comments aren't tokenized, we just advance
                 try self.readUntilLineEnd();
+                return self.next();
+            },
+            '\\' => {
                 return self.next();
             },
             else => {
@@ -470,9 +495,24 @@ test "integer" {
         try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.integer.loc);
     }
     {
+        var value = "0";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.integer.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.integer.loc);
+    }
+    {
+        var value = "000";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, "0", next.integer.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 3 }, next.integer.loc);
+    }
+    {
         var value = "0123";
         var lex = Lexer{ .buffer = value };
-        try testing.expectError(error.BadToken, lex.next());
+        try testing.expectError(Lexer.Error.SyntaxError, lex.next());
+        try testing.expectEqualSlices(u8, "SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers", test_err_message);
     }
 }
 

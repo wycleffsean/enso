@@ -2,101 +2,20 @@ const std = @import("std");
 const testing = std.testing;
 const lex = @import("../lex.zig");
 
-// https://github.com/python/cpython/blob/main/Tools/scripts/run_tests.py
-// entrypoint for the entire python test suite, so may as well begin here
-// to test lexer/parser
-const pyfile =
-    \\"""Run Python's test suite in a fast, rigorous way.
-    \\
-    \\The defaults are meant to be reasonably thorough, while skipping certain
-    \\tests that can be time-consuming or resource-intensive (e.g. largefile),
-    \\or distracting (e.g. audio and gui). These defaults can be overridden by
-    \\simply passing a -u option to this script.
-    \\
-    \\"""
-    \\
-    \\import os
-    \\import shlex
-    \\import sys
-    \\import sysconfig
-    \\import test.support
-    \\
-    \\
-    \\def is_multiprocess_flag(arg):
-    \\    return arg.startswith('-j') or arg.startswith('--multiprocess')
-    \\
-    \\
-    \\def is_python_flag(arg):
-    \\    return arg.startswith('-p') or arg.startswith('--python')
-    \\
-    \\
-    \\def main(regrtest_args):
-    \\    args = [sys.executable]
-    \\
-    \\    cross_compile = '_PYTHON_HOST_PLATFORM' in os.environ
-    \\    if (hostrunner := os.environ.get("_PYTHON_HOSTRUNNER")) is None:
-    \\        hostrunner = sysconfig.get_config_var("HOSTRUNNER")
-    \\    if cross_compile:
-    \\        # emulate -E, but keep PYTHONPATH + cross compile env vars, so
-    \\        # test executable can load correct sysconfigdata file.
-    \\        keep = {
-    \\            '_PYTHON_PROJECT_BASE',
-    \\            '_PYTHON_HOST_PLATFORM',
-    \\            '_PYTHON_SYSCONFIGDATA_NAME',
-    \\            'PYTHONPATH'
-    \\        }
-    \\        environ = {
-    \\            name: value for name, value in os.environ.items()
-    \\            if not name.startswith(('PYTHON', '_PYTHON')) or name in keep
-    \\        }
-    \\    else:
-    \\        environ = os.environ.copy()
-    \\
-    \\    # Allow user-specified interpreter options to override our defaults.
-    \\    args.extend(test.support.args_from_interpreter_flags())
-    \\
-    \\    args.extend(['-m', 'test',    # Run the test suite
-    \\                 '--fast-ci',     # Fast Continuous Integration mode
-    \\                 ])
-    \\    if not any(is_multiprocess_flag(arg) for arg in regrtest_args):
-    \\        if cross_compile and hostrunner:
-    \\            # For now use only two cores for cross-compiled builds;
-    \\            # hostrunner can be expensive.
-    \\            args.extend(['-j', '2'])
-    \\
-    \\    if cross_compile and hostrunner:
-    \\        # If HOSTRUNNER is set and -p/--python option is not given, then
-    \\        # use hostrunner to execute python binary for tests.
-    \\        if not any(is_python_flag(arg) for arg in regrtest_args):
-    \\            buildpython = sysconfig.get_config_var("BUILDPYTHON")
-    \\            args.extend(["--python", f"{hostrunner} {buildpython}"])
-    \\
-    \\    args.extend(regrtest_args)
-    \\
-    \\    print(shlex.join(args), flush=True)
-    \\
-    \\    if sys.platform == 'win32':
-    \\        from subprocess import call
-    \\        sys.exit(call(args))
-    \\    else:
-    \\        os.execve(sys.executable, args, environ)
-    \\
-    \\
-    \\if __name__ == '__main__':
-    \\    main(sys.argv[1:])
-;
+const test_grammar = @embedFile("../test/test_grammar.py");
 
 fn lexBuffer(buffer: []const u8) !void {
     var lexer = lex.Lexer{ .buffer = buffer };
-    for (0..10000) |_| {
-        _ = lexer.next() catch |err| {
+    for (0..100000) |_| {
+        var tok = lexer.next() catch |err| {
             std.debug.print("{s}\n", .{lex.test_err_message});
             return err;
         };
+        std.debug.print("tok: {any}\n", .{tok});
     }
     try testing.expect(false);
 }
 
 test "lex pyfile" {
-    try testing.expectError(lex.Lexer.Error.eof, lexBuffer(pyfile));
+    try testing.expectError(lex.Lexer.Error.eof, lexBuffer(test_grammar));
 }
