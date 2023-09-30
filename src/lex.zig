@@ -137,6 +137,7 @@ pub const Lexer = struct {
     col: ColLength = 0,
     line: LineLength = 1, // 1 indexed, latent increment col = 0 # 1 indexed, immediate increment
     indent: u32 = 0, // 0 indexed, immediate increment
+    complete: bool = false,
     const Self = @This();
 
     pub const Error = error{
@@ -194,6 +195,13 @@ pub const Lexer = struct {
 
     fn bare(self: *Self) Bare {
         return .{ .loc = self.location() };
+    }
+
+    fn readUntilLineEnd(self: *Self) Error!void {
+        const rest_of_line = std.mem.sliceTo(self.buffer[self.index..], '\n');
+        // it's tempting to just skip the cursor forward to the line end
+        // but we need the bookkeeping stuff take() does
+        for (0..rest_of_line.len) |_| _ = try self.take();
     }
 
     fn readWhileIdentifier(self: *Self) Error!void {
@@ -256,7 +264,12 @@ pub const Lexer = struct {
     }
 
     pub fn next(self: *Self) Error!Token {
-        const byte = self.take() catch return Token{ .eof = self.bare() };
+        const byte = self.take() catch |err| {
+            // we give a nice sentinel before throwing; if we don't throw
+            // then consumers could get stuck in an infinite loop while(lex.next())
+            defer self.complete = true;
+            if (self.complete) return err else return Token{ .eof = self.bare() };
+        };
         switch (byte) {
             // whitespace
             '\n' => {
@@ -307,6 +320,11 @@ pub const Lexer = struct {
                 const start = self.index - 1;
                 try self.readWhileNumeric();
                 return Token{ .integer = .{ .value = self.buffer[start..self.index], .loc = loc } };
+            },
+            '#' => {
+                // comments aren't tokenized, we just advance
+                try self.readUntilLineEnd();
+                return self.next();
             },
             else => {
                 const rest_of_line = std.mem.sliceTo(self.buffer[self.index - 1 ..], '\n');
@@ -573,5 +591,22 @@ test "triple quote" {
         var lex = Lexer{ .buffer = doc };
         try testing.expectError(Lexer.Error.SyntaxError, lex.next());
         try testing.expectEqualSlices(u8, "SyntaxError: unterminated triple-quoted string literal (detected at line 2)", test_err_message);
+    }
+}
+
+test "comments" {
+    {
+        var lex = Lexer{ .buffer = "#" };
+        try testing.expect(try lex.next() == .eof);
+    }
+    {
+        const doc =
+            \\1 # this is a comment
+            \\"the quick brown fox jumps over the lazy dog"
+        ;
+        var lex = Lexer{ .buffer = doc };
+        try testing.expect(try lex.next() == .integer);
+        try testing.expect(try lex.next() == .string);
+        try testing.expect(try lex.next() == .eof);
     }
 }
