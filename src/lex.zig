@@ -6,7 +6,7 @@ const ascii = std.ascii;
 const fixedBufferStream = std.io.fixedBufferStream;
 
 var test_logger_buf: [std.mem.page_size / 4]u8 = undefined;
-var test_err_message: []u8 = undefined;
+pub var test_err_message: []u8 = undefined;
 
 const TestLogger = struct {
     fn err(self: *const TestLogger, comptime fmt: []const u8, args: anytype) void {
@@ -29,6 +29,7 @@ const TokenTag = enum {
     name,
     integer,
     //STRING,
+    string,
     docstring,
     dot,
     colon,
@@ -70,6 +71,7 @@ pub const Token = union(TokenTag) {
     rparen: Bare,
     name: Identifier,
     integer: Identifier,
+    string: Identifier,
     docstring: Identifier,
     dot: Bare,
     colon: Bare,
@@ -98,6 +100,7 @@ pub const Token = union(TokenTag) {
             .rparen => self.rparen.loc,
             .name => self.name.loc,
             .integer => self.integer.loc,
+            .string => self.string.loc,
             .docstring => self.docstring.loc,
             .dot => self.dot.loc,
             .colon => self.colon.loc,
@@ -193,15 +196,10 @@ pub const Lexer = struct {
         return .{ .loc = self.location() };
     }
 
-    fn readWhileAlpha(self: *Self) Error!void {
+    fn readWhileIdentifier(self: *Self) Error!void {
         while (true) {
             const byte = self.peek() orelse return;
-            switch (byte) {
-                'A'...'Z', 'a'...'z' => {
-                    _ = try self.take();
-                },
-                else => return,
-            }
+            if (ascii.isAlphabetic(byte) or byte == '_') _ = try self.take() else return;
         }
     }
 
@@ -286,17 +284,22 @@ pub const Lexer = struct {
             '{' => return Token{ .lcbracket = self.bare() },
             '}' => return Token{ .rcbracket = self.bare() },
             '"' => {
-                if (self.matchExact("\"\"\"")) return self.nextDocstring();
-                log.err("BadToken: double quotes not supported yet", .{});
-                return Error.BadToken;
+                const docstringSentinel = "\"\"\"";
+                if (self.matchExact(docstringSentinel)) return self.nextDocstring(docstringSentinel);
+                return self.nextString('"');
             },
-            'A'...'Z', 'a'...'z' => {
+            '\'' => {
+                const docstringSentinel = "'''";
+                if (self.matchExact(docstringSentinel)) return self.nextDocstring(docstringSentinel);
+                return self.nextString('\'');
+            },
+            'A'...'Z', 'a'...'z', '_' => {
                 if (self.readKeyword()) |kw| {
                     return kw;
                 }
                 const loc = self.location();
                 const start = self.index - 1;
-                try self.readWhileAlpha();
+                try self.readWhileIdentifier();
                 return Token{ .name = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
             '1'...'9' => {
@@ -313,7 +316,36 @@ pub const Lexer = struct {
         }
     }
 
-    pub fn nextDocstring(self: *Self) Error!Token {
+    // TODO: we support escaping quote characters, but the escapes will end up in the resulting
+    // string.  So far the lexer only pulls slices out of an existent buffer avoiding any need
+    // to allocate memory.  In a future revision we could allocPrint into the intern pool directly
+    pub fn nextString(self: *Self, comptime sentinel: u8) Error!Token {
+        const start = self.index;
+        const loc = self.location();
+        var escaped = false;
+
+        while (true) {
+            const byte = self.take() catch {
+                log.err("SyntaxError: unterminated string literal (detected at line {d})", .{self.location().line});
+                return Error.SyntaxError;
+            };
+            if (escaped) {
+                escaped = false;
+            } else {
+                switch (byte) {
+                    sentinel => {
+                        return Token{ .string = .{ .value = self.buffer[start .. self.index - 1], .loc = loc } };
+                    },
+                    '\\' => {
+                        escaped = true;
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
+    pub fn nextDocstring(self: *Self, comptime sentinel: []const u8) Error!Token {
         const start = self.index;
         const loc = self.location();
         while (true) {
@@ -322,8 +354,8 @@ pub const Lexer = struct {
                 return Error.SyntaxError;
             };
             switch (byte) {
-                '"' => {
-                    if (self.matchExact("\"\"\"")) {
+                sentinel[0] => {
+                    if (self.matchExact(sentinel)) {
                         return Token{ .docstring = .{ .value = self.buffer[start .. self.index - 3], .loc = loc } };
                     } else {
                         _ = try self.take();
@@ -474,6 +506,33 @@ test "def kw" {
     }
 }
 
+test "strings" {
+    {
+        var lex = Lexer{ .buffer = "'string'" };
+        const next = try lex.next();
+        try testing.expect(next == .string);
+        try testing.expectEqualSlices(u8, "string", next.string.value);
+    }
+    {
+        var lex = Lexer{ .buffer = "'escaped\\' string'" };
+        const next = try lex.next();
+        try testing.expect(next == .string);
+        try testing.expectEqualSlices(u8, "escaped\\' string", next.string.value);
+    }
+    {
+        var lex = Lexer{ .buffer = "\"string\"" };
+        const next = try lex.next();
+        try testing.expect(next == .string);
+        try testing.expectEqualSlices(u8, "string", next.string.value);
+    }
+    {
+        var lex = Lexer{ .buffer = "\"escaped\\\" string\"" };
+        const next = try lex.next();
+        try testing.expect(next == .string);
+        try testing.expectEqualSlices(u8, "escaped\\\" string", next.string.value);
+    }
+}
+
 test "triple quote" {
     {
         const doc =
@@ -489,6 +548,26 @@ test "triple quote" {
     {
         const doc =
             \\"""The quick
+            \\brown fox jumps over the lazy dog
+        ;
+        var lex = Lexer{ .buffer = doc };
+        try testing.expectError(Lexer.Error.SyntaxError, lex.next());
+        try testing.expectEqualSlices(u8, "SyntaxError: unterminated triple-quoted string literal (detected at line 2)", test_err_message);
+    }
+    {
+        const doc =
+            \\'''The quick
+            \\brown fox jumps over the lazy dog
+            \\'''
+        ;
+        var lex = Lexer{ .buffer = doc };
+        const next = try lex.next();
+        try testing.expect(next == .docstring);
+        try testing.expectEqualSlices(u8, "The quick\nbrown fox jumps over the lazy dog\n", next.docstring.value);
+    }
+    {
+        const doc =
+            \\'''The quick
             \\brown fox jumps over the lazy dog
         ;
         var lex = Lexer{ .buffer = doc };

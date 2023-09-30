@@ -89,7 +89,10 @@ const pyfile =
 fn lexBuffer(buffer: []const u8) !void {
     var lexer = lex.Lexer{ .buffer = buffer };
     while (true) {
-        var tok = try lexer.next();
+        var tok = lexer.next() catch |err| {
+            std.debug.print("{s}\n", .{lex.test_err_message});
+            return err;
+        };
         std.debug.print("tok: {any}\n", .{tok});
     }
 }
