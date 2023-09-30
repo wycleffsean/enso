@@ -33,4 +33,6 @@ test {
     _ = ir;
     _ = eval;
     _ = gen;
+    _ = @import("lex/lexer_test.zig");
+    _ = @import("parse/grammar_test.zig");
 }

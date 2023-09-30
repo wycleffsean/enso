@@ -86,7 +86,7 @@ pub const Parser = struct {
         switch (token) {
             .eof => return .lowest,
             .integer => return .lowest,
-            .fn_kw => return .lowest,
+            .def_kw => return .lowest,
             .plus => return .sum,
             .asterisk => return .product,
             .solidus => return .product,
@@ -106,7 +106,7 @@ pub const Parser = struct {
             .lparen => return parseGroup,
             .name => return parseName,
             .var_kw => return parseVariableDeclaration,
-            .fn_kw => return parseFunctionDeclaration,
+            .def_kw => return parseFunctionDeclaration,
             else => return Error.BadNullDenotation,
         }
     }
@@ -238,8 +238,8 @@ pub const Parser = struct {
     }
 
     fn parseFunctionDeclaration(self: *Self) Error!*AstNode {
-        const fn_kw_token = try self.take(); // skip fn_decl token
-        assert(fn_kw_token == .fn_kw);
+        const def_kw_token = try self.take(); // skip fn_decl token
+        assert(def_kw_token == .def_kw);
         const name_token = try self.take();
         if (name_token != .name) return Error.UnexpectedToken;
 
@@ -259,7 +259,7 @@ pub const Parser = struct {
         } };
 
         while (self.peek()) |next_token| {
-            if (next_token.getLocation().indent <= fn_kw_token.getLocation().indent) break;
+            if (next_token.getLocation().indent <= def_kw_token.getLocation().indent) break;
             try fn_decl.fn_decl.statement.append(try self.parseStatement());
         }
 
@@ -384,7 +384,7 @@ test "declare function" {
     defer arena.deinit();
 
     const fn_decl =
-        \\fn myFunction():
+        \\def myFunction():
         \\	var a = 1
         \\	a * 3
     ;

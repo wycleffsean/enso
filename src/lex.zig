@@ -1,7 +1,24 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const testing = std.testing;
+const ascii = std.ascii;
 const fixedBufferStream = std.io.fixedBufferStream;
+
+var test_logger_buf: [std.mem.page_size / 4]u8 = undefined;
+var test_err_message: []u8 = undefined;
+
+const TestLogger = struct {
+    fn err(self: *const TestLogger, comptime fmt: []const u8, args: anytype) void {
+        _ = self;
+        test_err_message = std.fmt.bufPrint(&test_logger_buf, fmt, args) catch unreachable;
+    }
+};
+
+const log = if (builtin.is_test)
+    TestLogger{}
+else
+    std.log.scoped(.lex);
 
 const LineLength = u32;
 const ColLength = u32;
@@ -12,6 +29,8 @@ const TokenTag = enum {
     name,
     integer,
     //STRING,
+    docstring,
+    dot,
     colon,
     comma,
     pipe,
@@ -30,18 +49,29 @@ const TokenTag = enum {
     lcbracket,
     rcbracket,
     var_kw,
-    fn_kw,
+    def_kw,
 };
 
 const Location = struct { indent: IndentLength = 0, line: LineLength, col: ColLength };
 const Bare = struct { loc: Location };
+const Identifier = struct {
+    value: []const u8,
+    loc: Location,
+
+    pub fn format(self: Identifier, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt; // actual_fmt i.e. any, or whatever
+        try std.fmt.formatBuf(self.value, options, writer);
+    }
+};
 
 pub const Token = union(TokenTag) {
     eof: Bare,
     lparen: Bare,
     rparen: Bare,
-    name: struct { value: []const u8, loc: Location },
-    integer: struct { value: []const u8, loc: Location },
+    name: Identifier,
+    integer: Identifier,
+    docstring: Identifier,
+    dot: Bare,
     colon: Bare,
     comma: Bare,
     pipe: Bare,
@@ -58,7 +88,7 @@ pub const Token = union(TokenTag) {
     lcbracket: Bare,
     rcbracket: Bare,
     var_kw: Bare,
-    fn_kw: Bare,
+    def_kw: Bare,
 
     // this is really smelly
     pub inline fn getLocation(self: *const Token) Location {
@@ -68,6 +98,8 @@ pub const Token = union(TokenTag) {
             .rparen => self.rparen.loc,
             .name => self.name.loc,
             .integer => self.integer.loc,
+            .docstring => self.docstring.loc,
+            .dot => self.dot.loc,
             .colon => self.colon.loc,
             .comma => self.comma.loc,
             .pipe => self.pipe.loc,
@@ -84,9 +116,14 @@ pub const Token = union(TokenTag) {
             .lcbracket => self.lcbracket.loc,
             .rcbracket => self.rcbracket.loc,
             .var_kw => self.var_kw.loc,
-            .fn_kw => self.fn_kw.loc,
+            .def_kw => self.def_kw.loc,
         };
     }
+
+    // pub fn format(value: Token, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+
+    // }
+
 };
 
 pub const Lexer = struct {
@@ -101,16 +138,17 @@ pub const Lexer = struct {
 
     pub const Error = error{
         BadToken,
+        SyntaxError,
         eof,
     };
 
-    fn peek(self: *Self) Error!u8 {
+    fn peek(self: *Self) ?u8 {
         if (self.curr) |curr| {
             return curr;
         }
 
         if (self.index >= self.buffer.len) {
-            return Error.eof;
+            return null;
         }
 
         const byte = self.buffer[self.index];
@@ -126,7 +164,7 @@ pub const Lexer = struct {
     }
 
     fn take(self: *Self) Error!u8 {
-        var byte = try self.peek();
+        var byte = self.peek() orelse return Error.eof;
         self.index += 1;
         if (is(self.prior, '\n')) {
             self.line += 1;
@@ -141,7 +179,7 @@ pub const Lexer = struct {
 
     fn takeIndents(self: *Self) Error!void {
         self.indent = 0;
-        while ((self.peek() catch 0) == '\t') {
+        while ((self.peek() orelse 0) == '\t') {
             self.indent += 1;
             _ = try self.take();
         }
@@ -157,7 +195,7 @@ pub const Lexer = struct {
 
     fn readWhileAlpha(self: *Self) Error!void {
         while (true) {
-            const byte = self.peek() catch return;
+            const byte = self.peek() orelse return;
             switch (byte) {
                 'A'...'Z', 'a'...'z' => {
                     _ = try self.take();
@@ -169,7 +207,7 @@ pub const Lexer = struct {
 
     fn readWhileNumeric(self: *Self) Error!void {
         while (true) {
-            const byte = self.peek() catch return;
+            const byte = self.peek() orelse return;
             switch (byte) {
                 '0'...'9' => {
                     _ = try self.take();
@@ -179,27 +217,41 @@ pub const Lexer = struct {
         }
     }
 
-    fn matchExact(self: *Self, comptime tag: TokenTag, comptime needle: []const u8) ?Token {
+    fn matchExact(self: *Self, comptime needle: []const u8) bool {
+        // backup one space because we already took the first value of the needle
         const start = self.index - 1;
         const end = start + needle.len;
-        if (end > self.buffer.len) return null;
-        if (end < self.buffer.len)
-            switch (self.buffer[end]) {
-                '\n', '\t', ' ' => {},
-                else => return null,
-            };
+        if (end > self.buffer.len) return false;
         if (std.mem.eql(u8, needle, self.buffer[start..end])) {
             comptime var i = needle.len - 1;
             inline while (i > 0) : (i -= 1) {
                 _ = self.take() catch unreachable;
             }
+            return true;
+        }
+        return false;
+    }
+
+    fn matchExactTerminatedByWhitspace(self: *Self, comptime needle: []const u8) bool {
+        if (!self.matchExact(needle)) return false;
+        if (self.peek()) |byte| {
+            switch (byte) {
+                '\n', '\t', ' ' => {},
+                else => return false,
+            }
+        }
+        return true;
+    }
+
+    fn matchKeyword(self: *Self, comptime tag: TokenTag, comptime needle: []const u8) ?Token {
+        if (self.matchExactTerminatedByWhitspace(needle)) {
             return @unionInit(Token, @tagName(tag), self.bare());
         }
         return null;
     }
 
     fn readKeyword(self: *Self) ?Token {
-        if (self.matchExact(.var_kw, "var") orelse self.matchExact(.fn_kw, "fn")) |token| {
+        if (self.matchKeyword(.var_kw, "var") orelse self.matchKeyword(.def_kw, "def")) |token| {
             return token;
         }
         return null;
@@ -217,6 +269,7 @@ pub const Lexer = struct {
             // brackets and operators
             '(' => return Token{ .lparen = self.bare() },
             ')' => return Token{ .rparen = self.bare() },
+            '.' => return Token{ .dot = self.bare() },
             ':' => return Token{ .colon = self.bare() },
             ',' => return Token{ .comma = self.bare() },
             '|' => return Token{ .pipe = self.bare() },
@@ -232,6 +285,11 @@ pub const Lexer = struct {
             ']' => return Token{ .rsbracket = self.bare() },
             '{' => return Token{ .lcbracket = self.bare() },
             '}' => return Token{ .rcbracket = self.bare() },
+            '"' => {
+                if (self.matchExact("\"\"\"")) return self.nextDocstring();
+                log.err("BadToken: double quotes not supported yet", .{});
+                return Error.BadToken;
+            },
             'A'...'Z', 'a'...'z' => {
                 if (self.readKeyword()) |kw| {
                     return kw;
@@ -247,7 +305,34 @@ pub const Lexer = struct {
                 try self.readWhileNumeric();
                 return Token{ .integer = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
-            else => return Error.BadToken,
+            else => {
+                const rest_of_line = std.mem.sliceTo(self.buffer[self.index - 1 ..], '\n');
+                log.err("BadToken: '{s}' (line {d})", .{ rest_of_line, self.location().line });
+                return Error.BadToken;
+            },
+        }
+    }
+
+    pub fn nextDocstring(self: *Self) Error!Token {
+        const start = self.index;
+        const loc = self.location();
+        while (true) {
+            const byte = self.peek() orelse {
+                log.err("SyntaxError: unterminated triple-quoted string literal (detected at line {d})", .{self.location().line});
+                return Error.SyntaxError;
+            };
+            switch (byte) {
+                '"' => {
+                    if (self.matchExact("\"\"\"")) {
+                        return Token{ .docstring = .{ .value = self.buffer[start .. self.index - 3], .loc = loc } };
+                    } else {
+                        _ = try self.take();
+                    }
+                },
+                else => {
+                    _ = try self.take();
+                },
+            }
         }
     }
 };
@@ -366,25 +451,48 @@ test "var kw" {
     }
 }
 
-test "fn kw" {
+test "def kw" {
     {
-        var lex = Lexer{ .buffer = "fn" };
+        var lex = Lexer{ .buffer = "def" };
         const next = try lex.next();
-        try testing.expect(next == .fn_kw);
+        try testing.expect(next == .def_kw);
     }
     {
-        var lex = Lexer{ .buffer = "fn " };
+        var lex = Lexer{ .buffer = "def " };
         const next = try lex.next();
-        try testing.expect(next == .fn_kw);
+        try testing.expect(next == .def_kw);
     }
     {
-        var lex = Lexer{ .buffer = "fn\t" };
+        var lex = Lexer{ .buffer = "def\t" };
         const next = try lex.next();
-        try testing.expect(next == .fn_kw);
+        try testing.expect(next == .def_kw);
     }
     {
-        var lex = Lexer{ .buffer = "fns" };
+        var lex = Lexer{ .buffer = "defs" };
         const next = try lex.next();
-        try testing.expect(next != .fn_kw);
+        try testing.expect(next != .def_kw);
+    }
+}
+
+test "triple quote" {
+    {
+        const doc =
+            \\"""The quick
+            \\brown fox jumps over the lazy dog
+            \\"""
+        ;
+        var lex = Lexer{ .buffer = doc };
+        const next = try lex.next();
+        try testing.expect(next == .docstring);
+        try testing.expectEqualSlices(u8, "The quick\nbrown fox jumps over the lazy dog\n", next.docstring.value);
+    }
+    {
+        const doc =
+            \\"""The quick
+            \\brown fox jumps over the lazy dog
+        ;
+        var lex = Lexer{ .buffer = doc };
+        try testing.expectError(Lexer.Error.SyntaxError, lex.next());
+        try testing.expectEqualSlices(u8, "SyntaxError: unterminated triple-quoted string literal (detected at line 2)", test_err_message);
     }
 }
