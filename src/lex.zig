@@ -27,6 +27,7 @@ pub const IndentLength = u32;
 const TokenTag = enum {
     eof,
     name,
+    decorator,
     integer,
     //STRING,
     string,
@@ -39,10 +40,14 @@ const TokenTag = enum {
     minus,
     asterisk,
     solidus,
+    percent,
     less,
     greater,
     assign,
     bang,
+    ampersand,
+    caret,
+    tilde,
     lparen,
     rparen,
     lsbracket,
@@ -70,6 +75,7 @@ pub const Token = union(TokenTag) {
     lparen: Bare,
     rparen: Bare,
     name: Identifier,
+    decorator: Identifier,
     integer: Identifier,
     string: Identifier,
     docstring: Identifier,
@@ -81,10 +87,14 @@ pub const Token = union(TokenTag) {
     minus: Bare,
     asterisk: Bare,
     solidus: Bare,
+    percent: Bare,
     less: Bare,
     greater: Bare,
     assign: Bare,
     bang: Bare,
+    ampersand: Bare,
+    caret: Bare,
+    tilde: Bare,
     lsbracket: Bare,
     rsbracket: Bare,
     lcbracket: Bare,
@@ -99,6 +109,7 @@ pub const Token = union(TokenTag) {
             .lparen => self.lparen.loc,
             .rparen => self.rparen.loc,
             .name => self.name.loc,
+            .decorator => self.decorator.loc,
             .integer => self.integer.loc,
             .string => self.string.loc,
             .docstring => self.docstring.loc,
@@ -110,10 +121,14 @@ pub const Token = union(TokenTag) {
             .minus => self.minus.loc,
             .asterisk => self.asterisk.loc,
             .solidus => self.solidus.loc,
+            .percent => self.percent.loc,
             .less => self.less.loc,
             .greater => self.greater.loc,
             .assign => self.assign.loc,
             .bang => self.bang.loc,
+            .ampersand => self.ampersand.loc,
+            .caret => self.caret.loc,
+            .tilde => self.tilde.loc,
             .lsbracket => self.lsbracket.loc,
             .rsbracket => self.rsbracket.loc,
             .lcbracket => self.lcbracket.loc,
@@ -207,7 +222,7 @@ pub const Lexer = struct {
     fn readWhileIdentifier(self: *Self) Error!void {
         while (true) {
             const byte = self.peek() orelse return;
-            if (ascii.isAlphabetic(byte) or byte == '_') _ = try self.take() else return;
+            if (ascii.isAlphanumeric(byte) or byte == '_') _ = try self.take() else return;
         }
     }
 
@@ -285,6 +300,7 @@ pub const Lexer = struct {
         switch (byte) {
             // whitespace
             '\n' => {
+                // TODO: create end of statement
                 try self.takeIndents();
                 return self.next();
             },
@@ -300,10 +316,14 @@ pub const Lexer = struct {
             '-' => return Token{ .minus = self.bare() },
             '*' => return Token{ .asterisk = self.bare() },
             '/' => return Token{ .solidus = self.bare() },
+            '%' => return Token{ .percent = self.bare() },
             '<' => return Token{ .less = self.bare() },
             '>' => return Token{ .greater = self.bare() },
             '=' => return Token{ .assign = self.bare() },
             '!' => return Token{ .bang = self.bare() },
+            '&' => return Token{ .ampersand = self.bare() },
+            '^' => return Token{ .caret = self.bare() },
+            '~' => return Token{ .tilde = self.bare() },
             '[' => return Token{ .lsbracket = self.bare() },
             ']' => return Token{ .rsbracket = self.bare() },
             '{' => return Token{ .lcbracket = self.bare() },
@@ -327,8 +347,14 @@ pub const Lexer = struct {
                 try self.readWhileIdentifier();
                 return Token{ .name = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
+            '@' => {
+                const loc = self.location();
+                const start = self.index - 1;
+                try self.readWhileIdentifier();
+                return Token{ .decorator = .{ .value = self.buffer[start..self.index], .loc = loc } };
+            },
             '0' => {
-                    try self.readWhileZero();
+                try self.readWhileZero();
                 if (self.peek()) |val| {
                     if (ascii.isDigit(val)) {
                         log.err("SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers", .{});
@@ -349,6 +375,11 @@ pub const Lexer = struct {
                 return self.next();
             },
             '\\' => {
+                // TODO: prevent end of statement
+                return self.next();
+            },
+            ';' => {
+                // TODO: create end of statement
                 return self.next();
             },
             else => {
@@ -455,7 +486,7 @@ test "parens" {
 }
 
 test "operators" {
-    var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|" };
+    var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|%&^~" };
     try testing.expectEqual(lex.next(), .{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } });
     try testing.expectEqual(lex.next(), .{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } });
     try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .line = 1, .col = 3 } } });
@@ -471,6 +502,10 @@ test "operators" {
     try testing.expectEqual(lex.next(), .{ .lcbracket = .{ .loc = .{ .line = 1, .col = 13 } } });
     try testing.expectEqual(lex.next(), .{ .rcbracket = .{ .loc = .{ .line = 1, .col = 14 } } });
     try testing.expectEqual(lex.next(), .{ .pipe = .{ .loc = .{ .line = 1, .col = 15 } } });
+    try testing.expectEqual(lex.next(), .{ .percent = .{ .loc = .{ .line = 1, .col = 16 } } });
+    try testing.expectEqual(lex.next(), .{ .ampersand = .{ .loc = .{ .line = 1, .col = 17 } } });
+    try testing.expectEqual(lex.next(), .{ .caret = .{ .loc = .{ .line = 1, .col = 18 } } });
+    try testing.expectEqual(lex.next(), .{ .tilde = .{ .loc = .{ .line = 1, .col = 19 } } });
 }
 
 test "whitespace ignored" {
@@ -479,11 +514,26 @@ test "whitespace ignored" {
 }
 
 test "name" {
-    var lex = Lexer{ .buffer = "thing " };
-    var value = "thing";
+    {
+        var lex = Lexer{ .buffer = "thing " };
+        var value = "thing";
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.name.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.name.loc);
+    }
+    {
+        var lex = Lexer{ .buffer = "d02" };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, "d02", next.name.value);
+    }
+}
+
+test "decorator" {
+    var lex = Lexer{ .buffer = "@thing " };
+    var value = "@thing";
     const next = try lex.next();
-    try testing.expectEqualSlices(u8, value, next.name.value);
-    try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.name.loc);
+    try testing.expectEqualSlices(u8, value, next.decorator.value);
+    try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.decorator.loc);
 }
 
 test "integer" {
