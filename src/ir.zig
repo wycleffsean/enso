@@ -109,6 +109,7 @@ pub const IrGen = struct {
                 try self.stack.append(.{ .ast_node = call.ref });
                 try self.stack.append(.{ .ast_node = ast });
             },
+            else => unreachable, // TODO: handle these cases
         }
     }
 
@@ -126,6 +127,7 @@ pub const IrGen = struct {
                 .assignment => break :blk Insn{ .assign = {} },
                 .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
                 .call => break :blk Insn{ .call = {} },
+                else => unreachable, // TODO: handle these cases
             }
         };
         return insn;

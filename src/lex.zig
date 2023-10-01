@@ -31,7 +31,6 @@ pub const TokenTag = enum {
     integer,
     //STRING,
     string,
-    docstring,
     dot,
     colon,
     comma,
@@ -78,7 +77,6 @@ pub const Token = union(TokenTag) {
     decorator: Identifier,
     integer: Identifier,
     string: Identifier,
-    docstring: Identifier,
     dot: Bare,
     colon: Bare,
     comma: Bare,
@@ -112,7 +110,6 @@ pub const Token = union(TokenTag) {
             .decorator => self.decorator.loc,
             .integer => self.integer.loc,
             .string => self.string.loc,
-            .docstring => self.docstring.loc,
             .dot => self.dot.loc,
             .colon => self.colon.loc,
             .comma => self.comma.loc,
@@ -430,7 +427,7 @@ pub const Lexer = struct {
             switch (byte) {
                 sentinel[0] => {
                     if (self.matchExact(sentinel)) {
-                        return Token{ .docstring = .{ .value = self.buffer[start .. self.index - 3], .loc = loc } };
+                        return Token{ .string = .{ .value = self.buffer[start .. self.index - 3], .loc = loc } };
                     } else {
                         _ = try self.take();
                     }
@@ -650,8 +647,8 @@ test "triple quote" {
         ;
         var lex = Lexer{ .buffer = doc };
         const next = try lex.next();
-        try testing.expect(next == .docstring);
-        try testing.expectEqualSlices(u8, "The quick\nbrown fox jumps over the lazy dog\n", next.docstring.value);
+        try testing.expect(next == .string);
+        try testing.expectEqualSlices(u8, "The quick\nbrown fox jumps over the lazy dog\n", next.string.value);
     }
     {
         const doc =
@@ -670,8 +667,8 @@ test "triple quote" {
         ;
         var lex = Lexer{ .buffer = doc };
         const next = try lex.next();
-        try testing.expect(next == .docstring);
-        try testing.expectEqualSlices(u8, "The quick\nbrown fox jumps over the lazy dog\n", next.docstring.value);
+        try testing.expect(next == .string);
+        try testing.expectEqualSlices(u8, "The quick\nbrown fox jumps over the lazy dog\n", next.string.value);
     }
     {
         const doc =

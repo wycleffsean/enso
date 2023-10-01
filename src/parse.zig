@@ -20,6 +20,7 @@ const AstNodeTag = enum {
     call,
     field_access,
     array_literal,
+    string_literal,
 };
 
 const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
@@ -39,6 +40,7 @@ pub const AstNode = union(AstNodeTag) {
     call: struct { ref: *const AstNode },
     field_access: BinaryOp,
     array_literal: Statement,
+    string_literal: struct { value: []const u8 },
 };
 
 pub const Parser = struct {
@@ -103,7 +105,6 @@ pub const Parser = struct {
             .lparen => return .call,
             .decorator => return .lowest,
             .string => return .lowest,
-            .docstring => return .lowest,
             .dot => return .call,
             .colon => return .lowest,
             .comma => return .lowest,
@@ -139,8 +140,7 @@ pub const Parser = struct {
             .rparen => return nullDenotationUnhandled,
             .assign => return nullDenotationUnhandled,
             .decorator => return nullDenotationUnhandled,
-            .string => return nullDenotationUnhandled,
-            .docstring => return nullDenotationUnhandled,
+            .string => return parseStringLiteral,
             .dot => return nullDenotationUnhandled,
             .colon => return nullDenotationUnhandled,
             .comma => return nullDenotationUnhandled,
@@ -177,7 +177,6 @@ pub const Parser = struct {
             .rparen => return leftDenotationUnhandled,
             .decorator => return leftDenotationUnhandled,
             .string => return leftDenotationUnhandled,
-            .docstring => return leftDenotationUnhandled,
             .dot => return parseFieldAccess,
             .colon => return leftDenotationUnhandled,
             .comma => return leftDenotationUnhandled,
@@ -271,6 +270,17 @@ pub const Parser = struct {
         var int_node = try self.allocator.create(AstNode);
         int_node.* = .{ .integer = .{ .value = val } };
         return int_node;
+    }
+
+    fn parseStringLiteral(self: *Self) Error!*AstNode {
+        if (self.expect(.string)) {
+            var string_token = try self.take();
+            var string_node = try self.allocator.create(AstNode);
+            string_node.* = .{ .string_literal = .{ .value = string_token.string.value } };
+            return string_node;
+        } else {
+            return Error.UnexpectedToken;
+        }
     }
 
     fn parseSum(self: *Self, lhs: *AstNode) Error!*AstNode {
@@ -394,7 +404,10 @@ pub const Parser = struct {
         const lparen_token = try self.take(); // skip lparen token
         assert(lparen_token == .lparen);
         const rparen_token = try self.take(); // skip rparen token
-        if (rparen_token != .rparen) return Error.UnexpectedToken;
+        if (rparen_token != .rparen) {
+            log.err("expected ')', got {any}", .{rparen_token});
+            return Error.UnexpectedToken;
+        }
         var call_node = try self.allocator.create(AstNode);
         call_node.* = .{ .call = .{ .ref = lhs } };
         return call_node;
@@ -509,6 +522,27 @@ test "declare and assign" {
     try testing.expectEqualSlices(u8, "a", result.assignment.lhs.var_decl.name);
     try testing.expect(result.assignment.rhs.* == AstNode.integer);
     try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
+}
+
+test "string literal" {
+    {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+        var parser = Parser.init(allocator, "\"yo\"");
+        var result = try parser.parseStatement();
+        try testing.expect(@as(AstNodeTag, result.*) == .string_literal);
+        try testing.expectEqualStrings("yo", result.string_literal.value);
+    }
+    { // docstring
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+        var parser = Parser.init(allocator, "'''yo'''");
+        var result = try parser.parseStatement();
+        try testing.expect(@as(AstNodeTag, result.*) == .string_literal);
+        try testing.expectEqualStrings("yo", result.string_literal.value);
+    }
 }
 
 test "array literal" {
