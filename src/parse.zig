@@ -4,6 +4,8 @@ const testing = std.testing;
 const lex = @import("lex.zig");
 const Token = lex.Token;
 
+const log = std.log.scoped(.parse);
+
 const AstNodeTag = enum {
     root,
     integer,
@@ -16,6 +18,8 @@ const AstNodeTag = enum {
     fn_decl,
     assignment,
     call,
+    field_access,
+    array_literal,
 };
 
 const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
@@ -33,6 +37,8 @@ pub const AstNode = union(AstNodeTag) {
     fn_decl: struct { name: []const u8, statement: Statement },
     assignment: BinaryOp,
     call: struct { ref: *const AstNode },
+    field_access: BinaryOp,
+    array_literal: Statement,
 };
 
 pub const Parser = struct {
@@ -44,9 +50,9 @@ pub const Parser = struct {
     const Self = @This();
 
     const Error = error{
-        BadNullDenotation,
-        BadLeftDenotation,
-        UnhandledPrecedence,
+        // NullDenotationUnhandled,
+        // LeftDenotationUnhandled,
+        // UnhandledPrecedence,
         UnexpectedToken,
         UnexpectedEndOfStream,
     } || lex.Lexer.Error ||
@@ -95,7 +101,26 @@ pub const Parser = struct {
             .var_kw => return .lowest,
             .assign => return .equality,
             .lparen => return .call,
-            else => return Error.UnhandledPrecedence, // TODO: remove
+            .decorator => return .lowest,
+            .string => return .lowest,
+            .docstring => return .lowest,
+            .dot => return .call,
+            .colon => return .lowest,
+            .comma => return .lowest,
+            .pipe => return .lowest,
+            .minus => return .lowest,
+            .percent => return .lowest,
+            .less => return .lowest,
+            .greater => return .lowest,
+            .bang => return .lowest,
+            .ampersand => return .lowest,
+            .caret => return .lowest,
+            .tilde => return .lowest,
+            .lsbracket => return .lowest,
+            .rsbracket => return .lowest,
+            .lcbracket => return .lowest,
+            .rcbracket => return .lowest,
+            // else => turn Error.UnhandledPrecedence,
         }
     }
 
@@ -107,7 +132,32 @@ pub const Parser = struct {
             .name => return parseName,
             .var_kw => return parseVariableDeclaration,
             .def_kw => return parseFunctionDeclaration,
-            else => return Error.BadNullDenotation,
+            .eof => return nullDenotationUnhandled,
+            .plus => return nullDenotationUnhandled,
+            .asterisk => return nullDenotationUnhandled,
+            .solidus => return nullDenotationUnhandled,
+            .rparen => return nullDenotationUnhandled,
+            .assign => return nullDenotationUnhandled,
+            .decorator => return nullDenotationUnhandled,
+            .string => return nullDenotationUnhandled,
+            .docstring => return nullDenotationUnhandled,
+            .dot => return nullDenotationUnhandled,
+            .colon => return nullDenotationUnhandled,
+            .comma => return nullDenotationUnhandled,
+            .pipe => return nullDenotationUnhandled,
+            .minus => return nullDenotationUnhandled,
+            .percent => return nullDenotationUnhandled,
+            .less => return nullDenotationUnhandled,
+            .greater => return nullDenotationUnhandled,
+            .bang => return nullDenotationUnhandled,
+            .ampersand => return nullDenotationUnhandled,
+            .caret => return nullDenotationUnhandled,
+            .tilde => return nullDenotationUnhandled,
+            .lsbracket => return parseArrayLiteral,
+            .rsbracket => return nullDenotationUnhandled,
+            .lcbracket => return nullDenotationUnhandled,
+            .rcbracket => return nullDenotationUnhandled,
+            // else => return Error.NullDenotationUnhandled,
         }
     }
 
@@ -119,7 +169,31 @@ pub const Parser = struct {
             .solidus => return parseDivision,
             .assign => return parseAssignment,
             .lparen => return parseFunctionCall,
-            else => return Error.BadLeftDenotation,
+            .integer => return leftDenotationUnhandled,
+            .name => return leftDenotationUnhandled,
+            .var_kw => return leftDenotationUnhandled,
+            .def_kw => return leftDenotationUnhandled,
+            .eof => return leftDenotationUnhandled,
+            .rparen => return leftDenotationUnhandled,
+            .decorator => return leftDenotationUnhandled,
+            .string => return leftDenotationUnhandled,
+            .docstring => return leftDenotationUnhandled,
+            .dot => return parseFieldAccess,
+            .colon => return leftDenotationUnhandled,
+            .comma => return leftDenotationUnhandled,
+            .pipe => return leftDenotationUnhandled,
+            .minus => return leftDenotationUnhandled,
+            .percent => return leftDenotationUnhandled,
+            .less => return leftDenotationUnhandled,
+            .greater => return leftDenotationUnhandled,
+            .bang => return leftDenotationUnhandled,
+            .ampersand => return leftDenotationUnhandled,
+            .caret => return leftDenotationUnhandled,
+            .tilde => return leftDenotationUnhandled,
+            .lsbracket => return leftDenotationUnhandled,
+            .rsbracket => return leftDenotationUnhandled,
+            .lcbracket => return leftDenotationUnhandled,
+            .rcbracket => return leftDenotationUnhandled,
         }
     }
 
@@ -142,6 +216,26 @@ pub const Parser = struct {
         return peeked;
     }
 
+    fn expect(self: *Self, tag: lex.TokenTag) bool {
+        if (self.peek()) |token| {
+            if (token == tag) return true;
+        }
+        return false;
+    }
+
+    fn expectAndSkip(self: *Self, tag: lex.TokenTag) Error!void {
+        if (self.expect(tag)) {
+            _ = self.take() catch unreachable;
+            return;
+        }
+        return Error.UnexpectedToken;
+    }
+
+    fn illegal(self: *Self, tag: lex.TokenTag) Error!void {
+        if (self.expect(tag)) return Error.UnexpectedToken;
+        return;
+    }
+
     fn peekPrecedence(self: *Self) Error!Precedence {
         var peeked = self.peek() orelse return .lowest;
         return try precedenceMap(peeked);
@@ -157,6 +251,18 @@ pub const Parser = struct {
             lhs = try infixFn(self, lhs);
         }
         return lhs;
+    }
+
+    fn nullDenotationUnhandled(self: *Self) Error!*AstNode {
+        log.err("oh no! we don't handle this null denotation: {any}", .{try self.take()});
+        unreachable;
+        // return Error.NullDenotationUnhandled;
+    }
+
+    fn leftDenotationUnhandled(self: *Self, lhs: *AstNode) Error!*AstNode {
+        log.err("oh no! we don't handle this denotation: lhs: {any}, token: {any}", .{ lhs, try self.take() });
+        unreachable;
+        // return Error.NullDenotationUnhandled;
     }
 
     fn parseInteger(self: *Self) Error!*AstNode {
@@ -208,6 +314,24 @@ pub const Parser = struct {
         // we raise here because this could be user error
         if (rparen_token != .rparen) return Error.UnexpectedToken;
         return group_node;
+    }
+
+    fn parseArrayLiteral(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.lsbracket);
+
+        var array_literal_node = try self.allocator.create(AstNode);
+        array_literal_node.* = .{ .array_literal = Statement.init(self.allocator) };
+
+        while (self.peek()) |next_token| {
+            if (next_token == .rsbracket) break;
+            try self.illegal(.comma);
+            var item = try self.parseExpression(.lowest);
+            try array_literal_node.array_literal.append(item);
+            self.expectAndSkip(.comma) catch break;
+        }
+
+        try self.expectAndSkip(.rsbracket);
+        return array_literal_node;
     }
 
     fn parseName(self: *Self) Error!*AstNode {
@@ -274,6 +398,15 @@ pub const Parser = struct {
         var call_node = try self.allocator.create(AstNode);
         call_node.* = .{ .call = .{ .ref = lhs } };
         return call_node;
+    }
+
+    fn parseFieldAccess(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const dot_token = try self.take(); // skip dot token
+        assert(dot_token == .dot);
+        var rhs = try self.parseExpression(.call);
+        var field_access_node = try self.allocator.create(AstNode);
+        field_access_node.* = .{ .field_access = .{ .lhs = lhs, .rhs = rhs } };
+        return field_access_node;
     }
 };
 
@@ -378,6 +511,47 @@ test "declare and assign" {
     try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
 }
 
+test "array literal" {
+    { // Empty Array
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+        var parser = Parser.init(allocator, "[]");
+        var result = try parser.parseStatement();
+        try testing.expect(result.array_literal.items.len == 0);
+    }
+    { // single element
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+        var parser = Parser.init(allocator, "[1]");
+        var result = try parser.parseStatement();
+        try testing.expect(result.array_literal.items.len == 1);
+    }
+    { // trailing comma
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+        var parser = Parser.init(allocator, "[1,]");
+        var result = try parser.parseStatement();
+        try testing.expect(result.array_literal.items.len == 1);
+    }
+    { // Unclosed
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+        var parser = Parser.init(allocator, "[1,");
+        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseStatement());
+    }
+    { // illegal trailing comma
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+        var parser = Parser.init(allocator, "[,]");
+        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseStatement());
+    }
+}
+
 test "declare function" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
@@ -412,4 +586,17 @@ test "call function" {
 
     try testing.expect(result.* == AstNode.call);
     try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
+}
+
+test "access field" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    var parser = Parser.init(allocator, "foo.bar");
+    var result = try parser.parseStatement();
+
+    try testing.expect(result.* == AstNode.field_access);
+    try testing.expectEqualSlices(u8, "foo", result.field_access.lhs.name.value);
+    try testing.expectEqualSlices(u8, "bar", result.field_access.rhs.name.value);
 }

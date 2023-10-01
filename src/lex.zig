@@ -24,7 +24,7 @@ const LineLength = u32;
 const ColLength = u32;
 pub const IndentLength = u32;
 
-const TokenTag = enum {
+pub const TokenTag = enum {
     eof,
     name,
     decorator,
