@@ -278,17 +278,6 @@ test "ir group" {
     }
 }
 
-test "declare variable" {
-    var ctx = try testSetup("var a");
-    defer testTeardown(&ctx);
-
-    var expected = [_]Insn{
-        Insn{ .decl_var = .{ .symbol = 0 } },
-        Insn{ .yield = {} },
-    };
-    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-}
-
 test "assignment" {
     {
         var ctx = try testSetup("a = 1");
@@ -296,18 +285,6 @@ test "assignment" {
 
         var expected = [_]Insn{
             Insn{ .push_symbol = .{ .value = 0 } },
-            Insn{ .push_integer = .{ .value = 1 } },
-            Insn{ .assign = {} },
-            Insn{ .yield = {} },
-        };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-    }
-    { // declare and assign
-        var ctx = try testSetup("var a = 1");
-        defer testTeardown(&ctx);
-
-        var expected = [_]Insn{
-            Insn{ .decl_var = .{ .symbol = 0 } }, // does decl_var also push the symbol onto the stack?
             Insn{ .push_integer = .{ .value = 1 } },
             Insn{ .assign = {} },
             Insn{ .yield = {} },
@@ -330,29 +307,13 @@ test "assignment" {
         };
         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
     }
-    {
-        var ctx = try testSetup("var a = 1+2*3");
-        defer testTeardown(&ctx);
-
-        var expected = [_]Insn{
-            Insn{ .decl_var = .{ .symbol = 0 } }, // does decl_var also push the symbol onto the stack?
-            Insn{ .push_integer = .{ .value = 1 } },
-            Insn{ .push_integer = .{ .value = 2 } },
-            Insn{ .push_integer = .{ .value = 3 } },
-            Insn{ .product = {} },
-            Insn{ .sum = {} },
-            Insn{ .assign = {} },
-            Insn{ .yield = {} },
-        };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-    }
 }
 test "declare function" {
     if (true) return error.SkipZigTest;
     {
         const fn_decl =
             \\fn myFunction():
-            \\	var a = 1
+            \\	a = 1
             \\	a * 3
         ;
         var ctx = try testSetup(fn_decl);
@@ -360,7 +321,7 @@ test "declare function" {
 
         var expected = [_]Insn{
             Insn{ .decl_fn = .{ .symbol = 0 } },
-            Insn{ .decl_var = .{ .symbol = 1 } },
+            Insn{ .push_symbol = .{ .symbol = 1 } },
             Insn{ .push_integer = .{ .value = 1 } },
             Insn{ .assign = {} },
             Insn{ .push_symbol = .{ .value = 1 } },
@@ -374,22 +335,22 @@ test "declare function" {
     {
         // declare function in parent scope
         const fn_decl =
-            \\var a = 9
+            \\a = 9
             \\
             \\fn myFunction():
-            \\	var b = 1
+            \\	b = 1
             \\	a * b
         ;
         var ctx = try testSetup(fn_decl);
         defer testTeardown(&ctx);
 
         var expected = [_]Insn{
-            Insn{ .decl_var = .{ .symbol = 0 } },
+            Insn{ .push_symbol = .{ .symbol = 0 } },
             Insn{ .push_integer = .{ .value = 9 } },
             Insn{ .assign = {} },
             //
             Insn{ .decl_fn = .{ .symbol = 1 } },
-            Insn{ .decl_var = .{ .symbol = 2 } },
+            Insn{ .push_symbol = .{ .symbol = 2 } },
             Insn{ .push_integer = .{ .value = 1 } },
             Insn{ .assign = {} },
             Insn{ .push_symbol = .{ .value = 0 } },

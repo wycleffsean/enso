@@ -5,6 +5,8 @@ const testing = std.testing;
 const ascii = std.ascii;
 const fixedBufferStream = std.io.fixedBufferStream;
 
+// https://docs.python.org/3/reference/lexical_analysis.html#identifiers
+
 var test_logger_buf: [std.mem.page_size / 4]u8 = undefined;
 pub var test_err_message: []u8 = undefined;
 
@@ -53,8 +55,41 @@ pub const TokenTag = enum {
     rsbracket,
     lcbracket,
     rcbracket,
-    var_kw,
+    false_kw,
+    await_kw,
+    else_kw,
+    import_kw,
+    pass_kw,
+    none_kw,
+    break_kw,
+    except_kw,
+    in_kw,
+    raise_kw,
+    true_kw,
+    class_kw,
+    finally_kw,
+    is_kw,
+    return_kw,
+    and_kw,
+    continue_kw,
+    for_kw,
+    lambda_kw,
+    try_kw,
+    as_kw,
     def_kw,
+    from_kw,
+    nonlocal_kw,
+    while_kw,
+    assert_kw,
+    del_kw,
+    global_kw,
+    not_kw,
+    with_kw,
+    async_kw,
+    elif_kw,
+    if_kw,
+    or_kw,
+    yield_kw,
 };
 
 const Location = struct { indent: IndentLength = 0, line: LineLength, col: ColLength };
@@ -97,8 +132,41 @@ pub const Token = union(TokenTag) {
     rsbracket: Bare,
     lcbracket: Bare,
     rcbracket: Bare,
-    var_kw: Bare,
+    false_kw: Bare,
+    await_kw: Bare,
+    else_kw: Bare,
+    import_kw: Bare,
+    pass_kw: Bare,
+    none_kw: Bare,
+    break_kw: Bare,
+    except_kw: Bare,
+    in_kw: Bare,
+    raise_kw: Bare,
+    true_kw: Bare,
+    class_kw: Bare,
+    finally_kw: Bare,
+    is_kw: Bare,
+    return_kw: Bare,
+    and_kw: Bare,
+    continue_kw: Bare,
+    for_kw: Bare,
+    lambda_kw: Bare,
+    try_kw: Bare,
+    as_kw: Bare,
     def_kw: Bare,
+    from_kw: Bare,
+    nonlocal_kw: Bare,
+    while_kw: Bare,
+    assert_kw: Bare,
+    del_kw: Bare,
+    global_kw: Bare,
+    not_kw: Bare,
+    with_kw: Bare,
+    async_kw: Bare,
+    elif_kw: Bare,
+    if_kw: Bare,
+    or_kw: Bare,
+    yield_kw: Bare,
 
     // this is really smelly
     pub inline fn getLocation(self: *const Token) Location {
@@ -130,8 +198,41 @@ pub const Token = union(TokenTag) {
             .rsbracket => self.rsbracket.loc,
             .lcbracket => self.lcbracket.loc,
             .rcbracket => self.rcbracket.loc,
-            .var_kw => self.var_kw.loc,
+            .false_kw => self.false_kw.loc,
+            .await_kw => self.await_kw.loc,
+            .else_kw => self.else_kw.loc,
+            .import_kw => self.import_kw.loc,
+            .pass_kw => self.pass_kw.loc,
+            .none_kw => self.none_kw.loc,
+            .break_kw => self.break_kw.loc,
+            .except_kw => self.except_kw.loc,
+            .in_kw => self.in_kw.loc,
+            .raise_kw => self.raise_kw.loc,
+            .true_kw => self.true_kw.loc,
+            .class_kw => self.class_kw.loc,
+            .finally_kw => self.finally_kw.loc,
+            .is_kw => self.is_kw.loc,
+            .return_kw => self.return_kw.loc,
+            .and_kw => self.and_kw.loc,
+            .continue_kw => self.continue_kw.loc,
+            .for_kw => self.for_kw.loc,
+            .lambda_kw => self.lambda_kw.loc,
+            .try_kw => self.try_kw.loc,
+            .as_kw => self.as_kw.loc,
             .def_kw => self.def_kw.loc,
+            .from_kw => self.from_kw.loc,
+            .nonlocal_kw => self.nonlocal_kw.loc,
+            .while_kw => self.while_kw.loc,
+            .assert_kw => self.assert_kw.loc,
+            .del_kw => self.del_kw.loc,
+            .global_kw => self.global_kw.loc,
+            .not_kw => self.not_kw.loc,
+            .with_kw => self.with_kw.loc,
+            .async_kw => self.async_kw.loc,
+            .elif_kw => self.elif_kw.loc,
+            .if_kw => self.if_kw.loc,
+            .or_kw => self.or_kw.loc,
+            .yield_kw => self.yield_kw.loc,
         };
     }
 
@@ -280,9 +381,48 @@ pub const Lexer = struct {
         return null;
     }
 
+    const KeywordTuple = struct { TokenTag, []const u8 };
+    const keywords = [_]KeywordTuple{
+        .{ .false_kw, "False" },
+        .{ .await_kw, "await" },
+        .{ .else_kw, "else" },
+        .{ .import_kw, "import" },
+        .{ .pass_kw, "pass" },
+        .{ .none_kw, "None" },
+        .{ .break_kw, "break" },
+        .{ .except_kw, "except" },
+        .{ .in_kw, "in" },
+        .{ .raise_kw, "raise" },
+        .{ .true_kw, "True" },
+        .{ .class_kw, "class" },
+        .{ .finally_kw, "finally" },
+        .{ .is_kw, "is" },
+        .{ .return_kw, "return" },
+        .{ .and_kw, "and" },
+        .{ .continue_kw, "continue" },
+        .{ .for_kw, "for" },
+        .{ .lambda_kw, "lambda" },
+        .{ .try_kw, "try" },
+        .{ .def_kw, "def" },
+        .{ .from_kw, "from" },
+        .{ .nonlocal_kw, "nonlocal" },
+        .{ .while_kw, "while" },
+        .{ .assert_kw, "assert" },
+        .{ .async_kw, "async" },
+        .{ .as_kw, "as" },
+        .{ .del_kw, "del" },
+        .{ .global_kw, "global" },
+        .{ .not_kw, "not" },
+        .{ .with_kw, "with" },
+        .{ .elif_kw, "elif" },
+        .{ .if_kw, "if" },
+        .{ .or_kw, "or" },
+        .{ .yield_kw, "yield" },
+    };
+
     fn readKeyword(self: *Self) ?Token {
-        if (self.matchKeyword(.var_kw, "var") orelse self.matchKeyword(.def_kw, "def")) |token| {
-            return token;
+        inline for (keywords) |kw| {
+            if (self.matchKeyword(kw[0], kw[1])) |token| return token;
         }
         return null;
     }
@@ -564,51 +704,72 @@ test "integer" {
 }
 
 // keywords
+// https://docs.python.org/3/library/keyword.html
+// https://docs.python.org/3/reference/lexical_analysis.html#keywords
 
-test "var kw" {
+fn testKeyword(tag: TokenTag, kw: []const u8) !void {
+    var buf: [50]u8 = undefined;
     {
-        var lex = Lexer{ .buffer = "var" };
+        var lex = Lexer{ .buffer = kw };
         const next = try lex.next();
-        try testing.expect(next == .var_kw);
+        try testing.expect(next == tag);
     }
     {
-        var lex = Lexer{ .buffer = "var " };
+        var str = std.fmt.bufPrint(&buf, "{s} ", .{kw}) catch unreachable;
+        var lex = Lexer{ .buffer = str };
         const next = try lex.next();
-        try testing.expect(next == .var_kw);
+        try testing.expect(next == tag);
     }
     {
-        var lex = Lexer{ .buffer = "var\t" };
+        var str = std.fmt.bufPrint(&buf, "{s}\t", .{kw}) catch unreachable;
+        var lex = Lexer{ .buffer = str };
         const next = try lex.next();
-        try testing.expect(next == .var_kw);
+        try testing.expect(next == tag);
     }
     {
-        var lex = Lexer{ .buffer = "vars" };
+        var str = std.fmt.bufPrint(&buf, "{s}s", .{kw}) catch unreachable;
+        var lex = Lexer{ .buffer = str };
         const next = try lex.next();
-        try testing.expect(next != .var_kw);
+        try testing.expect(next != tag);
     }
 }
 
-test "def kw" {
-    {
-        var lex = Lexer{ .buffer = "def" };
-        const next = try lex.next();
-        try testing.expect(next == .def_kw);
-    }
-    {
-        var lex = Lexer{ .buffer = "def " };
-        const next = try lex.next();
-        try testing.expect(next == .def_kw);
-    }
-    {
-        var lex = Lexer{ .buffer = "def\t" };
-        const next = try lex.next();
-        try testing.expect(next == .def_kw);
-    }
-    {
-        var lex = Lexer{ .buffer = "defs" };
-        const next = try lex.next();
-        try testing.expect(next != .def_kw);
-    }
+test "keywords" {
+    try testKeyword(.false_kw, "False");
+    try testKeyword(.await_kw, "await");
+    try testKeyword(.else_kw, "else");
+    try testKeyword(.import_kw, "import");
+    try testKeyword(.pass_kw, "pass");
+    try testKeyword(.none_kw, "None");
+    try testKeyword(.break_kw, "break");
+    try testKeyword(.except_kw, "except");
+    try testKeyword(.in_kw, "in");
+    try testKeyword(.raise_kw, "raise");
+    try testKeyword(.true_kw, "True");
+    try testKeyword(.class_kw, "class");
+    try testKeyword(.finally_kw, "finally");
+    try testKeyword(.is_kw, "is");
+    try testKeyword(.return_kw, "return");
+    try testKeyword(.and_kw, "and");
+    try testKeyword(.continue_kw, "continue");
+    try testKeyword(.for_kw, "for");
+    try testKeyword(.lambda_kw, "lambda");
+    try testKeyword(.try_kw, "try");
+    try testKeyword(.as_kw, "as");
+    try testKeyword(.def_kw, "def");
+    try testKeyword(.from_kw, "from");
+    try testKeyword(.nonlocal_kw, "nonlocal");
+    try testKeyword(.while_kw, "while");
+    try testKeyword(.assert_kw, "assert");
+    try testKeyword(.del_kw, "del");
+    try testKeyword(.global_kw, "global");
+    try testKeyword(.not_kw, "not");
+    try testKeyword(.with_kw, "with");
+    try testKeyword(.async_kw, "async");
+    try testKeyword(.elif_kw, "elif");
+    try testKeyword(.if_kw, "if");
+    try testKeyword(.or_kw, "or");
+    try testKeyword(.yield_kw, "yield");
 }
 
 test "strings" {

@@ -52,9 +52,9 @@ pub const Parser = struct {
     const Self = @This();
 
     const Error = error{
-        // NullDenotationUnhandled,
-        // LeftDenotationUnhandled,
-        // UnhandledPrecedence,
+        NullDenotationUnhandled,
+        LeftDenotationUnhandled,
+        UnhandledPrecedence,
         UnexpectedToken,
         UnexpectedEndOfStream,
     } || lex.Lexer.Error ||
@@ -90,110 +90,96 @@ pub const Parser = struct {
         call,
     };
 
-    inline fn precedenceMap(token: Token) Error!Precedence {
-        switch (token) {
-            .eof => return .lowest,
-            .integer => return .lowest,
-            .def_kw => return .lowest,
-            .plus => return .sum,
-            .asterisk => return .product,
-            .solidus => return .product,
-            .rparen => return .lowest,
-            .name => return .lowest,
-            .var_kw => return .lowest,
-            .assign => return .equality,
-            .lparen => return .call,
-            .decorator => return .lowest,
-            .string => return .lowest,
-            .dot => return .call,
-            .colon => return .lowest,
-            .comma => return .lowest,
-            .pipe => return .lowest,
-            .minus => return .lowest,
-            .percent => return .lowest,
-            .less => return .lowest,
-            .greater => return .lowest,
-            .bang => return .lowest,
-            .ampersand => return .lowest,
-            .caret => return .lowest,
-            .tilde => return .lowest,
-            .lsbracket => return .lowest,
-            .rsbracket => return .lowest,
-            .lcbracket => return .lowest,
-            .rcbracket => return .lowest,
-            // else => turn Error.UnhandledPrecedence,
-        }
-    }
-
     const ParseFn = *const fn (*Self) Error!*AstNode;
-    inline fn nullDenotation(token: Token) Error!ParseFn {
-        switch (token) {
-            .integer => return parseInteger,
-            .lparen => return parseGroup,
-            .name => return parseName,
-            .var_kw => return parseVariableDeclaration,
-            .def_kw => return parseFunctionDeclaration,
-            .eof => return nullDenotationUnhandled,
-            .plus => return nullDenotationUnhandled,
-            .asterisk => return nullDenotationUnhandled,
-            .solidus => return nullDenotationUnhandled,
-            .rparen => return nullDenotationUnhandled,
-            .assign => return nullDenotationUnhandled,
-            .decorator => return nullDenotationUnhandled,
-            .string => return parseStringLiteral,
-            .dot => return nullDenotationUnhandled,
-            .colon => return nullDenotationUnhandled,
-            .comma => return nullDenotationUnhandled,
-            .pipe => return nullDenotationUnhandled,
-            .minus => return nullDenotationUnhandled,
-            .percent => return nullDenotationUnhandled,
-            .less => return nullDenotationUnhandled,
-            .greater => return nullDenotationUnhandled,
-            .bang => return nullDenotationUnhandled,
-            .ampersand => return nullDenotationUnhandled,
-            .caret => return nullDenotationUnhandled,
-            .tilde => return nullDenotationUnhandled,
-            .lsbracket => return parseArrayLiteral,
-            .rsbracket => return nullDenotationUnhandled,
-            .lcbracket => return nullDenotationUnhandled,
-            .rcbracket => return nullDenotationUnhandled,
-            // else => return Error.NullDenotationUnhandled,
+    const InfixFn = *const fn (*Self, *AstNode) Error!*AstNode;
+    const TokenMapping = struct { lex.TokenTag, Precedence, ParseFn, InfixFn };
+    // Switching on enum is way more efficient, but the ergonomics of this are much better
+    // We could also make this a hashmap, but that still has a higher runtime cost
+    // than switch.  We'll get there...
+    const token_map = [_]TokenMapping{
+        .{ .eof, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .integer, .lowest, parseInteger, leftDenotationUnhandled },
+        .{ .plus, .sum, nullDenotationUnhandled, parseSum },
+        .{ .asterisk, .product, nullDenotationUnhandled, parseProduct },
+        .{ .solidus, .product, nullDenotationUnhandled, parseDivision },
+        .{ .rparen, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .name, .lowest, parseName, leftDenotationUnhandled },
+        .{ .assign, .equality, nullDenotationUnhandled, parseAssignment },
+        .{ .lparen, .call, parseGroup, parseFunctionCall },
+        .{ .decorator, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .string, .lowest, parseStringLiteral, leftDenotationUnhandled },
+        .{ .dot, .call, nullDenotationUnhandled, parseFieldAccess },
+        .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .comma, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .pipe, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .minus, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .percent, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .less, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .greater, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .bang, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .ampersand, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .caret, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .tilde, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .lsbracket, .lowest, parseArrayLiteral, leftDenotationUnhandled },
+        .{ .rsbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .lcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .rcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .def_kw, .lowest, parseFunctionDeclaration, leftDenotationUnhandled },
+        .{ .false_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .await_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .else_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .import_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .pass_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .none_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .break_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .except_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .in_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .raise_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .true_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .class_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .finally_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .is_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .return_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .and_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .continue_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .for_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .lambda_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .try_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .as_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .from_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .nonlocal_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .while_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .assert_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .del_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .global_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .not_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .with_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .async_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .elif_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .if_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .or_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .yield_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+    };
+
+    inline fn precedenceMap(token: Token) Error!Precedence {
+        inline for (token_map) |map| {
+            if (token == map[0]) return map[1];
         }
+        return Error.UnhandledPrecedence;
     }
 
-    const InfixFn = *const fn (*Self, *AstNode) Error!*AstNode;
-    inline fn leftDenotation(token: Token) Error!InfixFn {
-        switch (token) {
-            .plus => return parseSum,
-            .asterisk => return parseProduct,
-            .solidus => return parseDivision,
-            .assign => return parseAssignment,
-            .lparen => return parseFunctionCall,
-            .integer => return leftDenotationUnhandled,
-            .name => return leftDenotationUnhandled,
-            .var_kw => return leftDenotationUnhandled,
-            .def_kw => return leftDenotationUnhandled,
-            .eof => return leftDenotationUnhandled,
-            .rparen => return leftDenotationUnhandled,
-            .decorator => return leftDenotationUnhandled,
-            .string => return leftDenotationUnhandled,
-            .dot => return parseFieldAccess,
-            .colon => return leftDenotationUnhandled,
-            .comma => return leftDenotationUnhandled,
-            .pipe => return leftDenotationUnhandled,
-            .minus => return leftDenotationUnhandled,
-            .percent => return leftDenotationUnhandled,
-            .less => return leftDenotationUnhandled,
-            .greater => return leftDenotationUnhandled,
-            .bang => return leftDenotationUnhandled,
-            .ampersand => return leftDenotationUnhandled,
-            .caret => return leftDenotationUnhandled,
-            .tilde => return leftDenotationUnhandled,
-            .lsbracket => return leftDenotationUnhandled,
-            .rsbracket => return leftDenotationUnhandled,
-            .lcbracket => return leftDenotationUnhandled,
-            .rcbracket => return leftDenotationUnhandled,
+    inline fn nullDenotation(token: Token) Error!ParseFn {
+        inline for (token_map) |map| {
+            if (token == map[0]) return map[2];
         }
+        return Error.NullDenotationUnhandled;
+    }
+
+    inline fn leftDenotation(token: Token) Error!InfixFn {
+        inline for (token_map) |map| {
+            if (token == map[0]) return map[3];
+        }
+        return Error.LeftDenotationUnhandled;
     }
 
     fn peek(self: *Self) ?Token {
@@ -352,16 +338,6 @@ pub const Parser = struct {
         return name_node;
     }
 
-    fn parseVariableDeclaration(self: *Self) Error!*AstNode {
-        const var_kw_token = try self.take(); // skip var_kw token
-        assert(var_kw_token == .var_kw);
-        const name_token = try self.take();
-        if (name_token != .name) return Error.UnexpectedToken;
-        var var_decl = try self.allocator.create(AstNode);
-        var_decl.* = .{ .var_decl = .{ .name = name_token.name.value } };
-        return var_decl;
-    }
-
     fn parseAssignment(self: *Self, lhs: *AstNode) Error!*AstNode {
         const assign_token = try self.take(); // skip assign token
         assert(assign_token == .assign);
@@ -509,21 +485,6 @@ test "assign" {
     try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
 }
 
-test "declare and assign" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
-    defer arena.deinit();
-
-    var parser = Parser.init(allocator, "var a = 1");
-    var result = try parser.parseStatement();
-
-    try testing.expect(result.* == AstNode.assignment);
-    try testing.expect(result.assignment.lhs.* == AstNode.var_decl);
-    try testing.expectEqualSlices(u8, "a", result.assignment.lhs.var_decl.name);
-    try testing.expect(result.assignment.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
-}
-
 test "string literal" {
     {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -593,7 +554,7 @@ test "declare function" {
 
     const fn_decl =
         \\def myFunction():
-        \\	var a = 1
+        \\	a = 1
         \\	a * 3
     ;
     var parser = Parser.init(allocator, fn_decl);
@@ -603,7 +564,7 @@ test "declare function" {
     try testing.expectEqualSlices(u8, "myFunction", result.fn_decl.name);
 
     // Statement
-    try testing.expect(result.fn_decl.statement.items.len == 2);
+    try testing.expectEqual(@as(usize, 2), result.fn_decl.statement.items.len);
     const expr1 = result.fn_decl.statement.items[0];
     try testing.expect(expr1.* == AstNode.assignment);
     const expr2 = result.fn_decl.statement.items[1];
