@@ -23,6 +23,7 @@ const AstNodeTag = enum {
     array_literal,
     string_literal,
     class,
+    import,
 };
 
 const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
@@ -32,6 +33,21 @@ const ClassDefinition = struct {
     baseclass: ?[]const u8,
     statement: Statement,
 };
+// import sys
+// from sys import *
+// import test.typinganndata.ann_module as ann_module
+// import time, sys
+// from time import (time)
+// from sys import path, argv
+// from sys import (path, argv)
+// from sys import (path, argv,)
+// from test.support import import_helper
+const ImportDefinition = struct {
+    source: [][]const u8,
+    alias: ?[]const u8,
+    subject: []const u8,
+};
+const ImportExpression = std.ArrayList(ImportDefinition);
 
 pub const AstNode = union(AstNodeTag) {
     root: []*const AstNode,
@@ -50,6 +66,7 @@ pub const AstNode = union(AstNodeTag) {
     array_literal: Statement,
     string_literal: struct { value: []const u8 },
     class: ClassDefinition,
+    import: []ImportDefinition,
 };
 
 pub const Parser = struct {
@@ -137,7 +154,7 @@ pub const Parser = struct {
         .{ .false_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .await_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .else_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .import_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .import_kw, .lowest, parseImport, leftDenotationUnhandled },
         .{ .pass_kw, .lowest, parsePass, leftDenotationUnhandled },
         .{ .none_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .break_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -450,6 +467,36 @@ pub const Parser = struct {
         field_access_node.* = .{ .field_access = .{ .lhs = lhs, .rhs = rhs } };
         return field_access_node;
     }
+
+    fn parseImportExpression(self: *Self, import: *ImportExpression) Error!void {
+        try self.expectAndSkip(.import_kw);
+        while (true) {
+            var source_list = std.ArrayList([]const u8).init(self.allocator);
+            // TODO: this should be DRYd up with field_access
+            var name = (try self.expectAndTake(.name)).name;
+            try source_list.append(name.value);
+            const source = try source_list.toOwnedSlice();
+            var alias: ?[]const u8 = null;
+            if (self.expect(.as_kw)) {
+                self.expectAndSkip(.as_kw) catch unreachable;
+                alias = (try self.expectAndTake(.name)).name.value;
+            }
+            try import.append(.{
+                .source = source,
+                .alias = alias,
+                .subject = source[0],
+            });
+            self.expectAndSkip(.comma) catch break;
+        }
+    }
+
+    fn parseImport(self: *Self) Error!*AstNode {
+        var node = try self.allocator.create(AstNode);
+        var list = std.ArrayList(ImportDefinition).init(self.allocator);
+        try self.parseImportExpression(&list);
+        node.* = .{ .import = try list.toOwnedSlice() };
+        return node;
+    }
 };
 
 // Test arithmetic
@@ -700,4 +747,53 @@ test "access field" {
     try testing.expect(result.* == AstNode.field_access);
     try testing.expectEqualSlices(u8, "foo", result.field_access.lhs.name.value);
     try testing.expectEqualSlices(u8, "bar", result.field_access.rhs.name.value);
+}
+
+test "imports" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+    // from sys import *
+    // from time import (time)
+    // from sys import path, argv
+    // from sys import (path, argv)
+    // from sys import (path, argv,)
+    // from test.support import import_helper
+    { // trivial class
+        var parser = Parser.init(allocator, "import sys");
+        var result = (try parser.parse()).root[0];
+
+        try testing.expectEqual(AstNode.import, result.*);
+        // count of import expressions i.e. import (foo, bar) == 2
+        try testing.expectEqual(@as(usize, 1), result.import.len);
+
+        const import_def = result.import[0];
+        // count of source i.e. os.path == 2
+        try testing.expectEqual(@as(usize, 1), import_def.source.len);
+        try testing.expectEqualStrings("sys", import_def.source[0]);
+        try testing.expect(import_def.alias == null);
+        try testing.expectEqualStrings("sys", import_def.subject);
+    }
+    { // import multiple
+        var parser = Parser.init(allocator, "import time as yo, sys as dude");
+        var result = (try parser.parse()).root[0];
+
+        try testing.expectEqual(AstNode.import, result.*);
+        // count of import expressions i.e. import (foo, bar) == 2
+        try testing.expectEqual(@as(usize, 2), result.import.len);
+
+        var import_def = result.import[0];
+        // count of source i.e. os.path == 2
+        try testing.expectEqual(@as(usize, 1), import_def.source.len);
+        try testing.expectEqualStrings("time", import_def.source[0]);
+        try testing.expectEqualStrings("yo", import_def.alias.?);
+        try testing.expectEqualStrings("time", import_def.subject);
+
+        import_def = result.import[1];
+        // count of source i.e. os.path == 2
+        try testing.expectEqual(@as(usize, 1), import_def.source.len);
+        try testing.expectEqualStrings("sys", import_def.source[0]);
+        try testing.expectEqualStrings("dude", import_def.alias.?);
+        try testing.expectEqualStrings("sys", import_def.subject);
+    }
 }
