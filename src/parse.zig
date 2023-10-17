@@ -27,7 +27,8 @@ const AstNodeTag = enum {
 };
 
 const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
-const Statement = std.ArrayList(*const AstNode);
+const List = std.ArrayList(*const AstNode);
+const Statement = List;
 const ClassDefinition = struct {
     name: []const u8,
     baseclass: ?[]const u8,
@@ -61,7 +62,7 @@ pub const AstNode = union(AstNodeTag) {
     var_decl: struct { name: []const u8 },
     fn_decl: struct { name: []const u8, statement: Statement },
     assignment: BinaryOp,
-    call: struct { ref: *const AstNode },
+    call: struct { ref: *const AstNode, args: List },
     field_access: BinaryOp,
     array_literal: Statement,
     string_literal: struct { value: []const u8 },
@@ -352,19 +353,23 @@ pub const Parser = struct {
         return group_node;
     }
 
+    fn parseCommaSeparatedList(self: *Self, list: *List, terminal_token: lex.TokenTag) Error!void {
+        while (self.peek()) |next_token| {
+            if (next_token == terminal_token) break;
+            try self.illegal(.comma);
+            var item = try self.parseExpression(.lowest);
+            try list.append(item);
+            self.expectAndSkip(.comma) catch break;
+        }
+    }
+
     fn parseArrayLiteral(self: *Self) Error!*AstNode {
         try self.expectAndSkip(.lsbracket);
 
         var array_literal_node = try self.allocator.create(AstNode);
         array_literal_node.* = .{ .array_literal = Statement.init(self.allocator) };
 
-        while (self.peek()) |next_token| {
-            if (next_token == .rsbracket) break;
-            try self.illegal(.comma);
-            var item = try self.parseExpression(.lowest);
-            try array_literal_node.array_literal.append(item);
-            self.expectAndSkip(.comma) catch break;
-        }
+        try self.parseCommaSeparatedList(&array_literal_node.array_literal, .rsbracket);
 
         try self.expectAndSkip(.rsbracket);
         return array_literal_node;
@@ -422,15 +427,11 @@ pub const Parser = struct {
     }
 
     fn parseFunctionCall(self: *Self, lhs: *AstNode) Error!*AstNode {
-        const lparen_token = try self.take(); // skip lparen token
-        assert(lparen_token == .lparen);
-        const rparen_token = try self.take(); // skip rparen token
-        if (rparen_token != .rparen) {
-            log.err("expected ')', got {any}", .{rparen_token});
-            return Error.UnexpectedToken;
-        }
+        self.expectAndSkip(.lparen) catch unreachable;
         var call_node = try self.allocator.create(AstNode);
-        call_node.* = .{ .call = .{ .ref = lhs } };
+        call_node.* = .{ .call = .{ .ref = lhs, .args = List.init(self.allocator) } };
+        try self.parseCommaSeparatedList(&call_node.call.args, .rparen);
+        try self.expectAndSkip(.rparen);
         return call_node;
     }
 
@@ -672,15 +673,44 @@ test "declare function" {
 }
 
 test "call function" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
-    defer arena.deinit();
+    { // no args
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
 
-    var parser = Parser.init(allocator, "myFunction()");
-    var result = try parser.parseStatement();
+        var parser = Parser.init(allocator, "myFunction()");
+        var result = try parser.parseStatement();
 
-    try testing.expect(result.* == AstNode.call);
-    try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
+        try testing.expect(result.* == AstNode.call);
+        try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
+        try testing.expectEqual(@as(usize, 0), result.call.args.items.len);
+    }
+    { // single arg
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+
+        var parser = Parser.init(allocator, "myFunction(1 + 1)");
+        var result = try parser.parseStatement();
+
+        try testing.expect(result.* == AstNode.call);
+        try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
+
+        try testing.expectEqual(@as(usize, 1), result.call.args.items.len);
+    }
+    { // multiple args
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        var allocator = arena.allocator();
+        defer arena.deinit();
+
+        var parser = Parser.init(allocator, "myFunction(1, 1)");
+        var result = try parser.parseStatement();
+
+        try testing.expect(result.* == AstNode.call);
+        try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
+
+        try testing.expectEqual(@as(usize, 2), result.call.args.items.len);
+    }
 }
 
 test "class definition" {
