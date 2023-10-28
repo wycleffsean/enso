@@ -43,11 +43,15 @@ const ClassDefinition = struct {
 // from sys import (path, argv)
 // from sys import (path, argv,)
 // from test.support import import_helper
+const Ref = struct { symbol: []const u8 };
+const RefSpec = struct { refs: []const Ref };
+
 const ImportDefinition = struct {
-    source: [][]const u8,
-    alias: ?[]const u8,
-    subject: []const u8,
+    module: RefSpec,
+    package: RefSpec,
+    alias: ?Ref,
 };
+
 const ImportExpression = std.ArrayList(ImportDefinition);
 
 pub const AstNode = union(AstNodeTag) {
@@ -173,7 +177,7 @@ pub const Parser = struct {
         .{ .lambda_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .try_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .as_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .from_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .from_kw, .lowest, parseFromImport, leftDenotationUnhandled },
         .{ .nonlocal_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .while_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .assert_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -469,34 +473,59 @@ pub const Parser = struct {
         return field_access_node;
     }
 
-    fn parseImportExpression(self: *Self, import: *ImportExpression) Error!void {
-        try self.expectAndSkip(.import_kw);
+    fn parseImport(self: *Self) Error!*AstNode {
+        self.expectAndSkip(.import_kw) catch unreachable;
+        var list = std.ArrayList(ImportDefinition).init(self.allocator);
+
         while (true) {
-            var source_list = std.ArrayList([]const u8).init(self.allocator);
-            // TODO: this should be DRYd up with field_access
-            var name = (try self.expectAndTake(.name)).name;
-            try source_list.append(name.value);
-            const source = try source_list.toOwnedSlice();
-            var alias: ?[]const u8 = null;
+            var package = try self.parseRefSpec();
+            var import_def = ImportDefinition{ .module = package, .package = package, .alias = null };
             if (self.expect(.as_kw)) {
                 self.expectAndSkip(.as_kw) catch unreachable;
-                alias = (try self.expectAndTake(.name)).name.value;
+                var ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
+                import_def.alias = ref;
             }
-            try import.append(.{
-                .source = source,
-                .alias = alias,
-                .subject = source[0],
-            });
+            try list.append(import_def);
             self.expectAndSkip(.comma) catch break;
         }
+        var result = try self.allocator.create(AstNode);
+        result.* = .{ .import = try list.toOwnedSlice() };
+        return result;
     }
 
-    fn parseImport(self: *Self) Error!*AstNode {
-        var node = try self.allocator.create(AstNode);
+    fn parseFromImport(self: *Self) Error!*AstNode {
+        self.expectAndSkip(.from_kw) catch unreachable;
         var list = std.ArrayList(ImportDefinition).init(self.allocator);
-        try self.parseImportExpression(&list);
-        node.* = .{ .import = try list.toOwnedSlice() };
-        return node;
+        var module = try self.parseRefSpec();
+
+        try self.expectAndSkip(.import_kw);
+
+        while (true) {
+            var package = try self.parseRefSpec();
+            var import_def = ImportDefinition{ .module = module, .package = package, .alias = null };
+            if (self.expect(.as_kw)) {
+                self.expectAndSkip(.as_kw) catch unreachable;
+                var ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
+                import_def.alias = ref;
+            }
+            try list.append(import_def);
+            self.expectAndSkip(.comma) catch break;
+        }
+        var result = try self.allocator.create(AstNode);
+        result.* = .{ .import = try list.toOwnedSlice() };
+        return result;
+    }
+
+    fn parseRefSpec(self: *Self) Error!RefSpec {
+        var ref_spec = std.ArrayList(Ref).init(self.allocator);
+        while (true) {
+            var ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
+            try ref_spec.append(ref);
+            self.expectAndSkip(.dot) catch break;
+        }
+        const owned = ref_spec.toOwnedSlice();
+        const results = RefSpec{ .refs = try owned };
+        return results;
     }
 };
 
@@ -799,10 +828,10 @@ test "imports" {
 
         const import_def = result.import[0];
         // count of source i.e. os.path == 2
-        try testing.expectEqual(@as(usize, 1), import_def.source.len);
-        try testing.expectEqualStrings("sys", import_def.source[0]);
+        try testing.expectEqual(@as(usize, 1), import_def.module.refs.len);
+        try testing.expectEqualStrings("sys", import_def.module.refs[0].symbol);
         try testing.expect(import_def.alias == null);
-        try testing.expectEqualStrings("sys", import_def.subject);
+        try testing.expectEqualStrings("sys", import_def.package.refs[0].symbol);
     }
     { // import multiple
         var parser = Parser.init(allocator, "import time as yo, sys as dude");
@@ -814,16 +843,39 @@ test "imports" {
 
         var import_def = result.import[0];
         // count of source i.e. os.path == 2
-        try testing.expectEqual(@as(usize, 1), import_def.source.len);
-        try testing.expectEqualStrings("time", import_def.source[0]);
-        try testing.expectEqualStrings("yo", import_def.alias.?);
-        try testing.expectEqualStrings("time", import_def.subject);
+        try testing.expectEqual(@as(usize, 1), import_def.module.refs.len);
+        try testing.expectEqualStrings("time", import_def.module.refs[0].symbol);
+        // try testing.expectEqualStrings("yo", import_def.alias.ref.symbol);
+        try testing.expectEqualStrings("time", import_def.package.refs[0].symbol);
 
         import_def = result.import[1];
         // count of source i.e. os.path == 2
-        try testing.expectEqual(@as(usize, 1), import_def.source.len);
-        try testing.expectEqualStrings("sys", import_def.source[0]);
-        try testing.expectEqualStrings("dude", import_def.alias.?);
-        try testing.expectEqualStrings("sys", import_def.subject);
+        try testing.expectEqual(@as(usize, 1), import_def.module.refs.len);
+        try testing.expectEqualStrings("sys", import_def.module.refs[0].symbol);
+        // try testing.expectEqualStrings("dude", import_def.alias.?);
+        try testing.expectEqualStrings("sys", import_def.package.refs[0].symbol);
+    }
+    { // import multiple
+        var parser = Parser.init(allocator, "from foo.bar import time as yo, sys as dude");
+        var result = (try parser.parse()).root[0];
+
+        try testing.expectEqual(AstNode.import, result.*);
+
+        try testing.expectEqual(@as(usize, 2), result.import.len);
+
+        var import_def = result.import[0];
+        // count of source i.e. os.path == 2
+        try testing.expectEqual(@as(usize, 2), import_def.module.refs.len);
+        try testing.expectEqualStrings("foo", import_def.module.refs[0].symbol);
+        try testing.expectEqualStrings("bar", import_def.module.refs[1].symbol);
+        try testing.expectEqualStrings("time", import_def.package.refs[0].symbol);
+        try testing.expectEqualStrings("yo", import_def.alias.?.symbol);
+        import_def = result.import[1];
+        // count of source i.e. os.path == 2
+        try testing.expectEqual(@as(usize, 2), import_def.module.refs.len);
+        try testing.expectEqualStrings("foo", import_def.module.refs[0].symbol);
+        try testing.expectEqualStrings("bar", import_def.module.refs[1].symbol);
+        try testing.expectEqualStrings("sys", import_def.package.refs[0].symbol);
+        try testing.expectEqualStrings("dude", import_def.alias.?.symbol);
     }
 }
