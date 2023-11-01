@@ -45,10 +45,14 @@ const ClassDefinition = struct {
 // from test.support import import_helper
 const Ref = struct { symbol: []const u8 };
 const RefSpec = struct { refs: []const Ref };
+const PackageSpec = union(enum) {
+    star: void,
+    refspec: RefSpec,
+};
 
 const ImportDefinition = struct {
     module: RefSpec,
-    package: RefSpec,
+    package: PackageSpec,
     alias: ?Ref,
 };
 
@@ -478,8 +482,8 @@ pub const Parser = struct {
         var list = std.ArrayList(ImportDefinition).init(self.allocator);
 
         while (true) {
-            var package = try self.parseRefSpec();
-            var import_def = ImportDefinition{ .module = package, .package = package, .alias = null };
+            var package = try self.parsePackageSpec(true);
+            var import_def = ImportDefinition{ .module = package.refspec, .package = package, .alias = null };
             if (self.expect(.as_kw)) {
                 self.expectAndSkip(.as_kw) catch unreachable;
                 var ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
@@ -501,7 +505,7 @@ pub const Parser = struct {
         try self.expectAndSkip(.import_kw);
 
         while (true) {
-            var package = try self.parseRefSpec();
+            var package = try self.parsePackageSpec(false);
             var import_def = ImportDefinition{ .module = module, .package = package, .alias = null };
             if (self.expect(.as_kw)) {
                 self.expectAndSkip(.as_kw) catch unreachable;
@@ -514,6 +518,29 @@ pub const Parser = struct {
         var result = try self.allocator.create(AstNode);
         result.* = .{ .import = try list.toOwnedSlice() };
         return result;
+    }
+
+    fn parsePackageSpec(self: *Self, comptime refspec_only: bool) Error!PackageSpec {
+        var token = self.peek() orelse return Error.UnexpectedEndOfStream;
+        switch (token) {
+            .name => {
+                return PackageSpec{ .refspec = try self.parseRefSpec() };
+            },
+            .asterisk => {
+                if (refspec_only) {
+                    // TODO: publish error message
+                    return Error.UnexpectedToken;
+                } else {
+                    // should we just take instead?
+                    self.expectAndSkip(.asterisk) catch unreachable;
+                    return PackageSpec{ .star = {} };
+                }
+            },
+            else => {
+                // TODO: publish error message
+                return Error.UnexpectedToken;
+            },
+        }
     }
 
     fn parseRefSpec(self: *Self) Error!RefSpec {
@@ -831,7 +858,7 @@ test "imports" {
         try testing.expectEqual(@as(usize, 1), import_def.module.refs.len);
         try testing.expectEqualStrings("sys", import_def.module.refs[0].symbol);
         try testing.expect(import_def.alias == null);
-        try testing.expectEqualStrings("sys", import_def.package.refs[0].symbol);
+        try testing.expectEqualStrings("sys", import_def.package.refspec.refs[0].symbol);
     }
     { // import multiple
         var parser = Parser.init(allocator, "import time as yo, sys as dude");
@@ -846,14 +873,14 @@ test "imports" {
         try testing.expectEqual(@as(usize, 1), import_def.module.refs.len);
         try testing.expectEqualStrings("time", import_def.module.refs[0].symbol);
         // try testing.expectEqualStrings("yo", import_def.alias.ref.symbol);
-        try testing.expectEqualStrings("time", import_def.package.refs[0].symbol);
+        try testing.expectEqualStrings("time", import_def.package.refspec.refs[0].symbol);
 
         import_def = result.import[1];
         // count of source i.e. os.path == 2
         try testing.expectEqual(@as(usize, 1), import_def.module.refs.len);
         try testing.expectEqualStrings("sys", import_def.module.refs[0].symbol);
         // try testing.expectEqualStrings("dude", import_def.alias.?);
-        try testing.expectEqualStrings("sys", import_def.package.refs[0].symbol);
+        try testing.expectEqualStrings("sys", import_def.package.refspec.refs[0].symbol);
     }
     { // import multiple
         var parser = Parser.init(allocator, "from foo.bar import time as yo, sys as dude");
@@ -868,14 +895,30 @@ test "imports" {
         try testing.expectEqual(@as(usize, 2), import_def.module.refs.len);
         try testing.expectEqualStrings("foo", import_def.module.refs[0].symbol);
         try testing.expectEqualStrings("bar", import_def.module.refs[1].symbol);
-        try testing.expectEqualStrings("time", import_def.package.refs[0].symbol);
+        try testing.expectEqualStrings("time", import_def.package.refspec.refs[0].symbol);
         try testing.expectEqualStrings("yo", import_def.alias.?.symbol);
         import_def = result.import[1];
         // count of source i.e. os.path == 2
         try testing.expectEqual(@as(usize, 2), import_def.module.refs.len);
         try testing.expectEqualStrings("foo", import_def.module.refs[0].symbol);
         try testing.expectEqualStrings("bar", import_def.module.refs[1].symbol);
-        try testing.expectEqualStrings("sys", import_def.package.refs[0].symbol);
+        try testing.expectEqualStrings("sys", import_def.package.refspec.refs[0].symbol);
         try testing.expectEqualStrings("dude", import_def.alias.?.symbol);
+    }
+    { // import star
+        // TODO: write assertion that star cannot be aliased
+        var parser = Parser.init(allocator, "from foo.bar import *");
+        var result = (try parser.parse()).root[0];
+
+        try testing.expectEqual(AstNode.import, result.*);
+
+        try testing.expectEqual(@as(usize, 1), result.import.len);
+
+        var import_def = result.import[0];
+        // count of source i.e. os.path == 2
+        try testing.expectEqual(@as(usize, 2), import_def.module.refs.len);
+        try testing.expectEqualStrings("foo", import_def.module.refs[0].symbol);
+        try testing.expectEqualStrings("bar", import_def.module.refs[1].symbol);
+        try testing.expectEqualStrings("star", @tagName(import_def.package));
     }
 }
