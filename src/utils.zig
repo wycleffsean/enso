@@ -17,16 +17,16 @@ pub fn Iterator(comptime T: type) type {
 
 pub const testing = struct {
     const std = @import("std");
-    const ir = @import("ir.zig");
-    const intern = @import("ir/intern.zig");
+    const bc = @import("bytecode.zig");
+    const intern = @import("bytecode/intern.zig");
     const Parser = @import("parse.zig").Parser;
 
     pub const TestParse = struct {
         const Self = @This();
 
         arena: *std.heap.ArenaAllocator,
-        irgen: ir.IrGen,
-        insns: []const ir.Insn,
+        irgen: bc.IrGen,
+        insns: []const bc.Insn,
         intern_pool: *intern.StringInternPool,
 
         pub fn init(code: []const u8) !Self {
@@ -39,7 +39,7 @@ pub const testing = struct {
 
             var intern_pool = try std.testing.allocator.create(intern.StringInternPool);
             intern_pool.* = intern.StringInternPool.init(arena.allocator());
-            var irgen = ir.IrGen.init(arena, intern_pool, ast);
+            var irgen = bc.IrGen.init(arena, intern_pool, ast);
             var insns = try irgen.generate(std.testing.allocator);
             return .{
                 .arena = arena,

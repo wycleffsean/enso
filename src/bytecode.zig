@@ -1,6 +1,6 @@
 const std = @import("std");
 const parse = @import("parse.zig");
-const intern = @import("ir/intern.zig");
+const intern = @import("bytecode/intern.zig");
 const AstNode = parse.AstNode;
 const Parser = parse.Parser;
 const testing = std.testing;

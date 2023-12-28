@@ -1,6 +1,6 @@
 const std = @import("std");
-const ir = @import("ir.zig");
-const intern = @import("ir/intern.zig");
+const bc = @import("bytecode.zig");
+const intern = @import("bytecode/intern.zig");
 const utils = @import("utils.zig");
 const Iterator = utils.Iterator;
 const TestParse = utils.testing.TestParse;
@@ -50,18 +50,18 @@ const Scope = struct {
 const EvalContext = struct {
     arena: *std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
-    insns_iterator: Iterator(ir.Insn),
+    insns_iterator: Iterator(bc.Insn),
     root_scope: Scope,
 
     const Self = @This();
 
-    fn init(allocator: std.mem.Allocator, insns: []const ir.Insn) !Self {
+    fn init(allocator: std.mem.Allocator, insns: []const bc.Insn) !Self {
         var arena = try allocator.create(std.heap.ArenaAllocator);
         arena.* = std.heap.ArenaAllocator.init(allocator);
 
         return .{
             .arena = arena,
-            .insns_iterator = Iterator(ir.Insn){ .list = insns },
+            .insns_iterator = Iterator(bc.Insn){ .list = insns },
             .allocator = arena.allocator(),
             .root_scope = Scope.init(arena.allocator(), null),
         };
@@ -98,7 +98,7 @@ const EvalContext = struct {
     }
 };
 
-pub fn eval(allocator: std.mem.Allocator, insns: []const ir.Insn) !EvalContext {
+pub fn eval(allocator: std.mem.Allocator, insns: []const bc.Insn) !EvalContext {
     var ctx = try EvalContext.init(allocator, insns);
     try ctx.eval();
     return ctx;
