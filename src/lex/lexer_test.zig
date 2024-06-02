@@ -16,6 +16,6 @@ fn lexBuffer(buffer: []const u8) !void {
     try testing.expect(false);
 }
 
-test "lex pyfile" {
+test "lex: pyfile" {
     try testing.expectError(lex.Lexer.Error.eof, lexBuffer(test_grammar));
 }

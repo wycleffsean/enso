@@ -197,7 +197,7 @@ test {
     _ = intern;
 }
 
-test "push integer" {
+test "ir: push integer" {
     var ctx = try testSetup("1");
     defer testTeardown(&ctx);
 
@@ -208,7 +208,7 @@ test "push integer" {
     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
 }
 
-test "ir sum" {
+test "ir: sum" {
     var ctx = try testSetup("1 + 2");
     defer testTeardown(&ctx);
 
@@ -221,7 +221,7 @@ test "ir sum" {
     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
 }
 
-test "ir product" {
+test "ir: product" {
     var ctx = try testSetup("1 * 2");
     defer testTeardown(&ctx);
 
@@ -234,7 +234,7 @@ test "ir product" {
     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
 }
 
-test "ir division" {
+test "ir: division" {
     var ctx = try testSetup("1 / 2");
     defer testTeardown(&ctx);
 
@@ -247,7 +247,7 @@ test "ir division" {
     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
 }
 
-test "ir group" {
+test "ir: group" {
     {
         var ctx = try testSetup("(1 + 2) * 3");
         defer testTeardown(&ctx);
@@ -278,7 +278,7 @@ test "ir group" {
     }
 }
 
-test "assignment" {
+test "ir: assignment" {
     {
         var ctx = try testSetup("a = 1");
         defer testTeardown(&ctx);
@@ -308,7 +308,7 @@ test "assignment" {
         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
     }
 }
-test "declare function" {
+test "ir: declare function" {
     if (true) return error.SkipZigTest;
     {
         const fn_decl =
@@ -364,7 +364,7 @@ test "declare function" {
     }
 }
 
-test "call function" {
+test "ir: call function" {
     var ctx = try testSetup("myFunction()");
     defer testTeardown(&ctx);
 

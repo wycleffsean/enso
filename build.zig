@@ -27,11 +27,16 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    // Testing
+
+    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match any filter") orelse null;
+
     const unit_tests = b.addTest(.{
         .name = "enso_tests",
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
         .optimize = optimize,
+        .filter = test_filter,
     });
     const run_unit_tests = b.addRunArtifact(unit_tests);
 

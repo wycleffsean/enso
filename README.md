@@ -8,4 +8,32 @@ nix develop
 
 ## Testing
 
-`python3 test.py`
+```
+zig build test
+```
+
+or optionally filter tests from the cli
+
+```
+zig build test -Dtest-filter=lex'
+```
+
+### Test runner reporting issues
+
+Zig build will omit test results when they are cached:
+
+```
+[sean@sean-Arch enso]$ zig build test -Dtest-filter='ir' --summary all
+Build Summary: 3/3 steps succeeded; 9/10 tests passed; 1 skipped
+test success
+└─ run enso_tests 9 passed 1 skipped 1ms MaxRSS:3M
+   └─ zig test enso_tests Debug native success 1s MaxRSS:227M
+
+# Now they are cached
+
+[sean@sean-Arch enso]$ zig build test -Dtest-filter='ir' --summary all
+Build Summary: 3/3 steps succeeded
+test cached
+└─ run enso_tests cached
+   └─ zig test enso_tests Debug native cached 5ms MaxRSS:50M
+```

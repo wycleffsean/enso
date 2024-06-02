@@ -80,7 +80,7 @@ fn mul(comptime Type: type, a: Type, b: Type) Type {
     return a * b;
 }
 
-test "arithmetic" {
+test "ssa: arithmetic" {
     var aw: Word = 100;
     var bw: Word = 33;
     try testing.expectEqual(@as(Word, 133), add(Word, aw, bw));
@@ -120,7 +120,7 @@ fn neg(comptime Type: type, value: Type) Type {
     };
 }
 
-test "neg" {
+test "ssa: neg" {
     try testing.expectEqual(@as(Word, -100), neg(Word, @as(Word, 100)));
     // try testing.expectEqual(@as(UWord, -100), neg(UWord, @as(UWord, 100)));
     try testing.expectEqual(@as(Long, -100), neg(Long, @as(Long, 100)));

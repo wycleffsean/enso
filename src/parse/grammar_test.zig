@@ -4,7 +4,7 @@ const Parser = @import("../parse.zig").Parser;
 
 const test_grammar = @embedFile("../test/test_grammar.py");
 
-test "parse pyfile" {
+test "parse: full python grammar" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();

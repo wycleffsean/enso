@@ -558,7 +558,7 @@ pub const Parser = struct {
 
 // Test arithmetic
 
-test "infix sum" {
+test "parse: infix sum" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -572,7 +572,7 @@ test "infix sum" {
     try testing.expectEqual(@as(usize, @intCast(2)), result.sum.rhs.integer.value);
 }
 
-test "infix product" {
+test "parse: infix product" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -589,7 +589,7 @@ test "infix product" {
     try testing.expectEqual(@as(usize, @intCast(3)), result.sum.rhs.product.rhs.integer.value);
 }
 
-test "infix division" {
+test "parse: infix division" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -606,7 +606,7 @@ test "infix division" {
     try testing.expectEqual(@as(usize, @intCast(3)), result.sum.rhs.division.rhs.integer.value);
 }
 
-test "group" {
+test "parse: group" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -627,7 +627,7 @@ test "group" {
 
 // Test Assignment
 
-test "assign" {
+test "parse: assign" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -642,7 +642,7 @@ test "assign" {
     try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
 }
 
-test "string literal" {
+test "parse: string literal" {
     {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         var allocator = arena.allocator();
@@ -663,7 +663,7 @@ test "string literal" {
     }
 }
 
-test "array literal" {
+test "parse: array literal" {
     { // Empty Array
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         var allocator = arena.allocator();
@@ -704,7 +704,7 @@ test "array literal" {
     }
 }
 
-test "declare function" {
+test "parse: declare function" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -728,7 +728,7 @@ test "declare function" {
     try testing.expect(expr2.* == AstNode.product);
 }
 
-test "call function" {
+test "parse: call function" {
     { // no args
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         var allocator = arena.allocator();
@@ -769,7 +769,7 @@ test "call function" {
     }
 }
 
-test "class definition" {
+test "parse: class definition" {
     { // trivial class
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         var allocator = arena.allocator();
@@ -822,7 +822,7 @@ test "class definition" {
     }
 }
 
-test "access field" {
+test "parse: access field" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -835,7 +835,7 @@ test "access field" {
     try testing.expectEqualSlices(u8, "bar", result.field_access.rhs.name.value);
 }
 
-test "imports" {
+test "parse: imports" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
     defer arena.deinit();

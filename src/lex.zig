@@ -588,7 +588,7 @@ pub const Lexer = struct {
 //    return StreamSource{ .const_buffer = fixedBufferStream(buf[0..]) };
 //}
 
-test "peek" {
+test "lex: peek" {
     var lex = Lexer{ .buffer = "F" };
     try testing.expectEqual(lex.curr, null);
     try testing.expectEqual(lex.col, 0);
@@ -598,7 +598,7 @@ test "peek" {
     try testing.expectEqual(lex.col, 0);
 }
 
-test "take" {
+test "lex: take" {
     var lex = Lexer{ .buffer = "F" };
     try testing.expectEqual(lex.col, 0);
     try testing.expectEqual(lex.take(), 'F');
@@ -607,7 +607,7 @@ test "take" {
     try testing.expectEqual(lex.col, 1);
 }
 
-test "indents" {
+test "lex: indents" {
     // taken from py lexer, with comment -> # TODO: a bit wrong :/
     var lex = Lexer{ .buffer = "\t+\n\t\t+\n\t\t\t+\n" };
     try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .indent = 0, .line = 1, .col = 2 } } });
@@ -616,13 +616,13 @@ test "indents" {
     try testing.expectEqual(lex.next(), .{ .eof = .{ .loc = .{ .indent = 0, .line = 3, .col = 4 } } });
 }
 
-test "parens" {
+test "lex: parens" {
     var lex = Lexer{ .buffer = "()" };
     try testing.expectEqual(lex.next(), .{ .lparen = .{ .loc = .{ .line = 1, .col = 1 } } });
     try testing.expectEqual(lex.next(), .{ .rparen = .{ .loc = .{ .line = 1, .col = 2 } } });
 }
 
-test "operators" {
+test "lex: operators" {
     var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|%&^~" };
     try testing.expectEqual(lex.next(), .{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } });
     try testing.expectEqual(lex.next(), .{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } });
@@ -645,12 +645,12 @@ test "operators" {
     try testing.expectEqual(lex.next(), .{ .tilde = .{ .loc = .{ .line = 1, .col = 19 } } });
 }
 
-test "whitespace ignored" {
+test "lex: whitespace ignored" {
     var lex = Lexer{ .buffer = " \t\n" };
     try testing.expectEqual(lex.next(), .{ .eof = .{ .loc = .{ .line = 1, .col = 3 } } });
 }
 
-test "name" {
+test "lex: name" {
     {
         var lex = Lexer{ .buffer = "thing " };
         var value = "thing";
@@ -665,7 +665,7 @@ test "name" {
     }
 }
 
-test "decorator" {
+test "lex: decorator" {
     var lex = Lexer{ .buffer = "@thing " };
     var value = "@thing";
     const next = try lex.next();
@@ -673,7 +673,7 @@ test "decorator" {
     try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.decorator.loc);
 }
 
-test "integer" {
+test "lex: integer" {
     {
         var value = "987654321";
         var lex = Lexer{ .buffer = value };
@@ -734,7 +734,7 @@ fn testKeyword(tag: TokenTag, kw: []const u8) !void {
     }
 }
 
-test "keywords" {
+test "lex: keywords" {
     try testKeyword(.false_kw, "False");
     try testKeyword(.await_kw, "await");
     try testKeyword(.else_kw, "else");
@@ -772,7 +772,7 @@ test "keywords" {
     try testKeyword(.yield_kw, "yield");
 }
 
-test "strings" {
+test "lex: strings" {
     {
         var lex = Lexer{ .buffer = "'string'" };
         const next = try lex.next();
@@ -799,7 +799,7 @@ test "strings" {
     }
 }
 
-test "triple quote" {
+test "lex: triple quote" {
     {
         const doc =
             \\"""The quick
@@ -842,7 +842,7 @@ test "triple quote" {
     }
 }
 
-test "comments" {
+test "lex: comments" {
     {
         var lex = Lexer{ .buffer = "#" };
         try testing.expect(try lex.next() == .eof);

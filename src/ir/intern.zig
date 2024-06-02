@@ -58,7 +58,7 @@ pub const StringInternPool = struct {
     }
 };
 
-test "put and get" {
+test "intern: put and get" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var intern_pool = StringInternPool.init(arena.allocator());
