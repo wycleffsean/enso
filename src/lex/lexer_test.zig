@@ -8,7 +8,7 @@ fn lexBuffer(buffer: []const u8) !void {
     var lexer = lex.Lexer{ .buffer = buffer };
     for (0..100000) |_| {
         _ = lexer.next() catch |err| {
-            std.debug.print("{s}\n", .{lex.test_err_message});
+            // std.debug.print("{s}\n", .{lex.test_err_message});
             return err;
         };
         // std.debug.print("tok: {any}\n", .{tok});

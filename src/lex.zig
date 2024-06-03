@@ -673,6 +673,19 @@ test "lex: decorator" {
     try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.decorator.loc);
 }
 
+fn expectErrorMessage(message: []const u8) !void {
+    // For reasons I never figured out, if this buffer is not empty after tests run then
+    // we get this printed in the test runner report (but the test still passes):
+    //   run enso_tests: error: 'test.parse pyfile' failed: SyntaxError: unterminated triple-quoted string literal (detected at line 2)
+    // if you comment out the test that sets the buffer to that value (which is a string literal
+    // expectation in these tests), then the error printed is the value the prior test left it in e.g.:
+    //   run enso_tests: error: leading zeros in decimal integer literals are not permitted;...
+    defer {
+         test_logger_buf = undefined;
+    }
+    return testing.expectEqualStrings(message, test_err_message);
+}
+
 test "lex: integer" {
     {
         var value = "987654321";
@@ -699,7 +712,7 @@ test "lex: integer" {
         var value = "0123";
         var lex = Lexer{ .buffer = value };
         try testing.expectError(Lexer.Error.SyntaxError, lex.next());
-        try testing.expectEqualSlices(u8, "SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers", test_err_message);
+        try expectErrorMessage("SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers");
     }
 }
 
@@ -818,7 +831,7 @@ test "lex: triple quote" {
         ;
         var lex = Lexer{ .buffer = doc };
         try testing.expectError(Lexer.Error.SyntaxError, lex.next());
-        try testing.expectEqualSlices(u8, "SyntaxError: unterminated triple-quoted string literal (detected at line 2)", test_err_message);
+        try expectErrorMessage("SyntaxError: unterminated triple-quoted string literal (detected at line 2)");
     }
     {
         const doc =
@@ -838,7 +851,7 @@ test "lex: triple quote" {
         ;
         var lex = Lexer{ .buffer = doc };
         try testing.expectError(Lexer.Error.SyntaxError, lex.next());
-        try testing.expectEqualSlices(u8, "SyntaxError: unterminated triple-quoted string literal (detected at line 2)", test_err_message);
+        try expectErrorMessage("SyntaxError: unterminated triple-quoted string literal (detected at line 2)");
     }
 }
 
