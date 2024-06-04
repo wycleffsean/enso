@@ -38,6 +38,7 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = optimize,
         .filter = test_filter,
     });
+    unit_tests.step.dependOn(&pythonDisExamples(b).step);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -49,4 +50,26 @@ pub fn build(b: *std.build.Builder) void {
     // tests_exe.setTarget(target);
     // tests_exe.setBuildMode(mode);
     // tests_exe.install();
+}
+
+fn generateZigFromPython(b: *std.build.Builder, script_path: []const u8) *std.Build.Step.Run {
+    const python_run = b.addSystemCommand(&.{"python"});
+    python_run.addFileArg(.{ .path = script_path });
+    return python_run;
+}
+
+fn pythonDisExamples(b: *std.build.Builder) *std.Build.Step.InstallFile {
+    const python_run = generateZigFromPython(b, "python/disassemble_examples_to_zig.py");
+    var path_buf: [255][std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var dir = std.fs.cwd().openIterableDir("python/examples", .{}) catch unreachable;
+    defer dir.close();
+    var iter = dir.iterate();
+    var i: usize = 0;
+    while (iter.next() catch unreachable) |entry| {
+        // this will lead to a nasty error once we exceed 255 examples :P
+        const path = std.fmt.bufPrint(&path_buf[i], "python/examples/{s}", .{entry.name}) catch unreachable;
+        python_run.addFileArg(std.Build.LazyPath.relative(path));
+        i += 1;
+    }
+    return b.addInstallFile(python_run.captureStdOut(), "../src/test/disassembled_examples.zig");
 }
