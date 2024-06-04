@@ -1,0 +1,23 @@
+image: nixos/23.11
+# repositories:
+#   nixpkgs: https://nixos.org/channels/nixpkgs-unstable
+#     nixpkgs.url = "github:nixos/nixpkgs/nixos-24.05";
+environment:
+  NIX_CONFIG: "experimental-features = nix-command flakes"
+# packages:
+#   - zig # 0.11.0
+#   - python312
+secrets:
+  - 90030171-7f58-4156-a8ac-f8b9a38eca13
+sources:
+  - git@git.sr.ht:~scarey/enso
+tasks:
+  - setup_environment: |
+      cd enso
+      nix develop --command bash -c "true"
+  - build_release: |
+      cd enso
+      nix develop --command bash -c "zig build -Doptimize=ReleaseSafe --summary all"
+  - test: |
+      cd enso
+      nix develop --command bash -c "zig build test --summary all"
