@@ -3,6 +3,7 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const lex = @import("lex.zig");
 const Token = lex.Token;
+const test_examples = @import("test/utils.zig").examples;
 
 const log = std.log.scoped(.parse);
 
@@ -920,5 +921,17 @@ test "parse: imports" {
         try testing.expectEqualStrings("foo", import_def.module.refs[0].symbol);
         try testing.expectEqualStrings("bar", import_def.module.refs[1].symbol);
         try testing.expectEqualStrings("star", @tagName(import_def.package));
+    }
+}
+
+test "parse: example fixtures" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var allocator = arena.allocator();
+    defer arena.deinit();
+
+    inline for (test_examples) |example| {
+        if (!example.test_parse) continue;
+        var parser = Parser.init(allocator, example.source());
+        _ = try parser.parse();
     }
 }

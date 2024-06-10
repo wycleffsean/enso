@@ -61,13 +61,13 @@ fn generateZigFromPython(b: *std.build.Builder, script_path: []const u8) *std.Bu
 fn pythonDisExamples(b: *std.build.Builder) *std.Build.Step.InstallFile {
     const python_run = generateZigFromPython(b, "python/disassemble_examples_to_zig.py");
     var path_buf: [255][std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var dir = std.fs.cwd().openIterableDir("python/examples", .{}) catch unreachable;
+    var dir = std.fs.cwd().openIterableDir("src/test/examples", .{}) catch unreachable;
     defer dir.close();
     var iter = dir.iterate();
     var i: usize = 0;
     while (iter.next() catch unreachable) |entry| {
         // this will lead to a nasty error once we exceed 255 examples :P
-        const path = std.fmt.bufPrint(&path_buf[i], "python/examples/{s}", .{entry.name}) catch unreachable;
+        const path = std.fmt.bufPrint(&path_buf[i], "src/test/examples/{s}", .{entry.name}) catch unreachable;
         python_run.addFileArg(std.Build.LazyPath.relative(path));
         i += 1;
     }

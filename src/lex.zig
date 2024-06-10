@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const test_examples = @import("test/utils.zig").examples;
 
 const testing = std.testing;
 const ascii = std.ascii;
@@ -681,7 +682,7 @@ fn expectErrorMessage(message: []const u8) !void {
     // expectation in these tests), then the error printed is the value the prior test left it in e.g.:
     //   run enso_tests: error: leading zeros in decimal integer literals are not permitted;...
     defer {
-         test_logger_buf = undefined;
+        test_logger_buf = undefined;
     }
     return testing.expectEqualStrings(message, test_err_message);
 }
@@ -869,5 +870,14 @@ test "lex: comments" {
         try testing.expect(try lex.next() == .integer);
         try testing.expect(try lex.next() == .string);
         try testing.expect(try lex.next() == .eof);
+    }
+}
+
+test "lex: example fixtures" {
+    inline for (test_examples) |example| {
+        if (!example.test_lex) continue;
+
+        var lex = Lexer{ .buffer = example.source() };
+        while (try lex.next() != .eof) continue;
     }
 }

@@ -5,7 +5,7 @@ const bytecode = @import("bytecode.zig");
 const eval = @import("eval.zig");
 const gen = @import("gen.zig");
 const testing = std.testing;
-const dis_examples = @import("test/disassembled_examples.zig");
+const test_utils = @import("test/utils.zig");
 
 const ReferenceCapabilities = enum {
     isolated,
@@ -30,7 +30,7 @@ test {
     // Broke after zig 0.9.1 :(
     // testing.refAllDecls(@This());
 
-    _ = dis_examples.basic;
+    _ = test_utils;
 
     _ = lex;
     _ = parse;
