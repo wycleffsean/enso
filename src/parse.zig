@@ -283,14 +283,12 @@ pub const Parser = struct {
 
     fn nullDenotationUnhandled(self: *Self) Error!*AstNode {
         log.err("oh no! we don't handle this null denotation: {any}", .{try self.take()});
-        unreachable;
-        // return Error.NullDenotationUnhandled;
+        return Error.NullDenotationUnhandled;
     }
 
     fn leftDenotationUnhandled(self: *Self, lhs: *AstNode) Error!*AstNode {
         log.err("oh no! we don't handle this denotation: lhs: {any}, token: {any}", .{ lhs, try self.take() });
-        unreachable;
-        // return Error.NullDenotationUnhandled;
+        return Error.LeftDenotationUnhandled;
     }
 
     fn parsePass(self: *Self) Error!*AstNode {
@@ -924,6 +922,35 @@ test "parse: imports" {
     }
 }
 
+// TODO: move this formatting stuff somewhere else
+// also this is fragile and doesn't totally work right BUT leaving this broken starting
+// point because it's still useful
+fn highlightSource(filename: []const u8, source: []const u8, token: ?lex.Token) void {
+    //ansi escape codes
+    const esc = "\x1B";
+    const csi = esc ++ "[";
+
+    const ansi_reset = csi ++ "0m";
+    const ansi_bold = csi ++ "1m";
+    const highlight_red = csi ++ "4:3m" ++ csi ++ "58;2;240;143;104m";
+    const highlight_end = csi ++ "59m" ++ csi ++ "4:0m";
+
+    std.debug.print("\n{s}# {s}{s}\n", .{ ansi_bold, filename, ansi_reset });
+    if (token) |tok| {
+        var iter = std.mem.splitSequence(u8, source, "\n");
+        var i: usize = 0;
+        const location = tok.getLocation();
+        while (iter.next()) |line| {
+            i += 1;
+            if (i != location.line) continue;
+            const beforeHighlight = line[0..(location.col - 1)];
+            const highlight = line[beforeHighlight.len..];
+            std.debug.print("\t{d}: {s}{s}{s}{s}\n", .{ location.line, beforeHighlight, highlight_red, highlight, highlight_end });
+        }
+    }
+    std.debug.print("\n\n\n", .{});
+}
+
 test "parse: example fixtures" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     var allocator = arena.allocator();
@@ -932,6 +959,9 @@ test "parse: example fixtures" {
     inline for (test_examples) |example| {
         if (!example.test_parse) continue;
         var parser = Parser.init(allocator, example.source());
-        _ = try parser.parse();
+        _ = parser.parse() catch |err| {
+            highlightSource(example.path(), example.source(), parser.peek());
+            return err;
+        };
     }
 }
