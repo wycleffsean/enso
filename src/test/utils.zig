@@ -1,31 +1,40 @@
 const std = @import("std");
 const dis_examples = @import("./disassembled_examples.zig");
 
+pub const PyArgVal = dis_examples.PyArgVal;
+
 const Example = struct {
     name: []const u8,
     test_lex: bool = true,
     test_parse: bool = true,
     test_dis: bool = false,
+    test_bytecode: bool = true,
 
     const Self = @This();
 
-    pub fn path(self: *const Self) []const u8 {
-        return dis_examples.examples.get(self.name).?.path;
+    pub fn dis(comptime self: *const Self) dis_examples.Example {
+        return dis_examples.examples.get(self.name).?;
     }
 
-    pub fn source(self: *const Self) []const u8 {
-        return dis_examples.examples.get(self.name).?.source;
+    pub fn path(comptime self: *const Self) []const u8 {
+        return self.dis().path;
     }
 
-    pub fn instructions(self: *const Self) []const dis_examples.Instruction {
-        return dis_examples.examples.get(self.name).?.instructions;
+    pub fn source(comptime self: *const Self) []const u8 {
+        return self.dis().source;
+    }
+
+    pub fn instructions(comptime self: *const Self) []const dis_examples.Instruction {
+        return self.dis().instructions;
     }
 };
 
 pub const examples = [_]Example{
     .{
+        .name = "none",
+    },
+    .{
         .name = "hello_world",
-        .test_parse = false,
     },
 };
 

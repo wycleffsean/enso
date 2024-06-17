@@ -1,36 +1,36 @@
 const std = @import("std");
 const parse = @import("parse.zig");
 const intern = @import("bytecode/intern.zig");
+const OpCode = @import("bytecode/opcodes.zig").OpCode;
+const test_utils = @import("test/utils.zig");
+const test_examples = test_utils.examples;
 const AstNode = parse.AstNode;
 const Parser = parse.Parser;
 const testing = std.testing;
 
-const InsnType = enum {
-    push_integer,
-    push_symbol,
-    decl_var,
-    decl_fn,
-    assign,
-    sum,
-    product,
-    division,
-    call,
-    yield, // ie return
-    noop, // ie ast root node
-};
+pub const Insn = union(OpCode) {
+    call: usize,
+    @"resume": usize,
+    push_null: void,
+    load_name: intern.Index,
+    load_const: intern.Index,
+    return_const: void,
+    return_value: void,
 
-pub const Insn = union(InsnType) {
-    push_integer: struct { value: usize },
-    push_symbol: struct { value: intern.Index },
-    decl_var: struct { symbol: intern.Index },
-    decl_fn: struct { symbol: intern.Index },
-    assign: void,
-    sum: void,
-    product: void,
-    division: void,
-    call: void,
-    yield: void,
-    noop: void,
+    const Self = @This();
+
+    // convenience function for tests
+    fn init(comptime kind: OpCode, comptime value: test_utils.PyArgVal, intern_pool: *intern.StringInternPool) !Self {
+        return switch (kind) {
+            .@"resume" => .{ .@"resume" = value.integer },
+            .push_null => .{ .push_null = value.void },
+            .load_name => .{ .load_name = try intern_pool.put(value.string) },
+            .load_const => .{ .load_const = try intern_pool.put(value.string) },
+            .return_const => .{ .return_value = value.void },
+            .return_value => .{ .return_value = value.void },
+            .call => .{ .call = value.integer },
+        };
+    }
 };
 
 const Block = struct {
@@ -41,6 +41,7 @@ const StackItem = union(enum) {
     ast_node: *const AstNode,
     block: Block,
     block_end: Block,
+    null: void,
 };
 
 pub const IrGen = struct {
@@ -70,12 +71,15 @@ pub const IrGen = struct {
         self.stack.deinit();
     }
 
+    // This function iterates over the AST, flattens it out, and leaves markers for block/scope
     fn buildStack(self: *Self, ast: *const AstNode, block: *const Block) Error!void {
         switch (ast.*) {
             .root => |ast_list| {
+                try self.stack.append(.{ .block = Block{ .parent = block } });
                 for (ast_list) |node| {
                     try self.buildStack(node, block);
                 }
+                try self.stack.append(.{ .block_end = Block{ .parent = block } });
             },
             .sum, .product, .division, .assignment => |node| {
                 // @call(.{ .always_tail }, buildStack, .{self, ast
@@ -83,16 +87,10 @@ pub const IrGen = struct {
                 try self.buildStack(node.rhs, block);
                 try self.stack.append(.{ .ast_node = ast });
             },
-            .integer => |_| {
-                try self.stack.append(.{ .ast_node = ast });
-            },
             .group => |group| {
                 try self.buildStack(group.value, block);
             },
-            .name => |_| {
-                try self.stack.append(.{ .ast_node = ast });
-            },
-            .var_decl => |_| {
+            .integer, .name, .var_decl, .string_literal => {
                 try self.stack.append(.{ .ast_node = ast });
             },
             .fn_decl => |fn_decl| {
@@ -106,28 +104,45 @@ pub const IrGen = struct {
                 try self.stack.append(.{ .block_end = Block{ .parent = block } });
             },
             .call => |call| {
+                try self.stack.append(.{ .null = {} }); // TODO: eventually we'll need to push receiver here
                 try self.stack.append(.{ .ast_node = call.ref });
-                try self.stack.append(.{ .ast_node = ast });
+                for (call.args.items) |node| {
+                    try self.buildStack(node, block);
+                }
+                try self.stack.append(.{ .ast_node = ast }); // i.e. push 'call'
             },
-            else => unreachable, // TODO: handle these cases
+            else => {
+                // TODO: this should become an exhaustive switch
+                std.debug.print("\n###############\nbuildStack: AstNode.{s} is not handled\n###############\n", .{@tagName(ast.*)});
+                unreachable;
+            },
         }
     }
 
     fn generateInsn(self: *Self, ast_node: *const AstNode) Error!Insn {
         var insn: Insn = blk: {
             switch (ast_node.*) {
-                .root => break :blk Insn{ .noop = {} },
-                .integer => break :blk Insn{ .push_integer = .{ .value = ast_node.integer.value } },
-                .name => break :blk Insn{ .push_symbol = .{ .value = try self.intern_pool.put(ast_node.name.value) } },
-                .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
-                .sum => break :blk Insn{ .sum = {} },
-                .product => break :blk Insn{ .product = {} },
-                .division => break :blk Insn{ .division = {} },
-                .group => break :blk try self.generateInsn(ast_node.group.value),
-                .assignment => break :blk Insn{ .assign = {} },
-                .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
-                .call => break :blk Insn{ .call = {} },
-                else => unreachable, // TODO: handle these cases
+                // .root => break :blk Insn{ .@"resume" = 0 },
+                // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
+                .name => |name| break :blk Insn{ .load_name = try self.intern_pool.put(name.value) },
+                .string_literal => |string| break :blk Insn{ .load_const = try self.intern_pool.put(string.value) },
+                // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
+                // .sum => break :blk Insn{ .sum = {} },
+                // .product => break :blk Insn{ .product = {} },
+                // .division => break :blk Insn{ .division = {} },
+                // .group => break :blk try self.generateInsn(ast_node.group.value),
+                // .block_end => {
+                // .assignment => break :blk Insn{ .assign = {} },
+                // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
+                .call => |call| {
+                    const len = call.args.items.len;
+                    break :blk Insn{ .call = len };
+                },
+                else => {
+                    // TODO: this should become an exhaustive switch
+                    std.debug.print("\n###############\ngenerateInsn: AstNode.{s} is not handled\n###############\n", .{@tagName(ast_node.*)});
+                    unreachable;
+                },
             }
         };
         return insn;
@@ -146,13 +161,17 @@ pub const IrGen = struct {
                 },
                 .block => |*block| {
                     current_block = block;
+                    try insns.append(Insn{ .@"resume" = 0 });
                 },
                 .block_end => {
-                    try insns.append(Insn{ .yield = {} });
+                    try insns.append(Insn{ .return_value = {} });
+                },
+                .null => {
+                    try insns.append(Insn{ .push_null = {} });
                 },
             }
         }
-        try insns.append(Insn{ .yield = {} });
+        // try insns.append(Insn{ .yield = {} });
         return insns.toOwnedSlice();
     }
 };
@@ -197,181 +216,216 @@ test {
     _ = intern;
 }
 
-test "ir: push integer" {
-    var ctx = try testSetup("1");
-    defer testTeardown(&ctx);
+// test "ir: push integer" {
+//     var ctx = try testSetup("1");
+//     defer testTeardown(&ctx);
 
-    var expected = [_]Insn{
-        Insn{ .push_integer = .{ .value = 1 } },
-        Insn{ .yield = {} },
-    };
-    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-}
+//     var expected = [_]Insn{
+//         Insn{ .push_integer = .{ .value = 1 } },
+//         Insn{ .yield = {} },
+//     };
+//     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+// }
 
-test "ir: sum" {
-    var ctx = try testSetup("1 + 2");
-    defer testTeardown(&ctx);
+// test "ir: sum" {
+//     var ctx = try testSetup("1 + 2");
+//     defer testTeardown(&ctx);
 
-    var expected = [_]Insn{
-        Insn{ .push_integer = .{ .value = 1 } },
-        Insn{ .push_integer = .{ .value = 2 } },
-        Insn{ .sum = {} },
-        Insn{ .yield = {} },
-    };
-    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-}
+//     var expected = [_]Insn{
+//         Insn{ .push_integer = .{ .value = 1 } },
+//         Insn{ .push_integer = .{ .value = 2 } },
+//         Insn{ .sum = {} },
+//         Insn{ .yield = {} },
+//     };
+//     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+// }
 
-test "ir: product" {
-    var ctx = try testSetup("1 * 2");
-    defer testTeardown(&ctx);
+// test "ir: product" {
+//     var ctx = try testSetup("1 * 2");
+//     defer testTeardown(&ctx);
 
-    var expected = [_]Insn{
-        Insn{ .push_integer = .{ .value = 1 } },
-        Insn{ .push_integer = .{ .value = 2 } },
-        Insn{ .product = {} },
-        Insn{ .yield = {} },
-    };
-    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-}
+//     var expected = [_]Insn{
+//         Insn{ .push_integer = .{ .value = 1 } },
+//         Insn{ .push_integer = .{ .value = 2 } },
+//         Insn{ .product = {} },
+//         Insn{ .yield = {} },
+//     };
+//     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+// }
 
-test "ir: division" {
-    var ctx = try testSetup("1 / 2");
-    defer testTeardown(&ctx);
+// test "ir: division" {
+//     var ctx = try testSetup("1 / 2");
+//     defer testTeardown(&ctx);
 
-    var expected = [_]Insn{
-        Insn{ .push_integer = .{ .value = 1 } },
-        Insn{ .push_integer = .{ .value = 2 } },
-        Insn{ .division = {} },
-        Insn{ .yield = {} },
-    };
-    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-}
+//     var expected = [_]Insn{
+//         Insn{ .push_integer = .{ .value = 1 } },
+//         Insn{ .push_integer = .{ .value = 2 } },
+//         Insn{ .division = {} },
+//         Insn{ .yield = {} },
+//     };
+//     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+// }
 
-test "ir: group" {
-    {
-        var ctx = try testSetup("(1 + 2) * 3");
+// test "ir: group" {
+//     {
+//         var ctx = try testSetup("(1 + 2) * 3");
+//         defer testTeardown(&ctx);
+
+//         var expected = [_]Insn{
+//             Insn{ .push_integer = .{ .value = 1 } },
+//             Insn{ .push_integer = .{ .value = 2 } },
+//             Insn{ .sum = {} },
+//             Insn{ .push_integer = .{ .value = 3 } },
+//             Insn{ .product = {} },
+//             Insn{ .yield = {} },
+//         };
+//         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+//     }
+//     { // ungrouped
+//         var ctx = try testSetup("1 + 2 * 3");
+//         defer testTeardown(&ctx);
+
+//         var expected = [_]Insn{
+//             Insn{ .push_integer = .{ .value = 1 } },
+//             Insn{ .push_integer = .{ .value = 2 } },
+//             Insn{ .push_integer = .{ .value = 3 } },
+//             Insn{ .product = {} },
+//             Insn{ .sum = {} },
+//             Insn{ .yield = {} },
+//         };
+//         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+//     }
+// }
+
+// test "ir: assignment" {
+//     {
+//         var ctx = try testSetup("a = 1");
+//         defer testTeardown(&ctx);
+
+//         var expected = [_]Insn{
+//             Insn{ .push_symbol = .{ .value = 0 } },
+//             Insn{ .push_integer = .{ .value = 1 } },
+//             Insn{ .assign = {} },
+//             Insn{ .yield = {} },
+//         };
+//         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+//     }
+//     {
+//         var ctx = try testSetup("a = b+c*9");
+//         defer testTeardown(&ctx);
+
+//         var expected = [_]Insn{
+//             Insn{ .push_symbol = .{ .value = 0 } },
+//             Insn{ .push_symbol = .{ .value = 1 } },
+//             Insn{ .push_symbol = .{ .value = 2 } },
+//             Insn{ .push_integer = .{ .value = 9 } },
+//             Insn{ .product = {} },
+//             Insn{ .sum = {} },
+//             Insn{ .assign = {} },
+//             Insn{ .yield = {} },
+//         };
+//         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+//     }
+// }
+// test "ir: declare function" {
+//     if (true) return error.SkipZigTest;
+//     {
+//         const fn_decl =
+//             \\fn myFunction():
+//             \\	a = 1
+//             \\	a * 3
+//         ;
+//         var ctx = try testSetup(fn_decl);
+//         defer testTeardown(&ctx);
+
+//         var expected = [_]Insn{
+//             Insn{ .decl_fn = .{ .symbol = 0 } },
+//             Insn{ .push_symbol = .{ .symbol = 1 } },
+//             Insn{ .push_integer = .{ .value = 1 } },
+//             Insn{ .assign = {} },
+//             Insn{ .push_symbol = .{ .value = 1 } },
+//             Insn{ .push_integer = .{ .value = 3 } },
+//             Insn{ .product = {} },
+//             Insn{ .yield = {} },
+//             Insn{ .yield = {} },
+//         };
+//         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+//     }
+//     {
+//         // declare function in parent scope
+//         const fn_decl =
+//             \\a = 9
+//             \\
+//             \\fn myFunction():
+//             \\	b = 1
+//             \\	a * b
+//         ;
+//         var ctx = try testSetup(fn_decl);
+//         defer testTeardown(&ctx);
+
+//         var expected = [_]Insn{
+//             Insn{ .push_symbol = .{ .symbol = 0 } },
+//             Insn{ .push_integer = .{ .value = 9 } },
+//             Insn{ .assign = {} },
+//             //
+//             Insn{ .decl_fn = .{ .symbol = 1 } },
+//             Insn{ .push_symbol = .{ .symbol = 2 } },
+//             Insn{ .push_integer = .{ .value = 1 } },
+//             Insn{ .assign = {} },
+//             Insn{ .push_symbol = .{ .value = 0 } },
+//             Insn{ .push_symbol = .{ .value = 2 } },
+//             Insn{ .product = {} },
+//             Insn{ .yield = {} },
+//             //
+//             Insn{ .yield = {} },
+//         };
+//         try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+//     }
+// }
+
+// test "ir: call function" {
+//     var ctx = try testSetup("myFunction()");
+//     defer testTeardown(&ctx);
+
+//     var expected = [_]Insn{
+//         Insn{ .push_symbol = .{ .value = 0 } },
+//         Insn{ .call = {} },
+//         Insn{ .yield = {} },
+//     };
+//     try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+// }
+
+test "bytecode: example fixtures" {
+    // var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    // var allocator = arena.allocator();
+    // defer arena.deinit();
+
+    inline for (test_examples) |example| {
+        if (!example.test_bytecode) continue;
+        var ctx = try testSetup(example.source());
         defer testTeardown(&ctx);
 
-        var expected = [_]Insn{
-            Insn{ .push_integer = .{ .value = 1 } },
-            Insn{ .push_integer = .{ .value = 2 } },
-            Insn{ .sum = {} },
-            Insn{ .push_integer = .{ .value = 3 } },
-            Insn{ .product = {} },
-            Insn{ .yield = {} },
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var intern_pool = intern.StringInternPool.init(arena.allocator());
+        defer intern_pool.deinit();
+
+        const len = comptime example.instructions().len;
+        var expected: [len]Insn = undefined;
+
+        inline for (comptime example.instructions(), 0..) |dis, i| {
+            expected[i] = try Insn.init(dis.opcode, dis.argval, &intern_pool);
+        }
+
+        testing.expectEqualSlices(Insn, expected[0..], ctx.ir) catch |err| {
+            std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
+            return err;
         };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
+        // if (!example.test_parse) continue;
+        // var parser = Parser.init(allocator, example.source());
+        // _ = parser.parse() catch |err| {
+        //     highlightSource(example.path(), example.source(), parser.peek());
+        //     return err;
+        // };
     }
-    { // ungrouped
-        var ctx = try testSetup("1 + 2 * 3");
-        defer testTeardown(&ctx);
-
-        var expected = [_]Insn{
-            Insn{ .push_integer = .{ .value = 1 } },
-            Insn{ .push_integer = .{ .value = 2 } },
-            Insn{ .push_integer = .{ .value = 3 } },
-            Insn{ .product = {} },
-            Insn{ .sum = {} },
-            Insn{ .yield = {} },
-        };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-    }
-}
-
-test "ir: assignment" {
-    {
-        var ctx = try testSetup("a = 1");
-        defer testTeardown(&ctx);
-
-        var expected = [_]Insn{
-            Insn{ .push_symbol = .{ .value = 0 } },
-            Insn{ .push_integer = .{ .value = 1 } },
-            Insn{ .assign = {} },
-            Insn{ .yield = {} },
-        };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-    }
-    {
-        var ctx = try testSetup("a = b+c*9");
-        defer testTeardown(&ctx);
-
-        var expected = [_]Insn{
-            Insn{ .push_symbol = .{ .value = 0 } },
-            Insn{ .push_symbol = .{ .value = 1 } },
-            Insn{ .push_symbol = .{ .value = 2 } },
-            Insn{ .push_integer = .{ .value = 9 } },
-            Insn{ .product = {} },
-            Insn{ .sum = {} },
-            Insn{ .assign = {} },
-            Insn{ .yield = {} },
-        };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-    }
-}
-test "ir: declare function" {
-    if (true) return error.SkipZigTest;
-    {
-        const fn_decl =
-            \\fn myFunction():
-            \\	a = 1
-            \\	a * 3
-        ;
-        var ctx = try testSetup(fn_decl);
-        defer testTeardown(&ctx);
-
-        var expected = [_]Insn{
-            Insn{ .decl_fn = .{ .symbol = 0 } },
-            Insn{ .push_symbol = .{ .symbol = 1 } },
-            Insn{ .push_integer = .{ .value = 1 } },
-            Insn{ .assign = {} },
-            Insn{ .push_symbol = .{ .value = 1 } },
-            Insn{ .push_integer = .{ .value = 3 } },
-            Insn{ .product = {} },
-            Insn{ .yield = {} },
-            Insn{ .yield = {} },
-        };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-    }
-    {
-        // declare function in parent scope
-        const fn_decl =
-            \\a = 9
-            \\
-            \\fn myFunction():
-            \\	b = 1
-            \\	a * b
-        ;
-        var ctx = try testSetup(fn_decl);
-        defer testTeardown(&ctx);
-
-        var expected = [_]Insn{
-            Insn{ .push_symbol = .{ .symbol = 0 } },
-            Insn{ .push_integer = .{ .value = 9 } },
-            Insn{ .assign = {} },
-            //
-            Insn{ .decl_fn = .{ .symbol = 1 } },
-            Insn{ .push_symbol = .{ .symbol = 2 } },
-            Insn{ .push_integer = .{ .value = 1 } },
-            Insn{ .assign = {} },
-            Insn{ .push_symbol = .{ .value = 0 } },
-            Insn{ .push_symbol = .{ .value = 2 } },
-            Insn{ .product = {} },
-            Insn{ .yield = {} },
-            //
-            Insn{ .yield = {} },
-        };
-        try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
-    }
-}
-
-test "ir: call function" {
-    var ctx = try testSetup("myFunction()");
-    defer testTeardown(&ctx);
-
-    var expected = [_]Insn{
-        Insn{ .push_symbol = .{ .value = 0 } },
-        Insn{ .call = {} },
-        Insn{ .yield = {} },
-    };
-    try testing.expectEqualSlices(Insn, expected[0..], ctx.ir);
 }
