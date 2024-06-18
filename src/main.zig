@@ -4,6 +4,7 @@ const parse = @import("parse.zig");
 const bytecode = @import("bytecode.zig");
 const eval = @import("eval.zig");
 const gen = @import("gen.zig");
+const vm = @import("vm.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
 
@@ -37,6 +38,7 @@ test {
     _ = bytecode;
     _ = eval;
     _ = gen;
+    _ = vm;
     _ = @import("lex/lexer_test.zig");
     _ = @import("parse/grammar_test.zig");
 }

@@ -7,8 +7,8 @@ const Example = struct {
     name: []const u8,
     test_lex: bool = true,
     test_parse: bool = true,
-    test_dis: bool = false,
     test_bytecode: bool = true,
+    test_vm: bool = true,
 
     const Self = @This();
 

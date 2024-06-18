@@ -85,7 +85,7 @@ const EvalContext = struct {
                 },
                 .decl_fn => |decl| {
                     try scope.symbols.append(decl.symbol);
-                    var child_scope = Scope.init(self.allocator, scope);
+                    const child_scope = Scope.init(self.allocator, scope);
                     try scope.children.append(child_scope);
                     try self.evalRecursive(&scope.children.items[scope.children.items.len - 1]);
                 },
