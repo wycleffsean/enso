@@ -86,49 +86,49 @@ const VM = struct {
 };
 
 const TestContext = struct {
-    arena: *std.heap.ArenaAllocator,
-    irgen: bytecode.IrGen,
     ir: []const bytecode.Insn,
     intern_pool: *intern.StringInternPool,
 };
 
-fn testSetup(code: []const u8) !TestContext {
-    // this is a strange thing to do but prevents segfault :/
-    var arena = try testing.allocator.create(std.heap.ArenaAllocator);
-    arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+fn testSetup(code: []const u8, buffer: []u8) !TestContext {
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    const allocator = fba.allocator();
+    var arena = std.heap.ArenaAllocator.init(allocator);
 
-    var parser = Parser.init(arena.allocator(), code);
+    var parser = Parser.init(allocator, code);
     const ast = try parser.parse();
 
-    const intern_pool = try testing.allocator.create(intern.StringInternPool);
-    intern_pool.* = intern.StringInternPool.init(arena.allocator());
-    var irgen = bytecode.IrGen.init(arena, intern_pool, ast);
-    const ir = try irgen.generate(testing.allocator);
-    return TestContext{
-        .arena = arena,
-        .irgen = irgen,
-        .ir = ir,
-        .intern_pool = intern_pool,
-    };
+    const intern_pool = try allocator.create(intern.StringInternPool);
+    intern_pool.* = intern.StringInternPool.init(allocator);
+
+    var irgen = bytecode.IrGen.init(&arena, intern_pool, ast);
+    const ir = try irgen.generate(allocator);
+    return .{ .ir = ir, .intern_pool = intern_pool };
 }
 
 fn testTeardown(ctx: *TestContext) void {
-    ctx.irgen.deinit();
-    ctx.intern_pool.deinit();
-    ctx.arena.deinit();
-    testing.allocator.free(ctx.ir);
-    testing.allocator.destroy(ctx.intern_pool);
-    testing.allocator.destroy(ctx.arena);
+    _ = ctx;
 }
 
 test "parse: example fixtures" {
     inline for (test_examples) |example| {
         if (!example.test_vm) continue;
+        if (example.test_vm_comptime) {
+            comptime {
+                var buffer: [std.mem.page_size * 8]u8 = undefined;
+                var ctx = try testSetup(example.source(), &buffer);
+                defer testTeardown(&ctx);
 
-        var ctx = try testSetup(example.source());
-        defer testTeardown(&ctx);
+                var vm = VM{ .intern_pool = ctx.intern_pool };
+                try vm.eval(ctx.ir);
+            }
+        } else {
+            var buffer: [std.mem.page_size * 8]u8 = undefined;
+            var ctx = try testSetup(example.source(), &buffer);
+            defer testTeardown(&ctx);
 
-        var vm = VM{ .intern_pool = ctx.intern_pool };
-        try vm.eval(ctx.ir);
+            var vm = VM{ .intern_pool = ctx.intern_pool };
+            try vm.eval(ctx.ir);
+        }
     }
 }
