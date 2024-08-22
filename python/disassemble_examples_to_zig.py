@@ -1,3 +1,7 @@
+# This script is more or less just doing
+#   python -m dis the_file.py
+# but turning the output into a zig source file for easy consumption
+
 from dis import get_instructions
 from pathlib import Path
 from os.path import relpath
@@ -17,6 +21,7 @@ const StaticStringMap = @import("std").StaticStringMap;
 
 pub const PyArgVal = union {
  integer: usize,
+ float: f32,
  string: []const u8,
  void: void,
 };
@@ -55,8 +60,14 @@ def argval_to_PyArgVal(val):
         return "PyArgVal{ .void = {} }"
     elif isinstance(val, str):
         return 'PyArgVal{ .string = "' + val + '" }'
-    else:
+    elif isinstance(val, int):
         return 'PyArgVal{ .integer = ' + str(val) + ' }'
+    elif isinstance(val, float):
+        return 'PyArgVal{ .float = ' + str(val) + ' }'
+    else:
+        # this is wrong, for example sometimes it can be a symbol
+        # like a method name
+        return 'PyArgVal{ .void = {} }'
 
 def instruction_to_zig(insn):
     return f"""  .{{

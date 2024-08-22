@@ -5,11 +5,11 @@ pub const PyArgVal = dis_examples.PyArgVal;
 
 const Example = struct {
     name: []const u8,
-    comptime test_lex: bool = true,
-    comptime test_parse: bool = true,
-    comptime test_bytecode: bool = true,
-    comptime test_vm: bool = true,
-    comptime test_vm_comptime: bool = false,
+    test_lex: bool = true,
+    test_parse: bool = true,
+    test_bytecode: bool = true,
+    test_vm: bool = true,
+    test_vm_comptime: bool = false,
 
     const Self = @This();
 
@@ -36,6 +36,13 @@ pub const examples = [_]Example{
     },
     .{
         .name = "hello_world",
+        .test_vm = false,
+    },
+    .{
+        .name = "test_grammar",
+        .test_parse = false,
+        .test_bytecode = false,
+        .test_vm = false,
     },
 };
 

@@ -9,13 +9,28 @@ const Parser = parse.Parser;
 const testing = std.testing;
 
 pub const Insn = union(OpCode) {
+    pop_top: void,
     push_null: void,
+    store_subscr: void,
+    load_build_class: void,
     return_value: void,
+    setup_annotations: void,
+    store_name: void,
+    swap: void,
     load_const: intern.Index,
     load_name: intern.Index,
+    build_list: void,
+    load_attr: void,
+    compare_op: void,
+    import_name: void,
+    import_from: void,
+    pop_jump_if_false: void,
     return_const: void,
+    make_function: void,
     @"resume": usize,
+    list_extend: void,
     call: usize,
+    call_intrinsic_1: void,
 
     const Self = @This();
 
@@ -29,6 +44,11 @@ pub const Insn = union(OpCode) {
             .return_const => .{ .return_value = value.void },
             .return_value => .{ .return_value = value.void },
             .call => .{ .call = value.integer },
+            else => {
+                comptime {
+                    @compileError("uh-oh - we don't handle this opcode yet! - "); // ++ @tagName(kind));
+                }
+            },
         };
     }
 };

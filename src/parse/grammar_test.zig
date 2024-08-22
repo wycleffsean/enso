@@ -3,7 +3,7 @@ const testing = std.testing;
 const Parser = @import("../parse.zig").Parser;
 const lex = @import("../lex.zig");
 
-const test_grammar = @embedFile("../test/test_grammar.py");
+const test_grammar = @embedFile("../test/examples/test_grammar.py");
 
 test "parse: full python grammar" {
     if (true) return error.SkipZigTest;

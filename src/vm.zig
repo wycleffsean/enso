@@ -61,6 +61,9 @@ const VM = struct {
                 .return_const => {},
                 .@"resume" => {},
                 .call => |arity| try self.call(arity),
+                else => {
+                    // @compileError("uh-oh - we don't handle this Instruction yet!"); // - "); ++ @tagName(insn));
+                },
             }
         }
     }
