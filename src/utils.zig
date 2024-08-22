@@ -37,10 +37,10 @@ pub const testing = struct {
             var parser = Parser.init(arena.allocator(), code);
             const ast = try parser.parse();
 
-            var intern_pool = try std.testing.allocator.create(intern.StringInternPool);
+            const intern_pool = try std.testing.allocator.create(intern.StringInternPool);
             intern_pool.* = intern.StringInternPool.init(arena.allocator());
             var irgen = bc.IrGen.init(arena, intern_pool, ast);
-            var insns = try irgen.generate(std.testing.allocator);
+            const insns = try irgen.generate(std.testing.allocator);
             return .{
                 .arena = arena,
                 .irgen = irgen,

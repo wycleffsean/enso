@@ -29,10 +29,11 @@ pub const IndentLength = u32;
 
 pub const TokenTag = enum {
     eof,
+    lparen,
+    rparen,
     name,
     decorator,
     integer,
-    //STRING,
     string,
     dot,
     colon,
@@ -50,8 +51,6 @@ pub const TokenTag = enum {
     ampersand,
     caret,
     tilde,
-    lparen,
-    rparen,
     lsbracket,
     rsbracket,
     lcbracket,
@@ -282,7 +281,7 @@ pub const Lexer = struct {
     }
 
     fn take(self: *Self) Error!u8 {
-        var byte = self.peek() orelse return Error.eof;
+        const byte = self.peek() orelse return Error.eof;
         self.index += 1;
         if (is(self.prior, '\n')) {
             self.line += 1;
@@ -611,50 +610,50 @@ test "lex: take" {
 test "lex: indents" {
     // taken from py lexer, with comment -> # TODO: a bit wrong :/
     var lex = Lexer{ .buffer = "\t+\n\t\t+\n\t\t\t+\n" };
-    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .indent = 0, .line = 1, .col = 2 } } });
-    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .indent = 2, .line = 2, .col = 2 } } });
-    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .indent = 3, .line = 3, .col = 3 } } });
-    try testing.expectEqual(lex.next(), .{ .eof = .{ .loc = .{ .indent = 0, .line = 3, .col = 4 } } });
+    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 0, .line = 1, .col = 2 } } });
+    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 2, .line = 2, .col = 2 } } });
+    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 3, .line = 3, .col = 3 } } });
+    try testing.expectEqual(lex.next(), Token{ .eof = .{ .loc = .{ .indent = 0, .line = 3, .col = 4 } } });
 }
 
 test "lex: parens" {
     var lex = Lexer{ .buffer = "()" };
-    try testing.expectEqual(lex.next(), .{ .lparen = .{ .loc = .{ .line = 1, .col = 1 } } });
-    try testing.expectEqual(lex.next(), .{ .rparen = .{ .loc = .{ .line = 1, .col = 2 } } });
+    try testing.expectEqual(lex.next(), Token{ .lparen = .{ .loc = .{ .line = 1, .col = 1 } } });
+    try testing.expectEqual(lex.next(), Token{ .rparen = .{ .loc = .{ .line = 1, .col = 2 } } });
 }
 
 test "lex: operators" {
     var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|%&^~" };
-    try testing.expectEqual(lex.next(), .{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } });
-    try testing.expectEqual(lex.next(), .{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } });
-    try testing.expectEqual(lex.next(), .{ .plus = .{ .loc = .{ .line = 1, .col = 3 } } });
-    try testing.expectEqual(lex.next(), .{ .minus = .{ .loc = .{ .line = 1, .col = 4 } } });
-    try testing.expectEqual(lex.next(), .{ .asterisk = .{ .loc = .{ .line = 1, .col = 5 } } });
-    try testing.expectEqual(lex.next(), .{ .solidus = .{ .loc = .{ .line = 1, .col = 6 } } });
-    try testing.expectEqual(lex.next(), .{ .less = .{ .loc = .{ .line = 1, .col = 7 } } });
-    try testing.expectEqual(lex.next(), .{ .greater = .{ .loc = .{ .line = 1, .col = 8 } } });
-    try testing.expectEqual(lex.next(), .{ .assign = .{ .loc = .{ .line = 1, .col = 9 } } });
-    try testing.expectEqual(lex.next(), .{ .bang = .{ .loc = .{ .line = 1, .col = 10 } } });
-    try testing.expectEqual(lex.next(), .{ .lsbracket = .{ .loc = .{ .line = 1, .col = 11 } } });
-    try testing.expectEqual(lex.next(), .{ .rsbracket = .{ .loc = .{ .line = 1, .col = 12 } } });
-    try testing.expectEqual(lex.next(), .{ .lcbracket = .{ .loc = .{ .line = 1, .col = 13 } } });
-    try testing.expectEqual(lex.next(), .{ .rcbracket = .{ .loc = .{ .line = 1, .col = 14 } } });
-    try testing.expectEqual(lex.next(), .{ .pipe = .{ .loc = .{ .line = 1, .col = 15 } } });
-    try testing.expectEqual(lex.next(), .{ .percent = .{ .loc = .{ .line = 1, .col = 16 } } });
-    try testing.expectEqual(lex.next(), .{ .ampersand = .{ .loc = .{ .line = 1, .col = 17 } } });
-    try testing.expectEqual(lex.next(), .{ .caret = .{ .loc = .{ .line = 1, .col = 18 } } });
-    try testing.expectEqual(lex.next(), .{ .tilde = .{ .loc = .{ .line = 1, .col = 19 } } });
+    try testing.expectEqual(lex.next(), Token{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } });
+    try testing.expectEqual(lex.next(), Token{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } });
+    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .line = 1, .col = 3 } } });
+    try testing.expectEqual(lex.next(), Token{ .minus = .{ .loc = .{ .line = 1, .col = 4 } } });
+    try testing.expectEqual(lex.next(), Token{ .asterisk = .{ .loc = .{ .line = 1, .col = 5 } } });
+    try testing.expectEqual(lex.next(), Token{ .solidus = .{ .loc = .{ .line = 1, .col = 6 } } });
+    try testing.expectEqual(lex.next(), Token{ .less = .{ .loc = .{ .line = 1, .col = 7 } } });
+    try testing.expectEqual(lex.next(), Token{ .greater = .{ .loc = .{ .line = 1, .col = 8 } } });
+    try testing.expectEqual(lex.next(), Token{ .assign = .{ .loc = .{ .line = 1, .col = 9 } } });
+    try testing.expectEqual(lex.next(), Token{ .bang = .{ .loc = .{ .line = 1, .col = 10 } } });
+    try testing.expectEqual(lex.next(), Token{ .lsbracket = .{ .loc = .{ .line = 1, .col = 11 } } });
+    try testing.expectEqual(lex.next(), Token{ .rsbracket = .{ .loc = .{ .line = 1, .col = 12 } } });
+    try testing.expectEqual(lex.next(), Token{ .lcbracket = .{ .loc = .{ .line = 1, .col = 13 } } });
+    try testing.expectEqual(lex.next(), Token{ .rcbracket = .{ .loc = .{ .line = 1, .col = 14 } } });
+    try testing.expectEqual(lex.next(), Token{ .pipe = .{ .loc = .{ .line = 1, .col = 15 } } });
+    try testing.expectEqual(lex.next(), Token{ .percent = .{ .loc = .{ .line = 1, .col = 16 } } });
+    try testing.expectEqual(lex.next(), Token{ .ampersand = .{ .loc = .{ .line = 1, .col = 17 } } });
+    try testing.expectEqual(lex.next(), Token{ .caret = .{ .loc = .{ .line = 1, .col = 18 } } });
+    try testing.expectEqual(lex.next(), Token{ .tilde = .{ .loc = .{ .line = 1, .col = 19 } } });
 }
 
 test "lex: whitespace ignored" {
     var lex = Lexer{ .buffer = " \t\n" };
-    try testing.expectEqual(lex.next(), .{ .eof = .{ .loc = .{ .line = 1, .col = 3 } } });
+    try testing.expectEqual(lex.next(), Token{ .eof = .{ .loc = .{ .line = 1, .col = 3 } } });
 }
 
 test "lex: name" {
     {
         var lex = Lexer{ .buffer = "thing " };
-        var value = "thing";
+        const value = "thing";
         const next = try lex.next();
         try testing.expectEqualSlices(u8, value, next.name.value);
         try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.name.loc);
@@ -668,7 +667,7 @@ test "lex: name" {
 
 test "lex: decorator" {
     var lex = Lexer{ .buffer = "@thing " };
-    var value = "@thing";
+    const value = "@thing";
     const next = try lex.next();
     try testing.expectEqualSlices(u8, value, next.decorator.value);
     try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.decorator.loc);
@@ -689,28 +688,28 @@ fn expectErrorMessage(message: []const u8) !void {
 
 test "lex: integer" {
     {
-        var value = "987654321";
+        const value = "987654321";
         var lex = Lexer{ .buffer = value };
         const next = try lex.next();
         try testing.expectEqualSlices(u8, value, next.integer.value);
         try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.integer.loc);
     }
     {
-        var value = "0";
+        const value = "0";
         var lex = Lexer{ .buffer = value };
         const next = try lex.next();
         try testing.expectEqualSlices(u8, value, next.integer.value);
         try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.integer.loc);
     }
     {
-        var value = "000";
+        const value = "000";
         var lex = Lexer{ .buffer = value };
         const next = try lex.next();
         try testing.expectEqualSlices(u8, "0", next.integer.value);
         try testing.expectEqual(Location{ .line = 1, .col = 3 }, next.integer.loc);
     }
     {
-        var value = "0123";
+        const value = "0123";
         var lex = Lexer{ .buffer = value };
         try testing.expectError(Lexer.Error.SyntaxError, lex.next());
         try expectErrorMessage("SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers");
@@ -729,19 +728,19 @@ fn testKeyword(tag: TokenTag, kw: []const u8) !void {
         try testing.expect(next == tag);
     }
     {
-        var str = std.fmt.bufPrint(&buf, "{s} ", .{kw}) catch unreachable;
+        const str = std.fmt.bufPrint(&buf, "{s} ", .{kw}) catch unreachable;
         var lex = Lexer{ .buffer = str };
         const next = try lex.next();
         try testing.expect(next == tag);
     }
     {
-        var str = std.fmt.bufPrint(&buf, "{s}\t", .{kw}) catch unreachable;
+        const str = std.fmt.bufPrint(&buf, "{s}\t", .{kw}) catch unreachable;
         var lex = Lexer{ .buffer = str };
         const next = try lex.next();
         try testing.expect(next == tag);
     }
     {
-        var str = std.fmt.bufPrint(&buf, "{s}s", .{kw}) catch unreachable;
+        const str = std.fmt.bufPrint(&buf, "{s}s", .{kw}) catch unreachable;
         var lex = Lexer{ .buffer = str };
         const next = try lex.next();
         try testing.expect(next != tag);

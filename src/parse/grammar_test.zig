@@ -9,7 +9,7 @@ test "parse: full python grammar" {
     if (true) return error.SkipZigTest;
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     var parser = Parser.init(allocator, test_grammar);

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.build.Builder) void {
+pub fn build(b: *std.Build) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -11,7 +11,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe = b.addExecutable(.{
         .name = "enso",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -33,7 +33,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const unit_tests = b.addTest(.{
         .name = "enso_tests",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .filter = test_filter,
@@ -52,23 +52,23 @@ pub fn build(b: *std.build.Builder) void {
     // tests_exe.install();
 }
 
-fn generateZigFromPython(b: *std.build.Builder, script_path: []const u8) *std.Build.Step.Run {
+fn generateZigFromPython(b: *std.Build, script_path: []const u8) *std.Build.Step.Run {
     const python_run = b.addSystemCommand(&.{"python"});
-    python_run.addFileArg(.{ .path = script_path });
+    python_run.addFileArg(b.path(script_path));
     return python_run;
 }
 
-fn pythonDisExamples(b: *std.build.Builder) *std.Build.Step.InstallFile {
+fn pythonDisExamples(b: *std.Build) *std.Build.Step.InstallFile {
     const python_run = generateZigFromPython(b, "python/disassemble_examples_to_zig.py");
     var path_buf: [255][std.fs.MAX_PATH_BYTES]u8 = undefined;
-    var dir = std.fs.cwd().openIterableDir("src/test/examples", .{}) catch unreachable;
+    var dir = std.fs.cwd().openDir("src/test/examples", .{ .iterate = true }) catch unreachable;
     defer dir.close();
     var iter = dir.iterate();
     var i: usize = 0;
     while (iter.next() catch unreachable) |entry| {
         // this will lead to a nasty error once we exceed 255 examples :P
         const path = std.fmt.bufPrint(&path_buf[i], "src/test/examples/{s}", .{entry.name}) catch unreachable;
-        python_run.addFileArg(std.Build.LazyPath.relative(path));
+        python_run.addFileArg(b.path(path));
         i += 1;
     }
     return b.addInstallFile(python_run.captureStdOut(), "../src/test/disassembled_examples.zig");

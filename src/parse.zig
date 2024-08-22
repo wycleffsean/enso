@@ -101,7 +101,7 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Self) Error!*const AstNode {
-        var root = try self.allocator.create(AstNode);
+        const root = try self.allocator.create(AstNode);
         var list = std.ArrayList(*const AstNode).init(self.allocator);
         while (self.peek()) |token| {
             _ = token;
@@ -265,7 +265,7 @@ pub const Parser = struct {
     }
 
     fn peekPrecedence(self: *Self) Error!Precedence {
-        var peeked = self.peek() orelse return .lowest;
+        const peeked = self.peek() orelse return .lowest;
         return try precedenceMap(peeked);
     }
 
@@ -293,23 +293,23 @@ pub const Parser = struct {
 
     fn parsePass(self: *Self) Error!*AstNode {
         try self.expectAndSkip(.pass_kw);
-        var pass_node = try self.allocator.create(AstNode);
+        const pass_node = try self.allocator.create(AstNode);
         pass_node.* = .{ .pass = {} };
         return pass_node;
     }
 
     fn parseInteger(self: *Self) Error!*AstNode {
-        var int_token = try self.take();
+        const int_token = try self.take();
         const val = try std.fmt.parseInt(usize, int_token.integer.value, 10);
-        var int_node = try self.allocator.create(AstNode);
+        const int_node = try self.allocator.create(AstNode);
         int_node.* = .{ .integer = .{ .value = val } };
         return int_node;
     }
 
     fn parseStringLiteral(self: *Self) Error!*AstNode {
         if (self.expect(.string)) {
-            var string_token = try self.take();
-            var string_node = try self.allocator.create(AstNode);
+            const string_token = try self.take();
+            const string_node = try self.allocator.create(AstNode);
             string_node.* = .{ .string_literal = .{ .value = string_token.string.value } };
             return string_node;
         } else {
@@ -321,8 +321,8 @@ pub const Parser = struct {
         const sum_token = try self.take(); // skip sum token
         switch (sum_token) {
             .plus => {
-                var rhs = try self.parseExpression(.sum);
-                var sum_node = try self.allocator.create(AstNode);
+                const rhs = try self.parseExpression(.sum);
+                const sum_node = try self.allocator.create(AstNode);
                 sum_node.* = .{ .sum = .{ .lhs = lhs, .rhs = rhs } };
                 return sum_node;
             },
@@ -333,8 +333,8 @@ pub const Parser = struct {
     fn parseProduct(self: *Self, lhs: *AstNode) Error!*AstNode {
         const product_token = try self.take(); // skip asterisk token
         assert(product_token == .asterisk);
-        var rhs = try self.parseExpression(.product);
-        var sum_node = try self.allocator.create(AstNode);
+        const rhs = try self.parseExpression(.product);
+        const sum_node = try self.allocator.create(AstNode);
         sum_node.* = .{ .product = .{ .lhs = lhs, .rhs = rhs } };
         return sum_node;
     }
@@ -342,8 +342,8 @@ pub const Parser = struct {
     fn parseDivision(self: *Self, lhs: *AstNode) Error!*AstNode {
         const solidus_token = try self.take(); // skip solidus token
         assert(solidus_token == .solidus);
-        var rhs = try self.parseExpression(.product);
-        var sum_node = try self.allocator.create(AstNode);
+        const rhs = try self.parseExpression(.product);
+        const sum_node = try self.allocator.create(AstNode);
         sum_node.* = .{ .division = .{ .lhs = lhs, .rhs = rhs } };
         return sum_node;
     }
@@ -351,8 +351,8 @@ pub const Parser = struct {
     fn parseGroup(self: *Self) Error!*AstNode {
         const lparen_token = try self.take(); // skip lparen token
         assert(lparen_token == .lparen);
-        var rhs = try self.parseExpression(.lowest);
-        var group_node = try self.allocator.create(AstNode);
+        const rhs = try self.parseExpression(.lowest);
+        const group_node = try self.allocator.create(AstNode);
         group_node.* = .{ .group = .{ .value = rhs } };
         const rparen_token = try self.take(); // skip rparen token
         // we raise here because this could be user error
@@ -364,7 +364,7 @@ pub const Parser = struct {
         while (self.peek()) |next_token| {
             if (next_token == terminal_token) break;
             try self.illegal(.comma);
-            var item = try self.parseExpression(.lowest);
+            const item = try self.parseExpression(.lowest);
             try list.append(item);
             self.expectAndSkip(.comma) catch break;
         }
@@ -385,7 +385,7 @@ pub const Parser = struct {
     fn parseName(self: *Self) Error!*AstNode {
         const name_token = try self.take();
         assert(name_token == .name);
-        var name_node = try self.allocator.create(AstNode);
+        const name_node = try self.allocator.create(AstNode);
         name_node.* = .{ .name = .{ .value = name_token.name.value } };
         return name_node;
     }
@@ -393,8 +393,8 @@ pub const Parser = struct {
     fn parseAssignment(self: *Self, lhs: *AstNode) Error!*AstNode {
         const assign_token = try self.take(); // skip assign token
         assert(assign_token == .assign);
-        var rhs = try self.parseExpression(.equality);
-        var assignment_node = try self.allocator.create(AstNode);
+        const rhs = try self.parseExpression(.equality);
+        const assignment_node = try self.allocator.create(AstNode);
         assignment_node.* = .{ .assignment = .{ .lhs = lhs, .rhs = rhs } };
         return assignment_node;
     }
@@ -450,7 +450,7 @@ pub const Parser = struct {
         if (self.expect(.lparen)) {
             self.expectAndSkip(.lparen) catch unreachable;
             if (self.expect(.name)) {
-                var baseclass_node = self.take() catch unreachable;
+                const baseclass_node = self.take() catch unreachable;
                 baseclass = baseclass_node.name.value;
             }
             try self.expectAndSkip(.rparen);
@@ -470,8 +470,8 @@ pub const Parser = struct {
     fn parseFieldAccess(self: *Self, lhs: *AstNode) Error!*AstNode {
         const dot_token = try self.take(); // skip dot token
         assert(dot_token == .dot);
-        var rhs = try self.parseExpression(.call);
-        var field_access_node = try self.allocator.create(AstNode);
+        const rhs = try self.parseExpression(.call);
+        const field_access_node = try self.allocator.create(AstNode);
         field_access_node.* = .{ .field_access = .{ .lhs = lhs, .rhs = rhs } };
         return field_access_node;
     }
@@ -481,17 +481,17 @@ pub const Parser = struct {
         var list = std.ArrayList(ImportDefinition).init(self.allocator);
 
         while (true) {
-            var package = try self.parsePackageSpec(true);
+            const package = try self.parsePackageSpec(true);
             var import_def = ImportDefinition{ .module = package.refspec, .package = package, .alias = null };
             if (self.expect(.as_kw)) {
                 self.expectAndSkip(.as_kw) catch unreachable;
-                var ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
+                const ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
                 import_def.alias = ref;
             }
             try list.append(import_def);
             self.expectAndSkip(.comma) catch break;
         }
-        var result = try self.allocator.create(AstNode);
+        const result = try self.allocator.create(AstNode);
         result.* = .{ .import = try list.toOwnedSlice() };
         return result;
     }
@@ -499,28 +499,28 @@ pub const Parser = struct {
     fn parseFromImport(self: *Self) Error!*AstNode {
         self.expectAndSkip(.from_kw) catch unreachable;
         var list = std.ArrayList(ImportDefinition).init(self.allocator);
-        var module = try self.parseRefSpec();
+        const module = try self.parseRefSpec();
 
         try self.expectAndSkip(.import_kw);
 
         while (true) {
-            var package = try self.parsePackageSpec(false);
+            const package = try self.parsePackageSpec(false);
             var import_def = ImportDefinition{ .module = module, .package = package, .alias = null };
             if (self.expect(.as_kw)) {
                 self.expectAndSkip(.as_kw) catch unreachable;
-                var ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
+                const ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
                 import_def.alias = ref;
             }
             try list.append(import_def);
             self.expectAndSkip(.comma) catch break;
         }
-        var result = try self.allocator.create(AstNode);
+        const result = try self.allocator.create(AstNode);
         result.* = .{ .import = try list.toOwnedSlice() };
         return result;
     }
 
     fn parsePackageSpec(self: *Self, comptime refspec_only: bool) Error!PackageSpec {
-        var token = self.peek() orelse return Error.UnexpectedEndOfStream;
+        const token = self.peek() orelse return Error.UnexpectedEndOfStream;
         switch (token) {
             .name => {
                 return PackageSpec{ .refspec = try self.parseRefSpec() };
@@ -545,7 +545,7 @@ pub const Parser = struct {
     fn parseRefSpec(self: *Self) Error!RefSpec {
         var ref_spec = std.ArrayList(Ref).init(self.allocator);
         while (true) {
-            var ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
+            const ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
             try ref_spec.append(ref);
             self.expectAndSkip(.dot) catch break;
         }
@@ -559,11 +559,11 @@ pub const Parser = struct {
 
 test "parse: infix sum" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2");
-    var result = try parser.parseStatement();
+    const result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
@@ -573,11 +573,11 @@ test "parse: infix sum" {
 
 test "parse: infix product" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2 * 3");
-    var result = try parser.parseStatement();
+    const result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
@@ -590,11 +590,11 @@ test "parse: infix product" {
 
 test "parse: infix division" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2 / 3");
-    var result = try parser.parseStatement();
+    const result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
@@ -607,11 +607,11 @@ test "parse: infix division" {
 
 test "parse: group" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "(1 + 2) / 3");
-    var result = try parser.parseStatement();
+    const result = try parser.parseStatement();
 
     try testing.expect(result.* == .division);
     try testing.expect(result.division.lhs.* == .group);
@@ -628,11 +628,11 @@ test "parse: group" {
 
 test "parse: assign" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "a = 1");
-    var result = try parser.parseStatement();
+    const result = try parser.parseStatement();
 
     try testing.expect(result.* == AstNode.assignment);
     try testing.expect(result.assignment.lhs.* == AstNode.name);
@@ -644,19 +644,19 @@ test "parse: assign" {
 test "parse: string literal" {
     {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "\"yo\"");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
         try testing.expect(@as(AstNodeTag, result.*) == .string_literal);
         try testing.expectEqualStrings("yo", result.string_literal.value);
     }
     { // docstring
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "'''yo'''");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
         try testing.expect(@as(AstNodeTag, result.*) == .string_literal);
         try testing.expectEqualStrings("yo", result.string_literal.value);
     }
@@ -665,38 +665,38 @@ test "parse: string literal" {
 test "parse: array literal" {
     { // Empty Array
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[]");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
         try testing.expect(result.array_literal.items.len == 0);
     }
     { // single element
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1]");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
         try testing.expect(result.array_literal.items.len == 1);
     }
     { // trailing comma
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,]");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
         try testing.expect(result.array_literal.items.len == 1);
     }
     { // Unclosed
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,");
         try testing.expectError(Parser.Error.UnexpectedToken, parser.parseStatement());
     }
     { // illegal trailing comma
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[,]");
         try testing.expectError(Parser.Error.UnexpectedToken, parser.parseStatement());
@@ -705,7 +705,7 @@ test "parse: array literal" {
 
 test "parse: declare function" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     const fn_decl =
@@ -714,7 +714,7 @@ test "parse: declare function" {
         \\	a * 3
     ;
     var parser = Parser.init(allocator, fn_decl);
-    var result = try parser.parseStatement();
+    const result = try parser.parseStatement();
 
     try testing.expect(result.* == AstNode.fn_decl);
     try testing.expectEqualSlices(u8, "myFunction", result.fn_decl.name);
@@ -730,11 +730,11 @@ test "parse: declare function" {
 test "parse: call function" {
     { // no args
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
 
         var parser = Parser.init(allocator, "myFunction()");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
 
         try testing.expect(result.* == AstNode.call);
         try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
@@ -742,11 +742,11 @@ test "parse: call function" {
     }
     { // single arg
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
 
         var parser = Parser.init(allocator, "myFunction(1 + 1)");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
 
         try testing.expect(result.* == AstNode.call);
         try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
@@ -755,11 +755,11 @@ test "parse: call function" {
     }
     { // multiple args
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
 
         var parser = Parser.init(allocator, "myFunction(1, 1)");
-        var result = try parser.parseStatement();
+        const result = try parser.parseStatement();
 
         try testing.expect(result.* == AstNode.call);
         try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
@@ -771,7 +771,7 @@ test "parse: call function" {
 test "parse: class definition" {
     { // trivial class
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
 
         const class =
@@ -779,16 +779,16 @@ test "parse: class definition" {
             \\	pass
         ;
         var parser = Parser.init(allocator, class);
-        var result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0];
 
-        try testing.expectEqual(AstNode.class, result.*);
+        try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expect(result.class.baseclass == null);
         try testing.expectEqual(@as(usize, 1), result.class.statement.items.len);
     }
     { // implied baseclass
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
 
         const class =
@@ -796,16 +796,16 @@ test "parse: class definition" {
             \\	pass
         ;
         var parser = Parser.init(allocator, class);
-        var result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0];
 
-        try testing.expectEqual(AstNode.class, result.*);
+        try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expect(result.class.baseclass == null);
         try testing.expectEqual(@as(usize, 1), result.class.statement.items.len);
     }
     { // with baseclass
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        var allocator = arena.allocator();
+        const allocator = arena.allocator();
         defer arena.deinit();
 
         const class =
@@ -813,8 +813,8 @@ test "parse: class definition" {
             \\	pass
         ;
         var parser = Parser.init(allocator, class);
-        var result = (try parser.parse()).root[0];
-        try testing.expectEqual(AstNode.class, result.*);
+        const result = (try parser.parse()).root[0];
+        try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expectEqualStrings("Bar", result.class.baseclass.?);
         try testing.expectEqual(@as(usize, 1), result.class.statement.items.len);
@@ -823,11 +823,11 @@ test "parse: class definition" {
 
 test "parse: access field" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "foo.bar");
-    var result = try parser.parseStatement();
+    const result = try parser.parseStatement();
 
     try testing.expect(result.* == AstNode.field_access);
     try testing.expectEqualSlices(u8, "foo", result.field_access.lhs.name.value);
@@ -836,7 +836,7 @@ test "parse: access field" {
 
 test "parse: imports" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
     // from sys import *
     // from time import (time)
@@ -846,9 +846,9 @@ test "parse: imports" {
     // from test.support import import_helper
     { // trivial class
         var parser = Parser.init(allocator, "import sys");
-        var result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0];
 
-        try testing.expectEqual(AstNode.import, result.*);
+        try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
         // count of import expressions i.e. import (foo, bar) == 2
         try testing.expectEqual(@as(usize, 1), result.import.len);
 
@@ -861,9 +861,9 @@ test "parse: imports" {
     }
     { // import multiple
         var parser = Parser.init(allocator, "import time as yo, sys as dude");
-        var result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0];
 
-        try testing.expectEqual(AstNode.import, result.*);
+        try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
         // count of import expressions i.e. import (foo, bar) == 2
         try testing.expectEqual(@as(usize, 2), result.import.len);
 
@@ -883,9 +883,9 @@ test "parse: imports" {
     }
     { // import multiple
         var parser = Parser.init(allocator, "from foo.bar import time as yo, sys as dude");
-        var result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0];
 
-        try testing.expectEqual(AstNode.import, result.*);
+        try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
 
         try testing.expectEqual(@as(usize, 2), result.import.len);
 
@@ -907,13 +907,13 @@ test "parse: imports" {
     { // import star
         // TODO: write assertion that star cannot be aliased
         var parser = Parser.init(allocator, "from foo.bar import *");
-        var result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0];
 
-        try testing.expectEqual(AstNode.import, result.*);
+        try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
 
         try testing.expectEqual(@as(usize, 1), result.import.len);
 
-        var import_def = result.import[0];
+        const import_def = result.import[0];
         // count of source i.e. os.path == 2
         try testing.expectEqual(@as(usize, 2), import_def.module.refs.len);
         try testing.expectEqualStrings("foo", import_def.module.refs[0].symbol);
@@ -953,7 +953,7 @@ fn highlightSource(filename: []const u8, source: []const u8, token: ?lex.Token) 
 
 test "parse: example fixtures" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     defer arena.deinit();
 
     inline for (test_examples) |example| {

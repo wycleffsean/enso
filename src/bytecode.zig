@@ -9,13 +9,13 @@ const Parser = parse.Parser;
 const testing = std.testing;
 
 pub const Insn = union(OpCode) {
-    call: usize,
-    @"resume": usize,
     push_null: void,
-    load_name: intern.Index,
-    load_const: intern.Index,
-    return_const: void,
     return_value: void,
+    load_const: intern.Index,
+    load_name: intern.Index,
+    return_const: void,
+    @"resume": usize,
+    call: usize,
 
     const Self = @This();
 
@@ -59,7 +59,7 @@ pub const IrGen = struct {
         intern_pool: *intern.StringInternPool,
         ast: *const AstNode,
     ) Self {
-        var stack = std.ArrayList(StackItem).init(arena.allocator());
+        const stack = std.ArrayList(StackItem).init(arena.allocator());
         return .{
             .ast = ast,
             .intern_pool = intern_pool,
@@ -120,7 +120,7 @@ pub const IrGen = struct {
     }
 
     fn generateInsn(self: *Self, ast_node: *const AstNode) Error!Insn {
-        var insn: Insn = blk: {
+        const insn: Insn = blk: {
             switch (ast_node.*) {
                 // .root => break :blk Insn{ .@"resume" = 0 },
                 // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
@@ -191,10 +191,10 @@ fn testSetup(code: []const u8) !TestContext {
     var parser = Parser.init(arena.allocator(), code);
     const ast = try parser.parse();
 
-    var intern_pool = try testing.allocator.create(intern.StringInternPool);
+    const intern_pool = try testing.allocator.create(intern.StringInternPool);
     intern_pool.* = intern.StringInternPool.init(arena.allocator());
     var irgen = IrGen.init(arena, intern_pool, ast);
-    var ir = try irgen.generate(testing.allocator);
+    const ir = try irgen.generate(testing.allocator);
     return TestContext{
         .arena = arena,
         .irgen = irgen,

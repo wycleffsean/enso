@@ -66,9 +66,9 @@ test "intern: put and get" {
     const a = "yo";
     var b = [_]u8{ 'y', 'o' };
     std.debug.assert(std.mem.eql(u8, a, &b));
-    var key_idx = try intern_pool.put(a);
+    const key_idx = try intern_pool.put(a);
     try testing.expect(key_idx == 0);
-    var key_get = try intern_pool.get(key_idx);
+    const key_get = try intern_pool.get(key_idx);
     try testing.expectEqualSlices(u8, a, key_get);
     try testing.expectEqual(key_idx, try intern_pool.put(&b));
     try testing.expectEqual(@as(Index, 1), try intern_pool.put("yoyo"));
