@@ -3,7 +3,7 @@ const dis_examples = @import("./disassembled_examples.zig");
 
 pub const PyArgVal = dis_examples.PyArgVal;
 
-const Example = struct {
+pub const Example = struct {
     name: []const u8,
     test_lex: bool = true,
     test_lex_comptime: bool = false,
@@ -28,6 +28,10 @@ const Example = struct {
 
     pub fn instructions(comptime self: *const Self) []const dis_examples.Instruction {
         return self.dis().instructions;
+    }
+
+    pub fn stdout(comptime self: *const Self) []const u8 {
+        return self.dis().captured_stdout;
     }
 };
 

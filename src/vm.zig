@@ -6,7 +6,8 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const intern = @import("bytecode/intern.zig");
 const Parser = @import("parse.zig").Parser;
-const test_examples = @import("test/utils.zig").examples;
+const test_utils = @import("test/utils.zig");
+const test_examples = test_utils.examples;
 
 const PyObject = union(enum) {
     null: void,
@@ -29,6 +30,7 @@ const VM = struct {
     stack: [stack_depth]PyObject = undefined,
     sp: u8 = 0,
     intern_pool: *intern.StringInternPool,
+    stdout: std.ArrayList(u8).Writer,
 
     const Self = @This();
 
@@ -83,7 +85,9 @@ const VM = struct {
         _ = receiver; // TODO: handle receivers
         if (std.mem.eql(u8, funcname.string, "print")) {
             assert(arity == 1);
-            std.debug.print("{s}", .{args_buf[0].string});
+            // TODO: this should be a pipe one day, and so the writer interface
+            // should not have allocation errors
+            self.stdout.writeAll(args_buf[0].string) catch unreachable;
         }
     }
 };
@@ -113,25 +117,30 @@ fn testTeardown(ctx: *TestContext) void {
     _ = ctx;
 }
 
+fn testExample(source: []const u8, expected_stdout: []const u8) !void {
+    var buffer: [std.mem.page_size * 8]u8 = undefined;
+    var ctx = try testSetup(source, &buffer);
+    defer testTeardown(&ctx);
+
+    var stdout = std.ArrayList(u8).init(testing.allocator);
+    defer stdout.deinit();
+
+    var vm = VM{ .intern_pool = ctx.intern_pool, .stdout = stdout.writer() };
+    try vm.eval(ctx.ir);
+
+    try testing.expectEqualStrings(expected_stdout, stdout.items);
+}
+
 test "parse: example fixtures" {
     inline for (test_examples) |example| {
         if (!example.test_vm) continue;
         if (example.test_vm_comptime) {
             comptime {
-                var buffer: [std.mem.page_size * 8]u8 = undefined;
-                var ctx = try testSetup(example.source(), &buffer);
-                defer testTeardown(&ctx);
-
-                var vm = VM{ .intern_pool = ctx.intern_pool };
-                try vm.eval(ctx.ir);
+                try testExample(example.source());
             }
-        } else {
-            var buffer: [std.mem.page_size * 8]u8 = undefined;
-            var ctx = try testSetup(example.source(), &buffer);
-            defer testTeardown(&ctx);
-
-            var vm = VM{ .intern_pool = ctx.intern_pool };
-            try vm.eval(ctx.ir);
+        }
+        {
+            try testExample(example.source(), example.stdout());
         }
     }
 }

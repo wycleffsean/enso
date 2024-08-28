@@ -110,7 +110,8 @@ pub const examples = StaticStringMap(Example).initComptime([_]KV{
 for example in examples:
     # We run the script in a subprocess and capture its stdout, stderr, and status
     cmd_result = subprocess.run(["python", example.path], capture_output=True)
-    stdout_result = repr(cmd_result.stdout.decode())[1:-1]
+    # clip out quotes and final newline
+    stdout_result = repr(cmd_result.stdout.decode())[1:-3]
 	# TODO!!!! figure out how to print a valid zig string from python bytes
     # stderr_result = repr(cmd_result.stderr.decode())[1:-1]
     # stderr_result.encode("unicode_escape")
