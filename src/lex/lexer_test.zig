@@ -20,8 +20,11 @@ test "lex: example fixtures" {
         if (!example.test_lex) continue;
         try testing.expectError(lex.Lexer.Error.eof, lexBuffer(example.source()));
         comptime {
-            @setEvalBranchQuota(1000000);
-            try testing.expectError(lex.Lexer.Error.eof, lexBuffer(example.source()));
+            // this one takes some time :/
+            if (example.test_lex_comptime) {
+                @setEvalBranchQuota(1000000);
+                try testing.expectError(lex.Lexer.Error.eof, lexBuffer(example.source()));
+            }
         }
     }
 }

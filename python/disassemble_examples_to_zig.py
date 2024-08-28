@@ -4,8 +4,8 @@
 
 from dis import get_instructions
 from pathlib import Path
-from os.path import relpath
 from collections import namedtuple
+import subprocess
 
 from sys import argv
 
@@ -42,6 +42,9 @@ const InstructionSet = []const Instruction;
 pub const Example = struct {
   path: [] const u8,
   source: [] const u8,
+  return_code: u8,
+  captured_stdout: [] const u8,
+  captured_stderr: [] const u8,
   instructions: InstructionSet,
 };
 
@@ -84,11 +87,16 @@ def instruction_to_zig(insn):
 def instructions_to_zig(example_path, instruction_generator):
     example_name = Path(example_path).stem
 
-    examples.append(Example(example_name, relpath(example_path, "src/test")))
+    examples.append(Example(example_name, example_path))
     print(f"pub const {example_name} = [_]Instruction {{")
     for instruction in instruction_generator:
         print(instruction_to_zig(instruction))
     print("};")
+
+# def bytes_to_zig_string(bytes):
+#     hex = bytes.hex()
+#     zig_hex = ",".join(["0x" + hex[i:i+2] for i in range(0, len(hex), 2)])
+#     return "".join(["[_]u8 {", zig_hex, "}"])
 
 for example_path in argv[1:]:
     with open(example_path) as example_file:
@@ -100,5 +108,21 @@ const KV = struct { []const u8, Example };
 pub const examples = StaticStringMap(Example).initComptime([_]KV{
 """)
 for example in examples:
-    print(f'  .{{ "{example.name}", .{{ .path = "{example.path}", .source = @embedFile("{example.path}"), .instructions = &{example.name} }} }},')
+    # We run the script in a subprocess and capture its stdout, stderr, and status
+    cmd_result = subprocess.run(["python", example.path], capture_output=True)
+    stdout_result = repr(cmd_result.stdout.decode())[1:-1]
+	# TODO!!!! figure out how to print a valid zig string from python bytes
+    # stderr_result = repr(cmd_result.stderr.decode())[1:-1]
+    # stderr_result.encode("unicode_escape")
+
+    print(f"""
+    .{{ "{example.name}", .{{
+    	.path = "{example.path}",
+    	.return_code = {cmd_result.returncode},
+    	.captured_stdout = "{stdout_result}",
+    	.captured_stderr = "",
+    	.source = @embedFile("{example.path}"),
+    	.instructions = &{example.name} }}
+    }},
+    """)
 print("});")

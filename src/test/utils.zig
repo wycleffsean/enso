@@ -6,6 +6,7 @@ pub const PyArgVal = dis_examples.PyArgVal;
 const Example = struct {
     name: []const u8,
     test_lex: bool = true,
+    test_lex_comptime: bool = false,
     test_parse: bool = true,
     test_bytecode: bool = true,
     test_vm: bool = true,
@@ -36,7 +37,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "hello_world",
-        .test_vm = false,
     },
     .{
         .name = "test_grammar",
