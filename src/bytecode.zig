@@ -2,11 +2,14 @@ const std = @import("std");
 const parse = @import("parse.zig");
 const intern = @import("bytecode/intern.zig");
 const OpCode = @import("bytecode/opcodes.zig").OpCode;
+const object = @import("object.zig");
 const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
 const AstNode = parse.AstNode;
 const Parser = parse.Parser;
 const testing = std.testing;
+
+const comptimePrint = std.fmt.comptimePrint;
 
 pub const Insn = union(OpCode) {
     pop_top: void,
@@ -17,8 +20,8 @@ pub const Insn = union(OpCode) {
     setup_annotations: void,
     store_name: void,
     swap: void,
-    load_const: intern.Index,
-    load_name: intern.Index,
+    load_const: object.Object,
+    load_name: object.Object,
     build_list: void,
     load_attr: void,
     compare_op: void,
@@ -35,18 +38,21 @@ pub const Insn = union(OpCode) {
     const Self = @This();
 
     // convenience function for tests
-    fn init(comptime kind: OpCode, comptime value: test_utils.PyArgVal, intern_pool: *intern.StringInternPool) !Self {
+    fn init(comptime kind: OpCode, comptime value: object.Object, intern_pool: *intern.StringInternPool) !Self {
+        // we always intern strings in the bytecode
+        const obj = if (value == .string) try value.string.symbolize(intern_pool) else value;
         return switch (kind) {
-            .@"resume" => .{ .@"resume" = value.integer },
-            .push_null => .{ .push_null = value.void },
-            .load_name => .{ .load_name = try intern_pool.put(value.string) },
-            .load_const => .{ .load_const = try intern_pool.put(value.string) },
-            .return_const => .{ .return_value = value.void },
-            .return_value => .{ .return_value = value.void },
-            .call => .{ .call = value.integer },
+            .@"resume" => .{ .@"resume" = obj.int },
+            .push_null => .{ .push_null = {} },
+            .load_name => .{ .load_name = obj },
+            .load_const => .{ .load_const = obj },
+            .return_const => .{ .return_value = {} },
+            .return_value => .{ .return_value = {} },
+            .call => .{ .call = obj.int },
+            .setup_annotations => .{ .setup_annotations = obj.void },
             else => {
                 comptime {
-                    @compileError("uh-oh - we don't handle this opcode yet! - "); // ++ @tagName(kind));
+                    @compileError(comptimePrint("uh-oh - we don't handle this opcode yet! - {s} ({})", .{ @tagName(kind), @intFromEnum(kind) }));
                 }
             },
         };
@@ -144,8 +150,8 @@ pub const IrGen = struct {
             switch (ast_node.*) {
                 // .root => break :blk Insn{ .@"resume" = 0 },
                 // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
-                .name => |name| break :blk Insn{ .load_name = try self.intern_pool.put(name.value) },
-                .string_literal => |string| break :blk Insn{ .load_const = try self.intern_pool.put(string.value) },
+                .name => |name| break :blk Insn{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) },
+                .string_literal => |string| break :blk Insn{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) },
                 // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
                 // .sum => break :blk Insn{ .sum = {} },
                 // .product => break :blk Insn{ .product = {} },

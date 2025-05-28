@@ -4,5 +4,6 @@ src/gen/zig-out
 
 # zig only
 .zig-cache
+zig-cache
 zig-out
 src/test/disassembled_examples.zig

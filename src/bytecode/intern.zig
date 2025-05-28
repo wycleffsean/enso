@@ -51,7 +51,7 @@ pub const StringInternPool = struct {
         return null;
     }
 
-    pub fn get(self: *Self, index: Index) Error![]const u8 {
+    pub fn get(self: *Self, index: Index) []const u8 {
         const slice = self.pool.unmanaged.entries.slice();
         const keys_array = slice.items(.key);
         return keys_array[index];
@@ -68,7 +68,7 @@ test "intern: put and get" {
     std.debug.assert(std.mem.eql(u8, a, &b));
     const key_idx = try intern_pool.put(a);
     try testing.expect(key_idx == 0);
-    const key_get = try intern_pool.get(key_idx);
+    const key_get = intern_pool.get(key_idx);
     try testing.expectEqualSlices(u8, a, key_get);
     try testing.expectEqual(key_idx, try intern_pool.put(&b));
     try testing.expectEqual(@as(Index, 1), try intern_pool.put("yoyo"));

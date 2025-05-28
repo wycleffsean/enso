@@ -1,8 +1,6 @@
 const std = @import("std");
 const dis_examples = @import("./disassembled_examples.zig");
 
-pub const PyArgVal = dis_examples.PyArgVal;
-
 pub const Example = struct {
     name: []const u8,
     test_lex: bool = true,

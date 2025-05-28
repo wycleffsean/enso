@@ -1,6 +1,10 @@
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
 const OpCode = @import("bytecode/opcodes.zig").OpCode;
+const object = @import("object.zig");
+const Object = object.Object;
+const None = object.None;
+
 const assert = std.debug.assert;
 // for tests
 const testing = std.testing;
@@ -9,38 +13,23 @@ const Parser = @import("parse.zig").Parser;
 const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
 
-const PyObject = union(enum) {
-    null: void,
-    string: []const u8,
-
-    const Self = @This();
-
-    pub fn format(value: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = options;
-        _ = fmt;
-        switch (value) {
-            .null => try writer.print("None", .{}),
-            .string => |str| try writer.print("'{s}'", .{str}),
-        }
-    }
-};
 const stack_depth = 1000;
 
 const VM = struct {
-    stack: [stack_depth]PyObject = undefined,
+    stack: [stack_depth]Object = undefined,
     sp: u8 = 0,
     intern_pool: *intern.StringInternPool,
     stdout: std.ArrayList(u8).Writer,
 
     const Self = @This();
 
-    fn push(self: *Self, object: PyObject) void {
+    fn push(self: *Self, obj: Object) void {
         self.sp += 1;
         assert(self.sp < stack_depth);
-        self.stack[self.sp] = object;
+        self.stack[self.sp] = obj;
     }
 
-    fn pop(self: *Self) PyObject {
+    fn pop(self: *Self) Object {
         assert(self.sp >= 0);
         defer self.sp -= 1;
         // std.debug.print("pop: {d} {any}\n", .{ self.sp, self.stack[self.sp] });
@@ -51,14 +40,14 @@ const VM = struct {
         for (insns) |insn| {
             switch (insn) {
                 .push_null => {
-                    self.push(PyObject{ .null = {} });
+                    self.push(None);
                 },
                 .return_value => {},
-                .load_const => |pyconst| {
-                    self.push(PyObject{ .string = try self.intern_pool.get(pyconst) });
+                .load_const => |obj| {
+                    self.push(obj);
                 },
                 .load_name => |name| {
-                    self.push(PyObject{ .string = try self.intern_pool.get(name) });
+                    self.push(name);
                 },
                 .return_const => {},
                 .@"resume" => {},
@@ -70,24 +59,32 @@ const VM = struct {
         }
     }
 
+    fn getString(self: *const Self, obj: object.Object) []const u8 {
+        assert(obj == .symbol or obj == .string);
+        return switch (obj) {
+            .string => |str| str.string,
+            .symbol => |sym| self.intern_pool.get(sym),
+            else => unreachable,
+        };
+    }
+
     fn call(self: *Self, arity: usize) !void {
         // TODO: this is not compatible with python 3.7+, where a method may
         // have unlimited arguments.  We need to reconcile comptime with unlimited
         // memory allocation
         //https://stackoverflow.com/a/48051450
-        var args_buf: [255]PyObject = undefined;
+        var args_buf: [255]Object = undefined;
         for (0..arity) |i| {
             args_buf[i] = self.pop();
         }
         const funcname = self.pop();
-        assert(funcname == .string);
         const receiver = self.pop();
         _ = receiver; // TODO: handle receivers
-        if (std.mem.eql(u8, funcname.string, "print")) {
+        if (std.mem.eql(u8, self.getString(funcname), "print")) {
             assert(arity == 1);
             // TODO: this should be a pipe one day, and so the writer interface
             // should not have allocation errors
-            self.stdout.writeAll(args_buf[0].string) catch unreachable;
+            self.stdout.writeAll(self.getString(args_buf[0])) catch unreachable;
         }
     }
 };

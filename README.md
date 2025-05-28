@@ -37,3 +37,14 @@ test cached
 └─ run enso_tests cached
    └─ zig test enso_tests Debug native cached 5ms MaxRSS:50M
 ```
+
+# Tour of the source
+
+- lex.zig
+  - `Lexer{ .buffer = "..." }#next()`
+- parse.zig
+  - `Parser.init(allocator, "...")`
+  - `ast_result = parser.parse()``
+- bytecode.zig
+  - `IrGen.init(allocator, intern_pool, ast)`
+  - `instructions = ir_gen.generate()`
