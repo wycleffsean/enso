@@ -15,7 +15,7 @@ const test_examples = test_utils.examples;
 
 const stack_depth = 1000;
 
-const VM = struct {
+pub const VM = struct {
     stack: [stack_depth]Object = undefined,
     sp: u8 = 0,
     intern_pool: *intern.StringInternPool,
@@ -37,6 +37,7 @@ const VM = struct {
     }
 
     pub fn eval(self: *Self, insns: []const bytecode.Insn) !void {
+        // TODO: does a labeled switch earn us anything here?  I would guess no, but let's experiment
         for (insns) |insn| {
             switch (insn) {
                 .push_null => {
@@ -59,7 +60,7 @@ const VM = struct {
         }
     }
 
-    fn getString(self: *const Self, obj: object.Object) []const u8 {
+    fn getString(self: *const Self, obj: Object) []const u8 {
         assert(obj == .symbol or obj == .string);
         return switch (obj) {
             .string => |str| str.string,
@@ -68,23 +69,44 @@ const VM = struct {
         };
     }
 
+    fn fetchMethod(self: *Self, receiver: Object, funcname: Object) object.Callable {
+        switch (receiver) {
+            .none => {
+                // special case - we lookup the module table
+                // which can fall thru to the builtins
+                assert(std.mem.eql(u8, self.getString(funcname), "print"));
+                return builtinPrint;
+            },
+            else => unreachable,
+        }
+    }
+
+    fn builtinPrint(vm: *Self, args: []Object) object.CallResult {
+        for (args) |obj| {
+            vm.stdout.writeAll(vm.getString(obj)) catch unreachable;
+        }
+        return .{ .object = object.None };
+    }
+
     fn call(self: *Self, arity: usize) !void {
         // TODO: this is not compatible with python 3.7+, where a method may
         // have unlimited arguments.  We need to reconcile comptime with unlimited
         // memory allocation
         //https://stackoverflow.com/a/48051450
         var args_buf: [255]Object = undefined;
+        assert(arity <= 255);
         for (0..arity) |i| {
             args_buf[i] = self.pop();
         }
         const funcname = self.pop();
+        assert(funcname == .symbol);
         const receiver = self.pop();
-        _ = receiver; // TODO: handle receivers
-        if (std.mem.eql(u8, self.getString(funcname), "print")) {
-            assert(arity == 1);
-            // TODO: this should be a pipe one day, and so the writer interface
-            // should not have allocation errors
-            self.stdout.writeAll(self.getString(args_buf[0])) catch unreachable;
+        const callable = self.fetchMethod(receiver, funcname);
+        // TODO - when there is an actual receiver we'll need to pass it as the first argument
+        const res = callable(self, args_buf[0..arity]);
+        switch (res) {
+            .object => |obj| self.push(obj),
+            .exception => unreachable, // TODO - handle exceptions
         }
     }
 };

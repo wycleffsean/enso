@@ -1,5 +1,7 @@
 const std = @import("std");
 const intern = @import("bytecode/intern.zig");
+const Exception = @import("exception.zig");
+const VM = @import("vm.zig").VM;
 
 pub const Object = union(enum) {
     none: void,
@@ -9,6 +11,7 @@ pub const Object = union(enum) {
     complex: std.math.Complex(f64),
     string: String,
     symbol: Symbol, // symbols are just interned strings
+    // callabe: Callable, // TODO: these are real objects that _have_ a callable
 
     const Self = @This();
 
@@ -46,3 +49,14 @@ pub const String = struct {
         return stringToSymbol(self.string, intern_pool);
     }
 };
+
+pub const CallResult = union(enum) {
+    object: Object,
+    exception: Exception,
+};
+// TODO: callables will _really_ look like this
+//   fn(receiver, *args, **kwargs) !Object
+// we have our own exceptions that are distinct
+// from zig.  If we can enforce that callables
+// don't return zig errors that would be great
+pub const Callable = *const fn (*VM, []Object) CallResult;
