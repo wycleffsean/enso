@@ -60,7 +60,7 @@ fn generateZigFromPython(b: *std.Build, script_path: []const u8) *std.Build.Step
 
 fn pythonDisExamples(b: *std.Build) *std.Build.Step.InstallFile {
     const python_run = generateZigFromPython(b, "python/disassemble_examples_to_zig.py");
-    var path_buf: [255][std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: [255][std.fs.max_path_bytes]u8 = undefined;
     var dir = std.fs.cwd().openDir("src/test/examples", .{ .iterate = true }) catch unreachable;
     defer dir.close();
     var iter = dir.iterate();
