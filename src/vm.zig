@@ -1,5 +1,6 @@
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
+const builtins = @import("vm/builtins.zig");
 const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const object = @import("object.zig");
 const Object = object.Object;
@@ -22,6 +23,9 @@ pub const VM = struct {
     stdout: std.ArrayList(u8).Writer,
 
     const Self = @This();
+    pub const Error = error{
+        NameError,
+    };
 
     fn push(self: *Self, obj: Object) void {
         self.sp += 1;
@@ -60,7 +64,8 @@ pub const VM = struct {
         }
     }
 
-    fn getString(self: *const Self, obj: Object) []const u8 {
+    // TODO: this is gross and should be moved
+    pub fn getString(self: *const Self, obj: Object) []const u8 {
         assert(obj == .symbol or obj == .string);
         return switch (obj) {
             .string => |str| str.string,
@@ -69,23 +74,16 @@ pub const VM = struct {
         };
     }
 
-    fn fetchMethod(self: *Self, receiver: Object, funcname: Object) object.Callable {
+    fn fetchMethod(self: *Self, receiver: Object, funcname: Object) Error!object.Callable {
         switch (receiver) {
             .none => {
                 // special case - we lookup the module table
                 // which can fall thru to the builtins
-                assert(std.mem.eql(u8, self.getString(funcname), "print"));
-                return builtinPrint;
+
+                return try builtins.fetchBuiltinFunction(self.getString(funcname));
             },
             else => unreachable,
         }
-    }
-
-    fn builtinPrint(vm: *Self, args: []Object) object.CallResult {
-        for (args) |obj| {
-            vm.stdout.writeAll(vm.getString(obj)) catch unreachable;
-        }
-        return .{ .object = object.None };
     }
 
     fn call(self: *Self, arity: usize) !void {
@@ -101,7 +99,11 @@ pub const VM = struct {
         const funcname = self.pop();
         assert(funcname == .symbol);
         const receiver = self.pop();
-        const callable = self.fetchMethod(receiver, funcname);
+        const callable = self.fetchMethod(receiver, funcname) catch {
+            // TODO handle exceptions.  This will be a NameError if we couldn't find
+            // the function
+            unreachable;
+        };
         // TODO - when there is an actual receiver we'll need to pass it as the first argument
         const res = callable(self, args_buf[0..arity]);
         switch (res) {
