@@ -16,102 +16,162 @@ const test_examples = test_utils.examples;
 
 const stack_depth = 1000;
 
-pub const VM = struct {
-    stack: [stack_depth]Object = undefined,
-    sp: u8 = 0,
-    intern_pool: *intern.StringInternPool,
-    stdout: std.ArrayList(u8).Writer,
+// const InnerWriterUnion = union(enum) {
+//     file_writer: std.fs.File.Writer,
+//     buffer_writer: std.ArrayList(u8).Writer,
+// };
 
-    const Self = @This();
-    pub const Error = error{
-        NameError,
-    };
+// // TODO: we'll need to revisit this shim, but basically
+// //   we need to be able to write to a buffer in tests
+// //   but write to a file/device in normal runtime.
+// //   This gives us type erasure so we don't have to
+// //   make VM a `pub fn VM(WriterType: type) type`
+// //   which can be annoying to deal with
+// //
+// //  it's all pretty gross though
+// const Writer = struct {
+//     inner: InnerWriterUnion,
+//     ctx: *anyopaque,
+//     writeAllFn: *const fn (*anyopaque, []const u8) void,
 
-    fn push(self: *Self, obj: Object) void {
-        self.sp += 1;
-        assert(self.sp < stack_depth);
-        self.stack[self.sp] = obj;
-    }
+//     pub fn writeAll(self: *Writer, data: []const u8) void {
+//         return self.writeAllFn(self.ctx, data);
+//     }
 
-    fn pop(self: *Self) Object {
-        assert(self.sp >= 0);
-        defer self.sp -= 1;
-        // std.debug.print("pop: {d} {any}\n", .{ self.sp, self.stack[self.sp] });
-        return self.stack[self.sp];
-    }
+//     fn fileWriteAll(file_writer: *anyopaque, data: []const u8) void {
+//         const writer: *std.fs.File.Writer = @ptrCast(file_writer);
+//         writer.writeAll(data) catch unreachable;
+//     }
 
-    pub fn eval(self: *Self, insns: []const bytecode.Insn) !void {
-        // TODO: does a labeled switch earn us anything here?  I would guess no, but let's experiment
-        for (insns) |insn| {
-            switch (insn) {
-                .push_null => {
-                    self.push(None);
-                },
-                .return_value => {},
-                .load_const => |obj| {
-                    self.push(obj);
-                },
-                .load_name => |name| {
-                    self.push(name);
-                },
-                .return_const => {},
-                .@"resume" => {},
-                .call => |arity| try self.call(arity),
-                else => {
-                    // @compileError("uh-oh - we don't handle this Instruction yet!"); // - "); ++ @tagName(insn));
-                },
+//     pub fn initFile(file: std.fs.File) Writer {
+//         var inner = InnerWriterUnion{ .file_writer = file.writer() };
+//         return .{
+//             .inner = inner,
+//             .ctx = &inner.file_writer,
+//             .writeAllFn = fileWriteAll,
+//         };
+//     }
+
+//     fn arrayListWriteAll(buffer_writer: *anyopaque, data: []const u8) void {
+//         const writer: *std.ArrayList(u8).Writer = @alignCast(@ptrCast(buffer_writer));
+//         writer.writeAll(data) catch unreachable;
+//     }
+
+//     pub fn initArrayList(list: *std.ArrayList(u8)) Writer {
+//         var inner = InnerWriterUnion{ .buffer_writer = list.writer() };
+//         return .{
+//             .inner = inner,
+//             .ctx = &inner.buffer_writer,
+//             .writeAllFn = arrayListWriteAll,
+//         };
+//     }
+// };
+
+pub const Error = error{
+    NameError,
+};
+
+pub fn VM(WriterType: type) type {
+    return struct {
+        const Self = @This();
+        const Callable = object.Callable(Self);
+        const Builtins = builtins.Builtins(Self);
+
+        stack: [stack_depth]Object = undefined,
+        sp: u8 = 0,
+        intern_pool: *intern.StringInternPool,
+        stdout: WriterType,
+
+        pub fn init(intern_pool: *intern.StringInternPool, stdout: WriterType) Self {
+            return .{ .intern_pool = intern_pool, .stdout = stdout };
+        }
+
+        fn push(self: *Self, obj: Object) void {
+            self.sp += 1;
+            assert(self.sp < stack_depth);
+            self.stack[self.sp] = obj;
+        }
+
+        fn pop(self: *Self) Object {
+            assert(self.sp >= 0);
+            defer self.sp -= 1;
+            // std.debug.print("pop: {d} {any}\n", .{ self.sp, self.stack[self.sp] });
+            return self.stack[self.sp];
+        }
+
+        pub fn eval(self: *Self, insns: []const bytecode.Insn) !void {
+            // TODO: does a labeled switch earn us anything here?  I would guess no, but let's experiment
+            for (insns) |insn| {
+                switch (insn) {
+                    .push_null => {
+                        self.push(None);
+                    },
+                    .return_value => {},
+                    .load_const => |obj| {
+                        self.push(obj);
+                    },
+                    .load_name => |name| {
+                        self.push(name);
+                    },
+                    .return_const => {},
+                    .@"resume" => {},
+                    .call => |arity| try self.call(arity),
+                    else => {
+                        // @compileError("uh-oh - we don't handle this Instruction yet!"); // - "); ++ @tagName(insn));
+                    },
+                }
             }
         }
-    }
 
-    // TODO: this is gross and should be moved
-    pub fn getString(self: *const Self, obj: Object) []const u8 {
-        assert(obj == .symbol or obj == .string);
-        return switch (obj) {
-            .string => |str| str.string,
-            .symbol => |sym| self.intern_pool.get(sym),
-            else => unreachable,
-        };
-    }
-
-    fn fetchMethod(self: *Self, receiver: Object, funcname: Object) Error!object.Callable {
-        switch (receiver) {
-            .none => {
-                // special case - we lookup the module table
-                // which can fall thru to the builtins
-
-                return try builtins.fetchBuiltinFunction(self.getString(funcname));
-            },
-            else => unreachable,
+        // TODO: this is gross and should be moved
+        pub fn getString(self: *const Self, obj: Object) []const u8 {
+            assert(obj == .symbol or obj == .string);
+            return switch (obj) {
+                .string => |str| str.string,
+                .symbol => |sym| self.intern_pool.get(sym),
+                else => unreachable,
+            };
         }
-    }
 
-    fn call(self: *Self, arity: usize) !void {
-        // TODO: this is not compatible with python 3.7+, where a method may
-        // have unlimited arguments.  We need to reconcile comptime with unlimited
-        // memory allocation
-        //https://stackoverflow.com/a/48051450
-        var args_buf: [255]Object = undefined;
-        assert(arity <= 255);
-        for (0..arity) |i| {
-            args_buf[i] = self.pop();
+        fn fetchMethod(self: *Self, receiver: Object, funcname: Object) Error!Callable {
+            switch (receiver) {
+                .none => {
+                    // special case - we lookup the module table
+                    // which can fall thru to the builtins
+
+                    return try Builtins.fetchBuiltinFunction(self.getString(funcname));
+                },
+                else => unreachable,
+            }
         }
-        const funcname = self.pop();
-        assert(funcname == .symbol);
-        const receiver = self.pop();
-        const callable = self.fetchMethod(receiver, funcname) catch {
-            // TODO handle exceptions.  This will be a NameError if we couldn't find
-            // the function
-            unreachable;
-        };
-        // TODO - when there is an actual receiver we'll need to pass it as the first argument
-        const res = callable(self, args_buf[0..arity]);
-        switch (res) {
-            .object => |obj| self.push(obj),
-            .exception => unreachable, // TODO - handle exceptions
+
+        fn call(self: *Self, arity: usize) !void {
+            // TODO: this is not compatible with python 3.7+, where a method may
+            // have unlimited arguments.  We need to reconcile comptime with unlimited
+            // memory allocation
+            //https://stackoverflow.com/a/48051450
+            var args_buf: [255]Object = undefined;
+            assert(arity <= 255);
+            for (0..arity) |i| {
+                args_buf[i] = self.pop();
+            }
+            const funcname = self.pop();
+            assert(funcname == .symbol);
+            const receiver = self.pop();
+            const callable = self.fetchMethod(receiver, funcname) catch {
+                // TODO handle exceptions.  This will be a NameError if we couldn't find
+                // the function
+                unreachable;
+            };
+            // TODO - when there is an actual receiver we'll need to pass it as the first argument
+            const res = callable(self, args_buf[0..arity]);
+            switch (res) {
+                .object => |obj| self.push(obj),
+                .exception => unreachable, // TODO - handle exceptions
+            }
         }
-    }
-};
+    };
+}
 
 const TestContext = struct {
     ir: []const bytecode.Insn,
@@ -145,8 +205,9 @@ fn testExample(source: []const u8, expected_stdout: []const u8) !void {
 
     var stdout = std.ArrayList(u8).init(testing.allocator);
     defer stdout.deinit();
+    const stdout_writer = stdout.writer();
 
-    var vm = VM{ .intern_pool = ctx.intern_pool, .stdout = stdout.writer() };
+    var vm = VM(@TypeOf(stdout_writer)).init(ctx.intern_pool, stdout_writer);
     try vm.eval(ctx.ir);
 
     try testing.expectEqualStrings(expected_stdout, stdout.items);
