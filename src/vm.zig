@@ -3,6 +3,7 @@ const bytecode = @import("bytecode.zig");
 const builtins = @import("vm/builtins.zig");
 const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const object = @import("object.zig");
+const fatalExit = @import("utils.zig").fatalExit;
 const Object = object.Object;
 const None = object.None;
 
@@ -15,57 +16,6 @@ const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
 
 const stack_depth = 1000;
-
-// const InnerWriterUnion = union(enum) {
-//     file_writer: std.fs.File.Writer,
-//     buffer_writer: std.ArrayList(u8).Writer,
-// };
-
-// // TODO: we'll need to revisit this shim, but basically
-// //   we need to be able to write to a buffer in tests
-// //   but write to a file/device in normal runtime.
-// //   This gives us type erasure so we don't have to
-// //   make VM a `pub fn VM(WriterType: type) type`
-// //   which can be annoying to deal with
-// //
-// //  it's all pretty gross though
-// const Writer = struct {
-//     inner: InnerWriterUnion,
-//     ctx: *anyopaque,
-//     writeAllFn: *const fn (*anyopaque, []const u8) void,
-
-//     pub fn writeAll(self: *Writer, data: []const u8) void {
-//         return self.writeAllFn(self.ctx, data);
-//     }
-
-//     fn fileWriteAll(file_writer: *anyopaque, data: []const u8) void {
-//         const writer: *std.fs.File.Writer = @ptrCast(file_writer);
-//         writer.writeAll(data) catch unreachable;
-//     }
-
-//     pub fn initFile(file: std.fs.File) Writer {
-//         var inner = InnerWriterUnion{ .file_writer = file.writer() };
-//         return .{
-//             .inner = inner,
-//             .ctx = &inner.file_writer,
-//             .writeAllFn = fileWriteAll,
-//         };
-//     }
-
-//     fn arrayListWriteAll(buffer_writer: *anyopaque, data: []const u8) void {
-//         const writer: *std.ArrayList(u8).Writer = @alignCast(@ptrCast(buffer_writer));
-//         writer.writeAll(data) catch unreachable;
-//     }
-
-//     pub fn initArrayList(list: *std.ArrayList(u8)) Writer {
-//         var inner = InnerWriterUnion{ .buffer_writer = list.writer() };
-//         return .{
-//             .inner = inner,
-//             .ctx = &inner.buffer_writer,
-//             .writeAllFn = arrayListWriteAll,
-//         };
-//     }
-// };
 
 pub const Error = error{
     NameError,
@@ -158,10 +108,10 @@ pub fn VM(WriterType: type) type {
             const funcname = self.pop();
             assert(funcname == .symbol);
             const receiver = self.pop();
-            const callable = self.fetchMethod(receiver, funcname) catch {
-                // TODO handle exceptions.  This will be a NameError if we couldn't find
-                // the function
-                unreachable;
+            const callable = self.fetchMethod(receiver, funcname) catch |err| {
+                switch (err) {
+                    error.NameError => fatalExit(1, "NameError: name '{s}' is not defined", .{self.getString(funcname)}),
+                }
             };
             // TODO - when there is an actual receiver we'll need to pass it as the first argument
             const res = callable(self, args_buf[0..arity]);

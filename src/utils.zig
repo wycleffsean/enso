@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub fn Iterator(comptime T: type) type {
     return struct {
         index: usize = 0,
@@ -15,8 +17,14 @@ pub fn Iterator(comptime T: type) type {
     };
 }
 
+pub fn fatalExit(exit_code: u8, comptime fmt: []const u8, args: anytype) noreturn {
+    std.debug.print(fmt ++ "\n", args); // TODO: stderr instead?
+    const mode = @import("builtin").mode;
+    if (mode == .Debug) std.debug.dumpCurrentStackTrace(null);
+    std.process.exit(exit_code);
+}
+
 pub const testing = struct {
-    const std = @import("std");
     const bc = @import("bytecode.zig");
     const intern = @import("bytecode/intern.zig");
     const Parser = @import("parse.zig").Parser;
