@@ -57,16 +57,20 @@ pub fn main() anyerror!void {
 }
 
 fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
-    var parser = parse.Parser.init(allocator, code);
-    const ast = try parser.parse();
-
-    const intern_pool = try allocator.create(intern.StringInternPool);
-    intern_pool.* = intern.StringInternPool.init(allocator);
-
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
+    var arena_allocator = arena.allocator();
+
+    var parser = parse.Parser.init(arena_allocator, code);
+    const ast = try parser.parse();
+
+    const intern_pool = try arena_allocator.create(intern.StringInternPool);
+    defer arena_allocator.destroy(intern_pool);
+    intern_pool.* = intern.StringInternPool.init(arena_allocator);
+    defer intern_pool.deinit();
+
     var irgen = bytecode.IrGen.init(&arena, intern_pool, ast);
-    const ir = try irgen.generate(allocator);
+    const ir = try irgen.generate(arena_allocator);
 
     const stdout_writer = std.io.getStdOut().writer();
     var virtual_machine = vm.VM(@TypeOf(stdout_writer)).init(intern_pool, stdout_writer);
