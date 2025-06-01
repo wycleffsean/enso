@@ -32,7 +32,7 @@ pub const StringInternPool = struct {
         var entry = try self.pool.getOrPut(string);
         if (!entry.found_existing) {
             var string_dup = try self.allocator.dupe(u8, string);
-            entry.key_ptr = &string_dup;
+            entry.key_ptr = @ptrCast(&string_dup);
         }
         return entry.index;
     }

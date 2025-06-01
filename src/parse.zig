@@ -708,11 +708,8 @@ test "parse: declare function" {
     const allocator = arena.allocator();
     defer arena.deinit();
 
-    const fn_decl =
-        \\def myFunction():
-        \\	a = 1
-        \\	a * 3
-    ;
+    // you can thank zig 0.14.0 for this
+    const fn_decl = "def myFunction():\n\ta = 1\n\ta * 3";
     var parser = Parser.init(allocator, fn_decl);
     const result = try parser.parseStatement();
 
@@ -774,10 +771,7 @@ test "parse: class definition" {
         const allocator = arena.allocator();
         defer arena.deinit();
 
-        const class =
-            \\class Foo:
-            \\	pass
-        ;
+        const class = "class Foo:\n\tpass";
         var parser = Parser.init(allocator, class);
         const result = (try parser.parse()).root[0];
 
@@ -791,10 +785,7 @@ test "parse: class definition" {
         const allocator = arena.allocator();
         defer arena.deinit();
 
-        const class =
-            \\class Foo():
-            \\	pass
-        ;
+        const class = "class Foo():\n\tpass";
         var parser = Parser.init(allocator, class);
         const result = (try parser.parse()).root[0];
 
@@ -808,10 +799,7 @@ test "parse: class definition" {
         const allocator = arena.allocator();
         defer arena.deinit();
 
-        const class =
-            \\class Foo(Bar):
-            \\	pass
-        ;
+        const class = "class Foo(Bar):\n\tpass";
         var parser = Parser.init(allocator, class);
         const result = (try parser.parse()).root[0];
         try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));

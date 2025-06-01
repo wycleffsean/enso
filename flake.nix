@@ -2,7 +2,7 @@
   description = "Enso development environment";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
   };
 
   outputs = { self , flake-utils, nixpkgs ,... }:
@@ -17,7 +17,8 @@
             in pkgs.mkShell {
               # create an environment with nodejs_18, pnpm, and yarn
               packages = with pkgs; [
-                  zig
+                  zig # 0.14.1
+                  zls
                   python312
               ];
 

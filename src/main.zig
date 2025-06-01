@@ -32,9 +32,11 @@ pub fn main() anyerror!void {
     defer _ = gpa.deinit();
 
     const params = comptime clap.parseParamsComptime(
-        \\-h, --help		Display this help and exit.
-        \\-c,--command <str>	Specify the command to execute
-        \\<str>			File to execute
+    // tabs aren't cool in multiline literals: https://github.com/ziglang/zig-spec/issues/38
+    // so this formatting is a bit lame
+        \\-h, --help Display this help and exit.
+        \\-c,--command <str> Specify the command to execute
+        \\<str> File to execute
         \\
     );
 
@@ -52,7 +54,7 @@ pub fn main() anyerror!void {
         return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
     if (res.args.command) |cmd|
         try interpret(gpa.allocator(), cmd);
-    for (res.positionals) |pos|
+    if (res.positionals[0]) |pos|
         std.debug.print("{s}\n", .{pos});
 }
 

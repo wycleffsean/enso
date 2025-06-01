@@ -149,7 +149,7 @@ fn testTeardown(ctx: *TestContext) void {
 }
 
 fn testExample(source: []const u8, expected_stdout: []const u8) !void {
-    var buffer: [std.mem.page_size * 8]u8 = undefined;
+    var buffer: [std.heap.page_size_min * 8]u8 = undefined;
     var ctx = try testSetup(source, &buffer);
     defer testTeardown(&ctx);
 

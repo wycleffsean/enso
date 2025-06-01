@@ -107,12 +107,12 @@ pub fn eval(allocator: std.mem.Allocator, insns: []const bc.Insn) !EvalContext {
 test "eval: variable scopes" {
     if (true) return error.SkipZigTest;
     const source =
+        // tab literals have been made a crime, but the real crime
+        // is this unreadable mess
         \\var a = 9
         \\
         \\fn myFunction():
-        \\	var b = 1
-        \\	a * b
-    ;
+    ++ '\t' ++ "var b = 1" ++ '\t' ++ "a * b";
     var parse_ctx = try TestParse.init(source);
     defer parse_ctx.deinit();
     var eval_ctx = try eval(testing.allocator, parse_ctx.insns);

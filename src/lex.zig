@@ -8,7 +8,7 @@ const fixedBufferStream = std.io.fixedBufferStream;
 
 // https://docs.python.org/3/reference/lexical_analysis.html#identifiers
 
-var test_logger_buf: [std.mem.page_size / 4]u8 = undefined;
+var test_logger_buf: [std.heap.page_size_min / 4]u8 = undefined;
 pub var test_err_message: []u8 = undefined;
 
 const TestLogger = struct {
