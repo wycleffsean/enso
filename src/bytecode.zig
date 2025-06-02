@@ -116,7 +116,7 @@ pub const IrGen = struct {
             .group => |group| {
                 try self.buildStack(group.value, block);
             },
-            .integer, .float, .name, .var_decl, .string_literal => {
+            .integer, .float, .complex, .name, .var_decl, .string_literal => {
                 try self.stack.append(.{ .ast_node = ast });
             },
             .fn_decl => |fn_decl| {
@@ -166,6 +166,7 @@ pub const IrGen = struct {
                 },
                 .integer => |int| break :blk Insn{ .load_const = .{ .int = int.value } },
                 .float => |float| break :blk Insn{ .load_const = .{ .float = float.value } },
+                .complex => |cmp| break :blk Insn{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } },
                 else => {
                     // TODO: this should become an exhaustive switch
                     std.debug.print("\n###############\ngenerateInsn: AstNode.{s} is not handled\n###############\n", .{@tagName(ast_node.*)});

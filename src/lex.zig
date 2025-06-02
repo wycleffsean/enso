@@ -35,6 +35,7 @@ pub const TokenTag = enum {
     decorator,
     integer,
     float,
+    imaginary,
     string,
     dot,
     colon,
@@ -113,6 +114,7 @@ pub const Token = union(TokenTag) {
     decorator: Identifier,
     integer: Identifier,
     float: Identifier,
+    imaginary: Identifier,
     string: Identifier,
     dot: Bare,
     colon: Bare,
@@ -180,6 +182,7 @@ pub const Token = union(TokenTag) {
             .decorator => self.decorator.loc,
             .integer => self.integer.loc,
             .float => self.float.loc,
+            .imaginary => self.imaginary.loc,
             .string => self.string.loc,
             .dot => self.dot.loc,
             .colon => self.colon.loc,
@@ -435,7 +438,16 @@ pub const Lexer = struct {
         const dot = try self.take();
         std.debug.assert(dot == '.');
         try self.readWhileNumeric();
+        if (self.peek()) |val| {
+            if (val == 'j') return self.readImaginary(start, loc);
+        }
         return Token{ .float = .{ .value = self.buffer[start..self.index], .loc = loc } };
+    }
+
+    inline fn readImaginary(self: *Self, start: usize, loc: Location) Error!Token {
+        const j = try self.take();
+        std.debug.assert(j == 'j');
+        return Token{ .imaginary = .{ .value = self.buffer[start..self.index], .loc = loc } };
     }
 
     pub fn next(self: *Self) Error!Token {
@@ -508,6 +520,8 @@ pub const Lexer = struct {
                 if (self.peek()) |val| {
                     if (val == '.') {
                         return self.readFloat(start, loc);
+                    } else if (val == 'j') {
+                        return self.readImaginary(start, loc);
                     } else if (ascii.isDigit(val)) {
                         log.err("SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers", .{});
                         return Error.SyntaxError;
@@ -522,6 +536,8 @@ pub const Lexer = struct {
                 if (self.peek()) |val| {
                     if (val == '.') {
                         return self.readFloat(start, loc);
+                    } else if (val == 'j') {
+                        return self.readImaginary(start, loc);
                     }
                 }
                 return Token{ .integer = .{ .value = self.buffer[start..self.index], .loc = loc } };
@@ -750,6 +766,37 @@ test "lex: float" {
         const next = try lex.next();
         try testing.expectEqualSlices(u8, value, next.float.value);
         try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.float.loc);
+    }
+}
+
+test "lex: imaginary" {
+    {
+        const value = "0j";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.imaginary.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.imaginary.loc);
+    }
+    {
+        const value = "1j";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.imaginary.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.imaginary.loc);
+    }
+    {
+        const value = "0.1j";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.imaginary.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.imaginary.loc);
+    }
+    {
+        const value = "3.1j";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.imaginary.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.imaginary.loc);
     }
 }
 

@@ -14,6 +14,7 @@ const AstNodeTag = enum {
     pass,
     integer,
     float,
+    complex,
     sum,
     product,
     division,
@@ -67,6 +68,7 @@ pub const AstNode = union(AstNodeTag) {
     pass: void,
     integer: struct { value: ObjectInt },
     float: struct { value: ObjectFloat },
+    complex: struct { real: ObjectFloat, imaginary: ObjectFloat },
     sum: BinaryOp,
     product: BinaryOp,
     division: BinaryOp,
@@ -140,6 +142,7 @@ pub const Parser = struct {
         .{ .eof, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .integer, .lowest, parseInteger, leftDenotationUnhandled },
         .{ .float, .lowest, parseFloat, leftDenotationUnhandled },
+        .{ .imaginary, .lowest, parseImaginary, leftDenotationUnhandled },
         .{ .plus, .sum, nullDenotationUnhandled, parseSum },
         .{ .asterisk, .product, nullDenotationUnhandled, parseProduct },
         .{ .solidus, .product, nullDenotationUnhandled, parseDivision },
@@ -317,6 +320,15 @@ pub const Parser = struct {
         const float_node = try self.allocator.create(AstNode);
         float_node.* = .{ .float = .{ .value = val } };
         return float_node;
+    }
+
+    fn parseImaginary(self: *Self) Error!*AstNode {
+        const imaginary_token = try self.take();
+        const len = imaginary_token.imaginary.value.len - 1;
+        const val = try std.fmt.parseFloat(ObjectFloat, imaginary_token.imaginary.value[0..len]);
+        const imaginary_node = try self.allocator.create(AstNode);
+        imaginary_node.* = .{ .complex = .{ .real = 0, .imaginary = val } };
+        return imaginary_node;
     }
 
     fn parseNegativeNumber(self: *Self) Error!*AstNode {

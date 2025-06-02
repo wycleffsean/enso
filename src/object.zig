@@ -4,13 +4,14 @@ const Exception = @import("exception.zig");
 
 pub const ObjectInt = i64;
 pub const ObjectFloat = f64;
+pub const ObjectComplex = std.math.Complex(ObjectFloat);
 
 pub const Object = union(enum) {
     none: void,
     bool: bool,
     int: ObjectInt,
     float: ObjectFloat,
-    complex: std.math.Complex(ObjectFloat),
+    complex: ObjectComplex,
     string: String,
     symbol: Symbol, // symbols are just interned strings
     // callabe: Callable, // TODO: these are real objects that _have_ a callable
