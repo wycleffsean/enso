@@ -149,7 +149,7 @@ pub const Parser = struct {
         .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .comma, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .pipe, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .minus, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .minus, .lowest, parseNegativeInteger, leftDenotationUnhandled },
         .{ .percent, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .less, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .greater, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -304,6 +304,13 @@ pub const Parser = struct {
         const val = try std.fmt.parseInt(ObjectInt, int_token.integer.value, 10);
         const int_node = try self.allocator.create(AstNode);
         int_node.* = .{ .integer = .{ .value = val } };
+        return int_node;
+    }
+
+    fn parseNegativeInteger(self: *Self) Error!*AstNode {
+        _ = try self.take();
+        var int_node = try self.parseInteger();
+        int_node.integer.value = -int_node.integer.value;
         return int_node;
     }
 

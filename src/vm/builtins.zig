@@ -12,7 +12,6 @@ pub fn Builtins(VMType: type) type {
 
         fn builtinPrint(vm: *VMType, args: []Object) object.CallResult {
             for (args) |obj| {
-                // TODO: in the future we'll dispatch to  __str__ here
                 vm.stdout.writeAll(object.dStr(VMType, vm, &obj)) catch unreachable;
             }
             return .{ .object = object.None };
