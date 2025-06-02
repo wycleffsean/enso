@@ -34,6 +34,7 @@ pub const TokenTag = enum {
     name,
     decorator,
     integer,
+    float,
     string,
     dot,
     colon,
@@ -111,6 +112,7 @@ pub const Token = union(TokenTag) {
     name: Identifier,
     decorator: Identifier,
     integer: Identifier,
+    float: Identifier,
     string: Identifier,
     dot: Bare,
     colon: Bare,
@@ -177,6 +179,7 @@ pub const Token = union(TokenTag) {
             .name => self.name.loc,
             .decorator => self.decorator.loc,
             .integer => self.integer.loc,
+            .float => self.float.loc,
             .string => self.string.loc,
             .dot => self.dot.loc,
             .colon => self.colon.loc,
@@ -242,6 +245,7 @@ pub const Token = union(TokenTag) {
 
 };
 
+// TODO: this is not a great implementation - should be using nested labeled switches, and it should be stateful
 pub const Lexer = struct {
     buffer: []const u8,
     index: usize = 0,
@@ -427,6 +431,13 @@ pub const Lexer = struct {
         return null;
     }
 
+    inline fn readFloat(self: *Self, start: usize, loc: Location) Error!Token {
+        const dot = try self.take();
+        std.debug.assert(dot == '.');
+        try self.readWhileNumeric();
+        return Token{ .float = .{ .value = self.buffer[start..self.index], .loc = loc } };
+    }
+
     pub fn next(self: *Self) Error!Token {
         const byte = self.take() catch |err| {
             // we give a nice sentinel before throwing; if we don't throw
@@ -491,9 +502,13 @@ pub const Lexer = struct {
                 return Token{ .decorator = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
             '0' => {
+                const loc = self.location();
+                const start = self.index - 1;
                 try self.readWhileZero();
                 if (self.peek()) |val| {
-                    if (ascii.isDigit(val)) {
+                    if (val == '.') {
+                        return self.readFloat(start, loc);
+                    } else if (ascii.isDigit(val)) {
                         log.err("SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers", .{});
                         return Error.SyntaxError;
                     }
@@ -504,6 +519,11 @@ pub const Lexer = struct {
                 const loc = self.location();
                 const start = self.index - 1;
                 try self.readWhileNumeric();
+                if (self.peek()) |val| {
+                    if (val == '.') {
+                        return self.readFloat(start, loc);
+                    }
+                }
                 return Token{ .integer = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
             '#' => {
@@ -713,6 +733,23 @@ test "lex: integer" {
         var lex = Lexer{ .buffer = value };
         try testing.expectError(Lexer.Error.SyntaxError, lex.next());
         try expectErrorMessage("SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers");
+    }
+}
+
+test "lex: float" {
+    {
+        const value = "2.718";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.float.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.float.loc);
+    }
+    {
+        const value = "0.707";
+        var lex = Lexer{ .buffer = value };
+        const next = try lex.next();
+        try testing.expectEqualSlices(u8, value, next.float.value);
+        try testing.expectEqual(Location{ .line = 1, .col = 1 }, next.float.loc);
     }
 }
 

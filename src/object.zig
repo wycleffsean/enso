@@ -52,7 +52,7 @@ pub inline fn dStr(comptime VMType: type, vm: *VMType, receiver: *const Object) 
         .string => |str| str.string,
         .symbol => |sym| vm.intern_pool.get(sym),
         .int => |int| std.fmt.bufPrint(buffer[0..], "{d}", .{int}) catch unreachable,
-        .float => |float| std.fmt.bufPrint(buffer[0..], "{d:19.5}", .{float}) catch unreachable,
+        .float => |float| std.fmt.bufPrint(buffer[0..], "{d:19}", .{float}) catch unreachable,
         .complex => |cnum| std.fmt.bufPrint(buffer[0..], "({d}+{d}j)", .{ cnum.re, cnum.im }) catch unreachable,
     };
 }

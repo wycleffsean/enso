@@ -8,5 +8,6 @@
 
 print(abs(123))
 print(abs(-123))
-# abs(-2.178)
+print(abs(2.178))
+print(abs(-2.178))
 # TODO - abs(something with

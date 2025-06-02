@@ -3,6 +3,7 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const lex = @import("lex.zig");
 const ObjectInt = @import("object.zig").ObjectInt;
+const ObjectFloat = @import("object.zig").ObjectFloat;
 const Token = lex.Token;
 const test_examples = @import("test/utils.zig").examples;
 
@@ -12,6 +13,7 @@ const AstNodeTag = enum {
     root,
     pass,
     integer,
+    float,
     sum,
     product,
     division,
@@ -64,6 +66,7 @@ pub const AstNode = union(AstNodeTag) {
     root: []*const AstNode,
     pass: void,
     integer: struct { value: ObjectInt },
+    float: struct { value: ObjectFloat },
     sum: BinaryOp,
     product: BinaryOp,
     division: BinaryOp,
@@ -136,6 +139,7 @@ pub const Parser = struct {
     const token_map = [_]TokenMapping{
         .{ .eof, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .integer, .lowest, parseInteger, leftDenotationUnhandled },
+        .{ .float, .lowest, parseFloat, leftDenotationUnhandled },
         .{ .plus, .sum, nullDenotationUnhandled, parseSum },
         .{ .asterisk, .product, nullDenotationUnhandled, parseProduct },
         .{ .solidus, .product, nullDenotationUnhandled, parseDivision },
@@ -149,7 +153,7 @@ pub const Parser = struct {
         .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .comma, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .pipe, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .minus, .lowest, parseNegativeInteger, leftDenotationUnhandled },
+        .{ .minus, .lowest, parseNegativeNumber, leftDenotationUnhandled },
         .{ .percent, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .less, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .greater, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -307,11 +311,29 @@ pub const Parser = struct {
         return int_node;
     }
 
-    fn parseNegativeInteger(self: *Self) Error!*AstNode {
+    fn parseFloat(self: *Self) Error!*AstNode {
+        const float_token = try self.take();
+        const val = try std.fmt.parseFloat(ObjectFloat, float_token.float.value);
+        const float_node = try self.allocator.create(AstNode);
+        float_node.* = .{ .float = .{ .value = val } };
+        return float_node;
+    }
+
+    fn parseNegativeNumber(self: *Self) Error!*AstNode {
         _ = try self.take();
-        var int_node = try self.parseInteger();
-        int_node.integer.value = -int_node.integer.value;
-        return int_node;
+        switch (self.peek().?) {
+            .integer => {
+                var int_node = try self.parseInteger();
+                int_node.integer.value = -int_node.integer.value;
+                return int_node;
+            },
+            .float => {
+                var float_node = try self.parseFloat();
+                float_node.float.value = -float_node.float.value;
+                return float_node;
+            },
+            else => return Error.UnexpectedToken,
+        }
     }
 
     fn parseStringLiteral(self: *Self) Error!*AstNode {
