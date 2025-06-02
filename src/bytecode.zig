@@ -164,6 +164,7 @@ pub const IrGen = struct {
                     const len = call.args.items.len;
                     break :blk Insn{ .call = len };
                 },
+                .integer => |int| break :blk Insn{ .load_const = .{ .int = int.value } },
                 else => {
                     // TODO: this should become an exhaustive switch
                     std.debug.print("\n###############\ngenerateInsn: AstNode.{s} is not handled\n###############\n", .{@tagName(ast_node.*)});

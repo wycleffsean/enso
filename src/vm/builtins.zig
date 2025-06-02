@@ -12,14 +12,33 @@ pub fn Builtins(VMType: type) type {
 
         fn builtinPrint(vm: *VMType, args: []Object) object.CallResult {
             for (args) |obj| {
-                vm.stdout.writeAll(vm.getString(obj)) catch unreachable;
+                // TODO: in the future we'll dispatch to  __str__ here
+                vm.stdout.writeAll(object.dStr(VMType, vm, &obj)) catch unreachable;
             }
             return .{ .object = object.None };
+        }
+
+        fn builtinAbs(vm: *VMType, args: []Object) object.CallResult {
+            _ = vm;
+            const arg = args[0];
+            switch (arg) {
+                .int => |int| {
+                    return .{ .object = Object{ .int = @intCast(@abs(int)) } };
+                },
+                .float => |int| {
+                    return .{ .object = Object{ .float = @abs(int) } };
+                },
+                .complex => |c| {
+                    return .{ .object = Object{ .float = @abs(c.magnitude()) } };
+                },
+                else => return .fail,
+            }
         }
 
         const Item = struct { []const u8, Callable };
 
         const builtins = [_]Item{
+            .{ "abs", builtinAbs },
             .{ "print", builtinPrint },
         };
 

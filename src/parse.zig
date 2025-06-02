@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
 const lex = @import("lex.zig");
+const ObjectInt = @import("object.zig").ObjectInt;
 const Token = lex.Token;
 const test_examples = @import("test/utils.zig").examples;
 
@@ -62,7 +63,7 @@ const ImportExpression = std.ArrayList(ImportDefinition);
 pub const AstNode = union(AstNodeTag) {
     root: []*const AstNode,
     pass: void,
-    integer: struct { value: usize },
+    integer: struct { value: ObjectInt },
     sum: BinaryOp,
     product: BinaryOp,
     division: BinaryOp,
@@ -300,7 +301,7 @@ pub const Parser = struct {
 
     fn parseInteger(self: *Self) Error!*AstNode {
         const int_token = try self.take();
-        const val = try std.fmt.parseInt(usize, int_token.integer.value, 10);
+        const val = try std.fmt.parseInt(ObjectInt, int_token.integer.value, 10);
         const int_node = try self.allocator.create(AstNode);
         int_node.* = .{ .integer = .{ .value = val } };
         return int_node;
@@ -566,9 +567,9 @@ test "parse: infix sum" {
     const result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
     try testing.expect(result.sum.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(2)), result.sum.rhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.sum.rhs.integer.value);
 }
 
 test "parse: infix product" {
@@ -580,12 +581,12 @@ test "parse: infix product" {
     const result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
     try testing.expect(result.sum.rhs.* == AstNode.product);
     try testing.expect(result.sum.rhs.product.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(2)), result.sum.rhs.product.lhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.sum.rhs.product.lhs.integer.value);
     try testing.expect(result.sum.rhs.product.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(3)), result.sum.rhs.product.rhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.sum.rhs.product.rhs.integer.value);
 }
 
 test "parse: infix division" {
@@ -597,12 +598,12 @@ test "parse: infix division" {
     const result = try parser.parseStatement();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(1)), result.sum.lhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
     try testing.expect(result.sum.rhs.* == AstNode.division);
     try testing.expect(result.sum.rhs.division.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(2)), result.sum.rhs.division.lhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.sum.rhs.division.lhs.integer.value);
     try testing.expect(result.sum.rhs.division.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(3)), result.sum.rhs.division.rhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.sum.rhs.division.rhs.integer.value);
 }
 
 test "parse: group" {
@@ -617,11 +618,11 @@ test "parse: group" {
     try testing.expect(result.division.lhs.* == .group);
     try testing.expect(result.division.lhs.group.value.* == .sum);
     try testing.expect(result.division.lhs.group.value.sum.lhs.* == .integer);
-    try testing.expectEqual(@as(usize, @intCast(1)), result.division.lhs.group.value.sum.lhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.division.lhs.group.value.sum.lhs.integer.value);
     try testing.expect(result.division.lhs.group.value.sum.rhs.* == .integer);
-    try testing.expectEqual(@as(usize, @intCast(2)), result.division.lhs.group.value.sum.rhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.division.lhs.group.value.sum.rhs.integer.value);
     try testing.expect(result.division.rhs.* == .integer);
-    try testing.expectEqual(@as(usize, @intCast(3)), result.division.rhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.division.rhs.integer.value);
 }
 
 // Test Assignment
@@ -638,7 +639,7 @@ test "parse: assign" {
     try testing.expect(result.assignment.lhs.* == AstNode.name);
     try testing.expectEqualSlices(u8, "a", result.assignment.lhs.name.value);
     try testing.expect(result.assignment.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(usize, @intCast(1)), result.assignment.rhs.integer.value);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.assignment.rhs.integer.value);
 }
 
 test "parse: string literal" {

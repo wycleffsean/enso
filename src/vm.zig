@@ -19,6 +19,7 @@ const stack_depth = 1000;
 
 pub const Error = error{
     NameError,
+    TypeError,
 };
 
 pub fn VM(WriterType: type) type {
@@ -73,23 +74,13 @@ pub fn VM(WriterType: type) type {
             }
         }
 
-        // TODO: this is gross and should be moved
-        pub fn getString(self: *const Self, obj: Object) []const u8 {
-            assert(obj == .symbol or obj == .string);
-            return switch (obj) {
-                .string => |str| str.string,
-                .symbol => |sym| self.intern_pool.get(sym),
-                else => unreachable,
-            };
-        }
-
         fn fetchMethod(self: *Self, receiver: Object, funcname: Object) Error!Callable {
             switch (receiver) {
                 .none => {
                     // special case - we lookup the module table
                     // which can fall thru to the builtins
 
-                    return try Builtins.fetchBuiltinFunction(self.getString(funcname));
+                    return try Builtins.fetchBuiltinFunction(object.dStr(Self, self, &funcname));
                 },
                 else => unreachable,
             }
@@ -110,14 +101,18 @@ pub fn VM(WriterType: type) type {
             const receiver = self.pop();
             const callable = self.fetchMethod(receiver, funcname) catch |err| {
                 switch (err) {
-                    error.NameError => fatalExit(1, "NameError: name '{s}' is not defined", .{self.getString(funcname)}),
+                    error.NameError => fatalExit(1, "NameError: name '{s}' is not defined", .{funcname}),
+                    error.TypeError => fatalExit(1, "TypeError", .{}),
                 }
             };
             // TODO - when there is an actual receiver we'll need to pass it as the first argument
             const res = callable(self, args_buf[0..arity]);
             switch (res) {
                 .object => |obj| self.push(obj),
-                .exception => unreachable, // TODO - handle exceptions
+                .exception => {
+                    // TODO - handle exceptions for real
+                    fatalExit(1, "Unhandled Exception", .{});
+                },
             }
         }
     };
