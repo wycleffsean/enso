@@ -52,11 +52,15 @@ fn opnameToEnum(opcode: u8, opcode_str: []const u8, opname: OpCode) OpCode {
 
 examples = []
 
+def as_hex_string(s: str) -> str:
+    byte_array = s.encode('utf-8')  # get bytes
+    hex_values = [f"0x{b:02x}" for b in byte_array]  # format each byte
+    return ", ".join(hex_values)
 def argval_to_PyArgVal(val):
     if val is None:
         return "object.None"
     elif isinstance(val, str):
-        return 'object.Object{ .string = .{ .string = "' + val + '" } }'
+        return 'object.Object{ .string = .{ .string = &[_]u8{' + as_hex_string(val) + '} } }'
     elif isinstance(val, int):
         return 'object.Object{ .int = ' + str(val) + ' }'
     elif isinstance(val, float):
