@@ -70,6 +70,7 @@ def argval_to_PyArgVal(val):
         # like a method name
         return 'object.None'
 
+
 def instruction_to_zig(insn):
     return f"""  .{{
       //.opname = "{insn.opname}",
@@ -83,7 +84,8 @@ def instruction_to_zig(insn):
       .is_jump_target = {"true" if insn.is_jump_target else "false"},
   }},"""
 def instructions_to_zig(example_path, instruction_generator):
-    example_name = Path(example_path).stem
+    x = Path(example_path)
+    example_name = "_".join([x.parent.stem, x.stem])
 
     examples.append(Example(example_name, example_path))
     print(f"pub const {example_name} = [_]Instruction {{")

@@ -35,17 +35,20 @@ pub const Example = struct {
 
 pub const examples = [_]Example{
     .{
-        .name = "none",
+        .name = "examples_none",
     },
     .{
-        .name = "hello_world",
+        .name = "examples_hello_world",
     },
     .{
-        .name = "test_grammar",
-        .test_parse = false,
-        .test_bytecode = false,
-        .test_vm = false,
+        .name = "examples_builtin_functions",
     },
+    // .{
+    //     .name = "test_grammar",
+    //     .test_parse = false,
+    //     .test_bytecode = false,
+    //     .test_vm = false,
+    // },
 };
 
 test "lexing examples" {
