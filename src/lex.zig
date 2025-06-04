@@ -370,11 +370,12 @@ pub const Lexer = struct {
         return false;
     }
 
+    // whitespace or colon!!
     fn matchExactTerminatedByWhitspace(self: *Self, comptime needle: []const u8) bool {
         if (!self.matchExact(needle)) return false;
         if (self.peek()) |byte| {
             switch (byte) {
-                '\n', '\t', ' ' => {},
+                '\n', '\t', ' ', ':' => {},
                 else => return false,
             }
         }
@@ -643,6 +644,7 @@ test "lex: take" {
     try testing.expectEqual(lex.col, 1);
 }
 
+// TODO: we really need to be able to consider spaces as indents too
 test "lex: indents" {
     // taken from py lexer, with comment -> # TODO: a bit wrong :/
     var lex = Lexer{ .buffer = "\t+\n\t\t+\n\t\t\t+\n" };
@@ -808,6 +810,12 @@ fn testKeyword(tag: TokenTag, kw: []const u8) !void {
     var buf: [50]u8 = undefined;
     {
         var lex = Lexer{ .buffer = kw };
+        const next = try lex.next();
+        try testing.expect(next == tag);
+    }
+    {
+        const str = std.fmt.bufPrint(&buf, "{s}:", .{kw}) catch unreachable;
+        var lex = Lexer{ .buffer = str };
         const next = try lex.next();
         try testing.expect(next == tag);
     }

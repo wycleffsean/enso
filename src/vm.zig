@@ -143,9 +143,9 @@ fn testTeardown(ctx: *TestContext) void {
     _ = ctx;
 }
 
-fn testExample(source: []const u8, expected_stdout: []const u8) !void {
+fn testExample(comptime example: test_utils.Example) !void {
     var buffer: [std.heap.page_size_min * 8]u8 = undefined;
-    var ctx = try testSetup(source, &buffer);
+    var ctx = try testSetup(example.source(), &buffer);
     defer testTeardown(&ctx);
 
     var stdout = std.ArrayList(u8).init(testing.allocator);
@@ -155,10 +155,13 @@ fn testExample(source: []const u8, expected_stdout: []const u8) !void {
     var vm = VM(@TypeOf(stdout_writer)).init(ctx.intern_pool, stdout_writer);
     try vm.eval(ctx.ir);
 
-    try testing.expectEqualStrings(expected_stdout, stdout.items);
+    testing.expectEqualStrings(example.stdout(), stdout.items) catch |err| {
+        std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
+        return err;
+    };
 }
 
-test "parse: example fixtures" {
+test "vm eval: example fixtures" {
     inline for (test_examples) |example| {
         if (!example.test_vm) continue;
         if (example.test_vm_comptime) {
@@ -167,7 +170,7 @@ test "parse: example fixtures" {
             }
         }
         {
-            try testExample(example.source(), example.stdout());
+            try testExample(example);
         }
     }
 }

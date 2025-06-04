@@ -14,11 +14,15 @@ const comptimePrint = std.fmt.comptimePrint;
 pub const Insn = union(OpCode) {
     pop_top: void,
     push_null: void,
+    end_for: void,
+    nop: void,
     store_subscr: void,
+    get_iter: void,
     load_build_class: void,
     return_value: void,
     setup_annotations: void,
     store_name: void,
+    for_iter: void,
     swap: void,
     load_const: object.Object,
     load_name: object.Object,
@@ -30,6 +34,7 @@ pub const Insn = union(OpCode) {
     pop_jump_if_false: void,
     return_const: void,
     make_function: void,
+    jump_backward: void,
     @"resume": usize,
     list_extend: void,
     call: usize,
@@ -42,6 +47,7 @@ pub const Insn = union(OpCode) {
         // we always intern strings in the bytecode
         const obj = if (value == .string) try value.string.symbolize(intern_pool) else value;
         return switch (kind) {
+            .nop => .{ .nop = {} },
             .@"resume" => .{ .@"resume" = obj.int },
             .push_null => .{ .push_null = {} },
             .load_name => .{ .load_name = obj },
@@ -50,6 +56,15 @@ pub const Insn = union(OpCode) {
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
             .setup_annotations => .{ .setup_annotations = obj.void },
+            // TODO...
+            .store_name => .{ .store_name = {} },
+            .build_list => .{ .build_list = {} },
+            .list_extend => .{ .list_extend = {} },
+            .get_iter => .{ .get_iter = {} },
+            .for_iter => .{ .for_iter = {} },
+            .pop_top => .{ .pop_top = {} },
+            .jump_backward => .{ .jump_backward = {} },
+            .end_for => .{ .end_for = {} },
             else => {
                 comptime {
                     @compileError(comptimePrint("uh-oh - we don't handle this opcode yet! - {s} ({})", .{ @tagName(kind), @intFromEnum(kind) }));
@@ -124,7 +139,7 @@ pub const IrGen = struct {
                 // this is sketchy, but we need the stable pointer to the block
                 const fn_block = &self.stack.items[self.stack.items.len - 1].block;
                 try self.stack.append(.{ .ast_node = ast });
-                for (fn_decl.statement.items) |expr| {
+                for (fn_decl.suite.items) |expr| {
                     try self.buildStack(expr, fn_block);
                 }
                 try self.stack.append(.{ .block_end = Block{ .parent = block } });

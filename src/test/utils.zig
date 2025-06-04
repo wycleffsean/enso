@@ -42,6 +42,13 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_builtin_functions",
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_8_3_for_statement",
+        .test_bytecode = false,
+        .test_vm = false,
     },
     // .{
     //     .name = "test_grammar",

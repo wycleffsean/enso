@@ -26,6 +26,8 @@ const AstNodeTag = enum {
     call,
     field_access,
     array_literal,
+    target_list,
+    for_in,
     string_literal,
     class,
     import,
@@ -37,7 +39,7 @@ const Statement = List;
 const ClassDefinition = struct {
     name: []const u8,
     baseclass: ?[]const u8,
-    statement: Statement,
+    suite: Statement,
 };
 // import sys
 // from sys import *
@@ -75,11 +77,13 @@ pub const AstNode = union(AstNodeTag) {
     group: struct { value: *const AstNode },
     name: struct { value: []const u8 },
     var_decl: struct { name: []const u8 },
-    fn_decl: struct { name: []const u8, statement: Statement },
+    fn_decl: struct { name: []const u8, suite: Statement },
     assignment: BinaryOp,
     call: struct { ref: *const AstNode, args: List },
     field_access: BinaryOp,
     array_literal: Statement,
+    target_list: List,
+    for_in: struct { target_list: List, iterable: *const AstNode, suite: Statement, else_suite: ?Statement },
     string_literal: struct { value: []const u8 },
     class: ClassDefinition,
     import: []ImportDefinition,
@@ -156,7 +160,7 @@ pub const Parser = struct {
         .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .comma, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .pipe, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .minus, .lowest, parseNegativeNumber, leftDenotationUnhandled },
+        .{ .minus, .prefix, parseNegativeNumber, leftDenotationUnhandled },
         .{ .percent, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .less, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .greater, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -186,7 +190,7 @@ pub const Parser = struct {
         .{ .return_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .and_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .continue_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .for_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .for_kw, .lowest, parseForStatement, leftDenotationUnhandled },
         .{ .lambda_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .try_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .as_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -402,6 +406,8 @@ pub const Parser = struct {
         return group_node;
     }
 
+    // TODO: as we evolve and more formally attempt to match the grammar, this should probably be replaced
+    // with parseTargetList
     fn parseCommaSeparatedList(self: *Self, list: *List, terminal_token: lex.TokenTag) Error!void {
         while (self.peek()) |next_token| {
             if (next_token == terminal_token) break;
@@ -410,6 +416,18 @@ pub const Parser = struct {
             try list.append(item);
             self.expectAndSkip(.comma) catch break;
         }
+    }
+
+    // https://docs.python.org/3/reference/simple_stmts.html#grammar-token-python-grammar-target_list
+    fn parseTargetList(self: *Self) Error!List {
+        var list = List.init(self.allocator);
+        while (true) {
+            // TODO: there are many more types of targets
+            const target = try self.parseName();
+            try list.append(target);
+            self.expectAndSkip(.comma) catch break;
+        }
+        return list;
     }
 
     fn parseArrayLiteral(self: *Self) Error!*AstNode {
@@ -441,12 +459,15 @@ pub const Parser = struct {
         return assignment_node;
     }
 
-    // probably makes more sense to call this parseStatement
-    fn parseIndentedBlock(self: *Self, statement: *Statement, owner_indent: lex.IndentLength) Error!void {
+    // a "suite" is the block following the colon in compound statements
+    fn parseSuite(self: *Self, owner_indent: lex.IndentLength) Error!Statement {
+        try self.expectAndSkip(.colon);
+        var statement = Statement.init(self.allocator);
         while (self.peek()) |next_token| {
             if (next_token.getLocation().indent <= owner_indent) break;
             try statement.append(try self.parseStatement());
         }
+        return statement;
     }
 
     fn parseFunctionDefinition(self: *Self) Error!*AstNode {
@@ -461,16 +482,11 @@ pub const Parser = struct {
         const rparen_token = try self.take(); // skip rparen token
         if (rparen_token != .rparen) return Error.UnexpectedToken;
 
-        const colon_token = try self.take(); // skip colon token
-        if (colon_token != .colon) return Error.UnexpectedToken;
-
-        var fn_decl = try self.allocator.create(AstNode);
+        const fn_decl = try self.allocator.create(AstNode);
         fn_decl.* = .{ .fn_decl = .{
             .name = name_token.name.value,
-            .statement = std.ArrayList(*const AstNode).init(self.allocator),
+            .suite = try self.parseSuite(def_kw_token.getLocation().indent),
         } };
-
-        try self.parseIndentedBlock(&fn_decl.fn_decl.statement, def_kw_token.getLocation().indent);
 
         return fn_decl;
     }
@@ -487,7 +503,7 @@ pub const Parser = struct {
     fn parseClassDefinition(self: *Self) Error!*AstNode {
         const class_kw = self.expectAndTake(.class_kw) catch unreachable;
         const name_token = try self.expectAndTake(.name);
-        var class_node = try self.allocator.create(AstNode);
+        const class_node = try self.allocator.create(AstNode);
         var baseclass: ?[]const u8 = null;
         if (self.expect(.lparen)) {
             self.expectAndSkip(.lparen) catch unreachable;
@@ -497,14 +513,11 @@ pub const Parser = struct {
             }
             try self.expectAndSkip(.rparen);
         }
-        try self.expectAndSkip(.colon);
         class_node.* = .{ .class = .{
             .name = name_token.name.value,
             .baseclass = baseclass,
-            .statement = std.ArrayList(*const AstNode).init(self.allocator),
+            .suite = try self.parseSuite(class_kw.getLocation().indent),
         } };
-
-        try self.parseIndentedBlock(&class_node.class.statement, class_kw.getLocation().indent);
 
         return class_node;
     }
@@ -516,6 +529,28 @@ pub const Parser = struct {
         const field_access_node = try self.allocator.create(AstNode);
         field_access_node.* = .{ .field_access = .{ .lhs = lhs, .rhs = rhs } };
         return field_access_node;
+    }
+
+    fn parseForStatement(self: *Self) Error!*AstNode {
+        const for_kw = try self.expectAndTake(.for_kw);
+        const target_list = try self.parseTargetList();
+        try self.expectAndSkip(.in_kw);
+        const iterable = try self.parseExpression(.lowest);
+        const for_in = try self.allocator.create(AstNode);
+        const indent = for_kw.getLocation().indent;
+        const suite = try self.parseSuite(indent);
+        var else_suite: ?Statement = null;
+        blk: {
+            self.expectAndSkip(.else_kw) catch break :blk;
+            else_suite = try self.parseSuite(indent);
+        }
+        for_in.* = .{ .for_in = .{
+            .target_list = target_list,
+            .iterable = iterable,
+            .suite = suite,
+            .else_suite = else_suite,
+        } };
+        return for_in;
     }
 
     fn parseImport(self: *Self) Error!*AstNode {
@@ -759,10 +794,10 @@ test "parse: declare function" {
     try testing.expectEqualSlices(u8, "myFunction", result.fn_decl.name);
 
     // Statement
-    try testing.expectEqual(@as(usize, 2), result.fn_decl.statement.items.len);
-    const expr1 = result.fn_decl.statement.items[0];
+    try testing.expectEqual(@as(usize, 2), result.fn_decl.suite.items.len);
+    const expr1 = result.fn_decl.suite.items[0];
     try testing.expect(expr1.* == AstNode.assignment);
-    const expr2 = result.fn_decl.statement.items[1];
+    const expr2 = result.fn_decl.suite.items[1];
     try testing.expect(expr2.* == AstNode.product);
 }
 
@@ -820,7 +855,7 @@ test "parse: class definition" {
         try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expect(result.class.baseclass == null);
-        try testing.expectEqual(@as(usize, 1), result.class.statement.items.len);
+        try testing.expectEqual(@as(usize, 1), result.class.suite.items.len);
     }
     { // implied baseclass
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -834,7 +869,7 @@ test "parse: class definition" {
         try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expect(result.class.baseclass == null);
-        try testing.expectEqual(@as(usize, 1), result.class.statement.items.len);
+        try testing.expectEqual(@as(usize, 1), result.class.suite.items.len);
     }
     { // with baseclass
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -847,7 +882,7 @@ test "parse: class definition" {
         try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expectEqualStrings("Bar", result.class.baseclass.?);
-        try testing.expectEqual(@as(usize, 1), result.class.statement.items.len);
+        try testing.expectEqual(@as(usize, 1), result.class.suite.items.len);
     }
 }
 
