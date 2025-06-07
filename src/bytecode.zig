@@ -146,12 +146,7 @@ pub const IrGen = struct {
                 }
                 try self.stack.append(.{ .block_end = Block{ .parent = block } });
             },
-            .call => |call| {
-                try self.stack.append(.{ .null = {} }); // TODO: eventually we'll need to push receiver here
-                try self.stack.append(.{ .ast_node = call.ref });
-                for (call.args.items) |node| {
-                    try self.buildStack(node, block);
-                }
+            .call => {
                 try self.stack.append(.{ .ast_node = ast }); // i.e. push 'call'
             },
             else => {
@@ -178,6 +173,11 @@ pub const IrGen = struct {
             // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
             .call => |call| {
                 const len = call.args.items.len;
+                try insns.append(.{ .push_null = {} }); // TODO: eventually we'll need to push receiver here
+                try self.generateInsns(call.ref, insns);
+                for (call.args.items) |node| {
+                    try self.generateInsns(node, insns);
+                }
                 try insns.append(.{ .call = len });
             },
             .integer => |int| try insns.append(.{ .load_const = .{ .int = int.value } }),
@@ -198,9 +198,13 @@ pub const IrGen = struct {
                     std.debug.assert(target.* == .name);
                     try insns.append(.{ .store_name = try object.stringToSymbol(target.name.value, self.intern_pool) });
                 }
+                const suite_mark = insns.items.len;
                 for (for_in.suite.items) |expression|
                     try self.generateInsns(expression, insns);
                 // try self.generateInsns(for_in.else_suite, insns); // TODO
+
+                // clean up iterator, but only when the block actually did anything
+                if ((insns.items.len - suite_mark) > 0) try insns.append(.{ .pop_top = {} });
 
                 // We jump by incrementing/decrementing the program counter.  Cpython records deltas that represent
                 // a similar idea but are a length in bytes; we're not going to match
@@ -306,11 +310,18 @@ test "bytecode: example fixtures" {
         inline for (comptime example.instructions(), 0..) |dis, i| {
             expected[i] = try Insn.init(dis.opcode, dis.argval, &intern_pool);
             // we cheat and rewrite the delta values since we calculate them
-            // differently
-            switch (expected[i]) {
-                .for_iter => expected[i].for_iter.delta = ctx.ir[i].for_iter.delta,
-                .jump_backward => expected[i].jump_backward.delta = ctx.ir[i].jump_backward.delta,
-                else => {},
+            // differently.  Of course this is a hack and will only update the
+            // deltas if they appear on the same line which is good enough
+            if (i <= ctx.ir.len) {
+                switch (expected[i]) {
+                    .for_iter => {
+                        if (ctx.ir[i] == .for_iter) expected[i].for_iter.delta = ctx.ir[i].for_iter.delta;
+                    },
+                    .jump_backward => {
+                        if (ctx.ir[i] == .jump_backward) expected[i].jump_backward.delta = ctx.ir[i].jump_backward.delta;
+                    },
+                    else => {},
+                }
             }
         }
 

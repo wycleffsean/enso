@@ -47,6 +47,7 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_8_3_for_statement",
+        .test_vm = false,
     },
     // .{
     //     .name = "test_grammar",

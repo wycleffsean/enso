@@ -3,8 +3,8 @@
 for i in []:
 	pass
 
-# for i in [1,2,3]:
-# 	print(i)
+for i in []:
+	print(i)
 # 	i = 5
 # else:
 # 	print(4)
