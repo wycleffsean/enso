@@ -65,6 +65,10 @@ def argval_to_PyArgVal(val):
         return 'object.Object{ .int = ' + str(val) + ' }'
     elif isinstance(val, float):
         return 'object.Object{ .float = ' + str(val) + ' }'
+    elif isinstance(val, list):
+        return 'object.EmptyArray'
+    elif isinstance(val, tuple): # For now we treat them the same
+        return 'object.EmptyArray'
     else:
         # this is wrong, for example sometimes it can be a symbol
         # like a method name

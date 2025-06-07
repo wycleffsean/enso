@@ -126,7 +126,6 @@ const TestContext = struct {
 fn testSetup(code: []const u8, buffer: []u8) !TestContext {
     var fba = std.heap.FixedBufferAllocator.init(buffer);
     const allocator = fba.allocator();
-    var arena = std.heap.ArenaAllocator.init(allocator);
 
     var parser = Parser.init(allocator, code);
     const ast = try parser.parse();
@@ -134,7 +133,7 @@ fn testSetup(code: []const u8, buffer: []u8) !TestContext {
     const intern_pool = try allocator.create(intern.StringInternPool);
     intern_pool.* = intern.StringInternPool.init(allocator);
 
-    var irgen = bytecode.IrGen.init(&arena, intern_pool, ast);
+    var irgen = bytecode.IrGen.init(allocator, intern_pool, ast);
     const ir = try irgen.generate(allocator);
     return .{ .ir = ir, .intern_pool = intern_pool };
 }

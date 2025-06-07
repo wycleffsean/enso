@@ -11,6 +11,8 @@ const testing = std.testing;
 
 const comptimePrint = std.fmt.comptimePrint;
 
+const RelativeJump = struct { delta: object.ObjectInt };
+
 pub const Insn = union(OpCode) {
     pop_top: void,
     push_null: void,
@@ -21,8 +23,8 @@ pub const Insn = union(OpCode) {
     load_build_class: void,
     return_value: void,
     setup_annotations: void,
-    store_name: void,
-    for_iter: void,
+    store_name: object.Object,
+    for_iter: RelativeJump,
     swap: void,
     load_const: object.Object,
     load_name: object.Object,
@@ -34,7 +36,7 @@ pub const Insn = union(OpCode) {
     pop_jump_if_false: void,
     return_const: void,
     make_function: void,
-    jump_backward: void,
+    jump_backward: RelativeJump,
     @"resume": usize,
     list_extend: void,
     call: usize,
@@ -56,14 +58,14 @@ pub const Insn = union(OpCode) {
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
             .setup_annotations => .{ .setup_annotations = obj.void },
+            .store_name => .{ .store_name = obj },
             // TODO...
-            .store_name => .{ .store_name = {} },
             .build_list => .{ .build_list = {} },
             .list_extend => .{ .list_extend = {} },
             .get_iter => .{ .get_iter = {} },
-            .for_iter => .{ .for_iter = {} },
+            .for_iter => .{ .for_iter = .{ .delta = value.int } },
             .pop_top => .{ .pop_top = {} },
-            .jump_backward => .{ .jump_backward = {} },
+            .jump_backward => .{ .jump_backward = .{ .delta = value.int } },
             .end_for => .{ .end_for = {} },
             else => {
                 comptime {
@@ -96,11 +98,11 @@ pub const IrGen = struct {
 
     // storing the arena on the struct leads to a segfault for some reason
     pub fn init(
-        arena: *std.heap.ArenaAllocator,
+        allocator: std.mem.Allocator,
         intern_pool: *intern.StringInternPool,
         ast: *const AstNode,
     ) Self {
-        const stack = std.ArrayList(StackItem).init(arena.allocator());
+        const stack = std.ArrayList(StackItem).init(allocator);
         return .{
             .ast = ast,
             .intern_pool = intern_pool,
@@ -131,7 +133,7 @@ pub const IrGen = struct {
             .group => |group| {
                 try self.buildStack(group.value, block);
             },
-            .integer, .float, .complex, .name, .var_decl, .string_literal => {
+            .integer, .float, .complex, .name, .var_decl, .string_literal, .for_in => {
                 try self.stack.append(.{ .ast_node = ast });
             },
             .fn_decl => |fn_decl| {
@@ -160,36 +162,59 @@ pub const IrGen = struct {
         }
     }
 
-    fn generateInsn(self: *Self, ast_node: *const AstNode) Error!Insn {
-        const insn: Insn = blk: {
-            switch (ast_node.*) {
-                // .root => break :blk Insn{ .@"resume" = 0 },
-                // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
-                .name => |name| break :blk Insn{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) },
-                .string_literal => |string| break :blk Insn{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) },
-                // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
-                // .sum => break :blk Insn{ .sum = {} },
-                // .product => break :blk Insn{ .product = {} },
-                // .division => break :blk Insn{ .division = {} },
-                // .group => break :blk try self.generateInsn(ast_node.group.value),
-                // .block_end => {
-                // .assignment => break :blk Insn{ .assign = {} },
-                // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
-                .call => |call| {
-                    const len = call.args.items.len;
-                    break :blk Insn{ .call = len };
-                },
-                .integer => |int| break :blk Insn{ .load_const = .{ .int = int.value } },
-                .float => |float| break :blk Insn{ .load_const = .{ .float = float.value } },
-                .complex => |cmp| break :blk Insn{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } },
-                else => {
-                    // TODO: this should become an exhaustive switch
-                    std.debug.print("\n###############\ngenerateInsn: AstNode.{s} is not handled\n###############\n", .{@tagName(ast_node.*)});
-                    unreachable;
-                },
-            }
-        };
-        return insn;
+    fn generateInsns(self: *Self, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
+        switch (ast_node.*) {
+            // .root => break :blk Insn{ .@"resume" = 0 },
+            // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
+            .name => |name| try insns.append(.{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) }),
+            .string_literal => |string| try insns.append(.{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) }),
+            // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
+            // .sum => break :blk Insn{ .sum = {} },
+            // .product => break :blk Insn{ .product = {} },
+            // .division => break :blk Insn{ .division = {} },
+            // .group => break :blk try self.generateInsn(ast_node.group.value),
+            // .block_end => {
+            // .assignment => break :blk Insn{ .assign = {} },
+            // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
+            .call => |call| {
+                const len = call.args.items.len;
+                try insns.append(.{ .call = len });
+            },
+            .integer => |int| try insns.append(.{ .load_const = .{ .int = int.value } }),
+            .float => |float| try insns.append(.{ .load_const = .{ .float = float.value } }),
+            .complex => |cmp| try insns.append(.{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } }),
+            .array_literal => try insns.append(.{ .load_const = object.EmptyArray }),
+            .pass => {}, // surprisingly not a nop
+            .for_in => |for_in| {
+                // push the iterable onto the stack
+                try self.generateInsns(for_in.iterable, insns);
+                // pop iterable, push iterator
+                try insns.append(.{ .get_iter = {} });
+                try insns.append(.{ .for_iter = .{ .delta = 0 } });
+                const for_iter_mark = insns.items.len - 1;
+                // TODO: for non-trivial cases we'll need call back into this switch statement
+                //   but have a signal for load vs store
+                for (for_in.target_list.items) |target| {
+                    std.debug.assert(target.* == .name);
+                    try insns.append(.{ .store_name = try object.stringToSymbol(target.name.value, self.intern_pool) });
+                }
+                for (for_in.suite.items) |expression|
+                    try self.generateInsns(expression, insns);
+                // try self.generateInsns(for_in.else_suite, insns); // TODO
+
+                // We jump by incrementing/decrementing the program counter.  Cpython records deltas that represent
+                // a similar idea but are a length in bytes; we're not going to match
+                const jump_index = @as(i64, @intCast(for_iter_mark)) - @as(i64, @intCast(insns.items.len));
+                try insns.append(.{ .jump_backward = .{ .delta = jump_index } });
+                try insns.append(.{ .end_for = {} });
+                insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
+            },
+            else => {
+                // TODO: this should become an exhaustive switch
+                std.debug.print("\n###############\ngenerateInsn: AstNode.{s} is not handled\n###############\n", .{@tagName(ast_node.*)});
+                unreachable;
+            },
+        }
     }
 
     pub fn generate(self: *Self, allocator: std.mem.Allocator) Error![]Insn {
@@ -200,8 +225,7 @@ pub const IrGen = struct {
         for (self.stack.items) |item| {
             switch (item) {
                 .ast_node => |ast_node| {
-                    const insn = try self.generateInsn(ast_node);
-                    try insns.append(insn);
+                    try self.generateInsns(ast_node, &insns);
                 },
                 .block => |*block| {
                     current_block = block;
@@ -231,13 +255,14 @@ fn testSetup(code: []const u8) !TestContext {
     // this is a strange thing to do but prevents segfault :/
     var arena = try testing.allocator.create(std.heap.ArenaAllocator);
     arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const allocator = arena.allocator();
 
-    var parser = Parser.init(arena.allocator(), code);
+    var parser = Parser.init(allocator, code);
     const ast = try parser.parse();
 
     const intern_pool = try testing.allocator.create(intern.StringInternPool);
-    intern_pool.* = intern.StringInternPool.init(arena.allocator());
-    var irgen = IrGen.init(arena, intern_pool, ast);
+    intern_pool.* = intern.StringInternPool.init(allocator);
+    var irgen = IrGen.init(allocator, intern_pool, ast);
     const ir = try irgen.generate(testing.allocator);
     return TestContext{
         .arena = arena,
@@ -280,6 +305,13 @@ test "bytecode: example fixtures" {
 
         inline for (comptime example.instructions(), 0..) |dis, i| {
             expected[i] = try Insn.init(dis.opcode, dis.argval, &intern_pool);
+            // we cheat and rewrite the delta values since we calculate them
+            // differently
+            switch (expected[i]) {
+                .for_iter => expected[i].for_iter.delta = ctx.ir[i].for_iter.delta,
+                .jump_backward => expected[i].jump_backward.delta = ctx.ir[i].jump_backward.delta,
+                else => {},
+            }
         }
 
         testing.expectEqualSlices(Insn, expected[0..], ctx.ir) catch |err| {

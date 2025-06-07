@@ -47,8 +47,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_8_3_for_statement",
-        .test_bytecode = false,
-        .test_vm = false,
     },
     // .{
     //     .name = "test_grammar",

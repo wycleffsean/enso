@@ -12,6 +12,7 @@ pub const Object = union(enum) {
     int: ObjectInt,
     float: ObjectFloat,
     complex: ObjectComplex,
+    array: []Object,
     string: String,
     symbol: Symbol, // symbols are just interned strings
     // callabe: Callable, // TODO: these are real objects that _have_ a callable
@@ -30,6 +31,7 @@ pub const Object = union(enum) {
             .complex => |cnum| try writer.print("({d}+{d}j)", .{ cnum.re, cnum.im }),
             // TODO - we have no reference to the pool so we can't retrieve the string
             .symbol => |sym| try writer.print("<<unprintable:{d}>>", .{sym}),
+            .array => |arr| try writer.print("{any}", .{arr}),
         }
     }
 };
@@ -55,6 +57,7 @@ pub inline fn dStr(comptime VMType: type, vm: *VMType, receiver: *const Object) 
         .int => |int| std.fmt.bufPrint(buffer[0..], "{d}", .{int}) catch unreachable,
         .float => |float| std.fmt.bufPrint(buffer[0..], "{d:19}", .{float}) catch unreachable,
         .complex => |cnum| std.fmt.bufPrint(buffer[0..], "({d}+{d}j)", .{ cnum.re, cnum.im }) catch unreachable,
+        .array => std.fmt.bufPrint(buffer[0..], "<<array>>", .{}) catch unreachable,
     };
 }
 
@@ -62,6 +65,7 @@ pub const None = Object{ .none = {} };
 pub const False = Object{ .bool = false };
 pub const True = Object{ .bool = true };
 pub const Symbol = intern.Index;
+pub const EmptyArray = Object{ .array = &[_]Object{} };
 
 pub fn stringToSymbol(string: []const u8, intern_pool: *intern.StringInternPool) !Object {
     return .{ .symbol = try intern_pool.put(string) };

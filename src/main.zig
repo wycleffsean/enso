@@ -75,7 +75,7 @@ fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
     intern_pool.* = intern.StringInternPool.init(arena_allocator);
     defer intern_pool.deinit();
 
-    var irgen = bytecode.IrGen.init(&arena, intern_pool, ast);
+    var irgen = bytecode.IrGen.init(arena_allocator, intern_pool, ast);
     const ir = try irgen.generate(arena_allocator);
 
     const stdout_writer = std.io.getStdOut().writer();
