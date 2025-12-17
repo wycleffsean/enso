@@ -29,7 +29,7 @@ Important macros:
    - [x] NamedExpr
    - [ ] BoolOp
    - [x] BinOp
-   - [ ] UnaryOp
+   - [x] UnaryOp
    - [ ] Lambda
    - [ ] IfExp
    - [ ] Dict

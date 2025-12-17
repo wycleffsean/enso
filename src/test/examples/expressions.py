@@ -14,3 +14,10 @@ x = 1 + 2 - 3 * 4 / 5 // 6 % 7 << 8 >> 9 ** 10
 c = a @ b
 # TODO: fix - the following fails parsing
 # c = a@b
+
+# unary operators
+
+positive = +1
+negative = -1
+logical_not = not 0
+bitwise_invert = ~16

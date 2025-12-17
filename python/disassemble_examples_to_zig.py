@@ -61,6 +61,8 @@ def argval_to_PyArgVal(val):
         return "object.None"
     elif isinstance(val, str):
         return 'object.Object{ .string = .{ .string = &[_]u8{' + as_hex_string(val) + '} } }'
+    elif isinstance(val, bool):
+        return 'object.Object{ .bool = ' + str(val).lower() + ' }'
     elif isinstance(val, int):
         return 'object.Object{ .int = ' + str(val) + ' }'
     elif isinstance(val, float):

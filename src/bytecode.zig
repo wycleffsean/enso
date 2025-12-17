@@ -28,11 +28,18 @@ const BinaryOperation = enum {
     mat_mult,
 };
 
+const CallIntrinsic1Kind = enum {
+    unary_positive,
+};
+
 pub const Insn = union(OpCode) {
     pop_top: void,
     push_null: void,
     end_for: void,
     nop: void,
+    unary_negative: void,
+    unary_not: void,
+    unary_invert: void,
     store_subscr: void,
     get_iter: void,
     load_build_class: void,
@@ -57,7 +64,7 @@ pub const Insn = union(OpCode) {
     @"resume": usize,
     list_extend: void,
     call: usize,
-    call_intrinsic_1: void,
+    call_intrinsic_1: CallIntrinsic1Kind,
 
     const Self = @This();
 
@@ -196,13 +203,21 @@ pub const IrGen = struct {
             },
             .string_literal => |string| try insns.append(.{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) }),
             // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
-            // .sum => break :blk Insn{ .sum = {} },
-            // .product => break :blk Insn{ .product = {} },
             // .division => break :blk Insn{ .division = {} },
             // .group => break :blk try self.generateInsn(ast_node.group.value),
             // .block_end => {
             // .assignment => break :blk Insn{ .assign = {} },
             // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
+            .unary_op => |op_node| {
+                try self.generateInsns(op_node.value, insns);
+                const op: Insn = switch (op_node.kind) {
+                    .positive => .{ .call_intrinsic_1 = .unary_positive },
+                    .negative => .{ .unary_negative = {} },
+                    .logical_not => .{ .unary_not = {} },
+                    .bitwise_not => .{ .unary_invert = {} },
+                };
+                try insns.append(op);
+            },
             .add => |*op| try self.generateBinaryOp(.add, op, insns),
             .sub => |*op| try self.generateBinaryOp(.sub, op, insns),
             .mult => |*op| try self.generateBinaryOp(.mult, op, insns),

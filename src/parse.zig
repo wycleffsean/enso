@@ -15,6 +15,7 @@ const AstNodeTag = enum {
     integer,
     float,
     complex,
+    unary_op,
     add,
     sub,
     mult,
@@ -44,6 +45,13 @@ const AstNodeTag = enum {
     import,
 };
 
+const UnaryOpKind = enum {
+    positive,
+    negative,
+    logical_not,
+    bitwise_not,
+};
+const UnaryOp = struct { value: *const AstNode, kind: UnaryOpKind };
 pub const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
 const List = std.ArrayList(*const AstNode);
 const Statement = List;
@@ -83,6 +91,8 @@ pub const AstNode = union(AstNodeTag) {
     integer: struct { value: ObjectInt },
     float: struct { value: ObjectFloat },
     complex: struct { real: ObjectFloat, imaginary: ObjectFloat },
+    unary_op: UnaryOp,
+    // TODO: these really only have to be a single binary_op tag
     add: BinaryOp,
     sub: BinaryOp,
     mult: BinaryOp,
@@ -184,7 +194,7 @@ pub const Parser = struct {
         .{ .integer, .lowest, parseInteger, leftDenotationUnhandled },
         .{ .float, .lowest, parseFloat, leftDenotationUnhandled },
         .{ .imaginary, .lowest, parseImaginary, leftDenotationUnhandled },
-        .{ .plus, .sum, nullDenotationUnhandled, parseBinaryOp },
+        .{ .plus, .sum, parseUnaryOp, parseBinaryOp },
         .{ .asterisk, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .double_asterisk, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .solidus, .product, nullDenotationUnhandled, parseBinaryOp },
@@ -200,7 +210,7 @@ pub const Parser = struct {
         .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .comma, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .pipe, .lowest, nullDenotationUnhandled, parseBinaryOp },
-        .{ .minus, .prefix, parseNegativeNumber, parseBinaryOp },
+        .{ .minus, .prefix, parseUnaryOp, parseBinaryOp },
         .{ .percent, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .labracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .rabracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -209,7 +219,7 @@ pub const Parser = struct {
         .{ .bang, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .ampersand, .lowest, nullDenotationUnhandled, parseBinaryOp },
         .{ .caret, .lowest, nullDenotationUnhandled, parseBinaryOp },
-        .{ .tilde, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .tilde, .lowest, parseUnaryOp, leftDenotationUnhandled },
         .{ .lsbracket, .lowest, parseArrayLiteral, leftDenotationUnhandled },
         .{ .rsbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .lcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -242,7 +252,7 @@ pub const Parser = struct {
         .{ .assert_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .del_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .global_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .not_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .not_kw, .lowest, parseUnaryOp, leftDenotationUnhandled },
         .{ .with_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .async_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .elif_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -393,23 +403,6 @@ pub const Parser = struct {
         return imaginary_node;
     }
 
-    fn parseNegativeNumber(self: *Self) Error!*AstNode {
-        _ = try self.take();
-        switch (self.peek().?) {
-            .integer => {
-                var int_node = try self.parseInteger();
-                int_node.integer.value = -int_node.integer.value;
-                return int_node;
-            },
-            .float => {
-                var float_node = try self.parseFloat();
-                float_node.float.value = -float_node.float.value;
-                return float_node;
-            },
-            else => return Error.UnexpectedToken,
-        }
-    }
-
     fn parseStringLiteral(self: *Self) Error!*AstNode {
         if (self.expect(.string)) {
             const string_token = try self.take();
@@ -419,6 +412,28 @@ pub const Parser = struct {
         } else {
             return Error.UnexpectedToken;
         }
+    }
+    fn parseUnaryOp(self: *Self) Error!*AstNode {
+        const op_token = try self.take(); // skip sum token
+        const rhs = try self.parseExpression(.sum);
+        const node = try self.allocator.create(AstNode);
+        node.* = .{ .unary_op = .{ .value = rhs, .kind = .positive } };
+        switch (op_token) {
+            .plus => {
+                node.unary_op.kind = .positive;
+            },
+            .minus => {
+                node.unary_op.kind = .negative;
+            },
+            .tilde => {
+                node.unary_op.kind = .bitwise_not;
+            },
+            .not_kw => {
+                node.unary_op.kind = .logical_not;
+            },
+            else => return Error.UnexpectedToken,
+        }
+        return node;
     }
 
     fn parseBinaryOp(self: *Self, lhs: *AstNode) Error!*AstNode {
