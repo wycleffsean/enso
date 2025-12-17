@@ -49,6 +49,7 @@ pub const TokenTag = enum {
     less,
     greater,
     assign,
+    walrus,
     bang,
     ampersand,
     caret,
@@ -128,6 +129,7 @@ pub const Token = union(TokenTag) {
     less: Bare,
     greater: Bare,
     assign: Bare,
+    walrus: Bare,
     bang: Bare,
     ampersand: Bare,
     caret: Bare,
@@ -196,6 +198,7 @@ pub const Token = union(TokenTag) {
             .less => self.less.loc,
             .greater => self.greater.loc,
             .assign => self.assign.loc,
+            .walrus => self.walrus.loc,
             .bang => self.bang.loc,
             .ampersand => self.ampersand.loc,
             .caret => self.caret.loc,
@@ -470,7 +473,15 @@ pub const Lexer = struct {
             '(' => return Token{ .lparen = self.bare() },
             ')' => return Token{ .rparen = self.bare() },
             '.' => return Token{ .dot = self.bare() },
-            ':' => return Token{ .colon = self.bare() },
+            ':' => {
+                if (self.peek()) |val| {
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .walrus = self.bare() };
+                    }
+                }
+                return Token{ .colon = self.bare() };
+            },
             ',' => return Token{ .comma = self.bare() },
             '|' => return Token{ .pipe = self.bare() },
             '+' => return Token{ .plus = self.bare() },
@@ -661,26 +672,29 @@ test "lex: parens" {
 }
 
 test "lex: operators" {
-    var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|%&^~" };
-    try testing.expectEqual(lex.next(), Token{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } });
-    try testing.expectEqual(lex.next(), Token{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } });
-    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .line = 1, .col = 3 } } });
-    try testing.expectEqual(lex.next(), Token{ .minus = .{ .loc = .{ .line = 1, .col = 4 } } });
-    try testing.expectEqual(lex.next(), Token{ .asterisk = .{ .loc = .{ .line = 1, .col = 5 } } });
-    try testing.expectEqual(lex.next(), Token{ .solidus = .{ .loc = .{ .line = 1, .col = 6 } } });
-    try testing.expectEqual(lex.next(), Token{ .less = .{ .loc = .{ .line = 1, .col = 7 } } });
-    try testing.expectEqual(lex.next(), Token{ .greater = .{ .loc = .{ .line = 1, .col = 8 } } });
-    try testing.expectEqual(lex.next(), Token{ .assign = .{ .loc = .{ .line = 1, .col = 9 } } });
-    try testing.expectEqual(lex.next(), Token{ .bang = .{ .loc = .{ .line = 1, .col = 10 } } });
-    try testing.expectEqual(lex.next(), Token{ .lsbracket = .{ .loc = .{ .line = 1, .col = 11 } } });
-    try testing.expectEqual(lex.next(), Token{ .rsbracket = .{ .loc = .{ .line = 1, .col = 12 } } });
-    try testing.expectEqual(lex.next(), Token{ .lcbracket = .{ .loc = .{ .line = 1, .col = 13 } } });
-    try testing.expectEqual(lex.next(), Token{ .rcbracket = .{ .loc = .{ .line = 1, .col = 14 } } });
-    try testing.expectEqual(lex.next(), Token{ .pipe = .{ .loc = .{ .line = 1, .col = 15 } } });
-    try testing.expectEqual(lex.next(), Token{ .percent = .{ .loc = .{ .line = 1, .col = 16 } } });
-    try testing.expectEqual(lex.next(), Token{ .ampersand = .{ .loc = .{ .line = 1, .col = 17 } } });
-    try testing.expectEqual(lex.next(), Token{ .caret = .{ .loc = .{ .line = 1, .col = 18 } } });
-    try testing.expectEqual(lex.next(), Token{ .tilde = .{ .loc = .{ .line = 1, .col = 19 } } });
+    var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|%&^~:=" };
+    try testing.expectEqual(Token{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } }, lex.next());
+    try testing.expectEqual(Token{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } }, lex.next());
+    try testing.expectEqual(Token{ .plus = .{ .loc = .{ .line = 1, .col = 3 } } }, lex.next());
+    try testing.expectEqual(Token{ .minus = .{ .loc = .{ .line = 1, .col = 4 } } }, lex.next());
+    try testing.expectEqual(Token{ .asterisk = .{ .loc = .{ .line = 1, .col = 5 } } }, lex.next());
+    try testing.expectEqual(Token{ .solidus = .{ .loc = .{ .line = 1, .col = 6 } } }, lex.next());
+    try testing.expectEqual(Token{ .less = .{ .loc = .{ .line = 1, .col = 7 } } }, lex.next());
+    try testing.expectEqual(Token{ .greater = .{ .loc = .{ .line = 1, .col = 8 } } }, lex.next());
+    try testing.expectEqual(Token{ .assign = .{ .loc = .{ .line = 1, .col = 9 } } }, lex.next());
+    try testing.expectEqual(Token{ .bang = .{ .loc = .{ .line = 1, .col = 10 } } }, lex.next());
+    try testing.expectEqual(Token{ .lsbracket = .{ .loc = .{ .line = 1, .col = 11 } } }, lex.next());
+    try testing.expectEqual(Token{ .rsbracket = .{ .loc = .{ .line = 1, .col = 12 } } }, lex.next());
+    try testing.expectEqual(Token{ .lcbracket = .{ .loc = .{ .line = 1, .col = 13 } } }, lex.next());
+    try testing.expectEqual(Token{ .rcbracket = .{ .loc = .{ .line = 1, .col = 14 } } }, lex.next());
+    try testing.expectEqual(Token{ .pipe = .{ .loc = .{ .line = 1, .col = 15 } } }, lex.next());
+    try testing.expectEqual(Token{ .percent = .{ .loc = .{ .line = 1, .col = 16 } } }, lex.next());
+    try testing.expectEqual(Token{ .ampersand = .{ .loc = .{ .line = 1, .col = 17 } } }, lex.next());
+    try testing.expectEqual(Token{ .caret = .{ .loc = .{ .line = 1, .col = 18 } } }, lex.next());
+    try testing.expectEqual(Token{ .tilde = .{ .loc = .{ .line = 1, .col = 19 } } }, lex.next());
+    // TODO: fix location of walrus - the col count is the last character but should be the first
+    try testing.expectEqual(Token{ .walrus = .{ .loc = .{ .line = 1, .col = 21 } } }, lex.next());
+    try testing.expectEqual(Token{ .eof = .{ .loc = .{ .line = 1, .col = 21 } } }, lex.next());
 }
 
 test "lex: whitespace ignored" {

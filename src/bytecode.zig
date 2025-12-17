@@ -34,6 +34,7 @@ pub const Insn = union(OpCode) {
     import_name: void,
     import_from: void,
     pop_jump_if_false: void,
+    copy: void,
     return_const: void,
     make_function: void,
     jump_backward: RelativeJump,
@@ -57,6 +58,7 @@ pub const Insn = union(OpCode) {
             .return_const => .{ .return_value = {} },
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
+            .copy => .{ .copy = {} },
             .setup_annotations => .{ .setup_annotations = obj.void },
             .store_name => .{ .store_name = obj },
             // TODO...
@@ -130,6 +132,9 @@ pub const IrGen = struct {
                 try self.buildStack(node.rhs, block);
                 try self.stack.append(.{ .ast_node = ast });
             },
+            .named_expression => {
+                try self.stack.append(.{ .ast_node = ast });
+            },
             .group => |group| {
                 try self.buildStack(group.value, block);
             },
@@ -161,7 +166,12 @@ pub const IrGen = struct {
         switch (ast_node.*) {
             // .root => break :blk Insn{ .@"resume" = 0 },
             // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
-            .name => |name| try insns.append(.{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) }),
+            .name => |name| {
+                switch (name.context) {
+                    .Load => try insns.append(.{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) }),
+                    .Store => try insns.append(.{ .store_name = try object.stringToSymbol(name.value, self.intern_pool) }),
+                }
+            },
             .string_literal => |string| try insns.append(.{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) }),
             // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
             // .sum => break :blk Insn{ .sum = {} },
@@ -189,6 +199,11 @@ pub const IrGen = struct {
             .pass => {}, // surprisingly not a nop
             .assignment => |assignment| {
                 try self.generateInsns(assignment.rhs, insns);
+            },
+            .named_expression => |named_expression| {
+                try self.generateInsns(named_expression.rhs, insns);
+                try insns.append(.{ .copy = {} });
+                try self.generateInsns(named_expression.lhs, insns);
             },
             .for_in => |for_in| {
                 // push the iterable onto the stack

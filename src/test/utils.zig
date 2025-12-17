@@ -41,6 +41,10 @@ pub const examples = [_]Example{
         .name = "examples_hello_world",
     },
     .{
+        .name = "examples_expressions",
+        .test_vm = false,
+    },
+    .{
         .name = "examples_builtin_functions",
         .test_bytecode = false,
         .test_vm = false,

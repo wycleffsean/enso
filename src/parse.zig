@@ -23,6 +23,7 @@ const AstNodeTag = enum {
     var_decl,
     fn_decl,
     assignment,
+    named_expression,
     call,
     field_access,
     array_literal,
@@ -64,6 +65,7 @@ const ImportDefinition = struct {
 };
 
 const ImportExpression = std.ArrayList(ImportDefinition);
+const ExpressionContext = enum { Load, Store };
 
 pub const AstNode = union(AstNodeTag) {
     root: []*const AstNode,
@@ -75,10 +77,11 @@ pub const AstNode = union(AstNodeTag) {
     product: BinaryOp,
     division: BinaryOp,
     group: struct { value: *const AstNode },
-    name: struct { value: []const u8 },
+    name: struct { value: []const u8, context: ExpressionContext },
     var_decl: struct { name: []const u8 },
     fn_decl: struct { name: []const u8, suite: Statement },
     assignment: BinaryOp,
+    named_expression: BinaryOp,
     call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
     field_access: BinaryOp,
     array_literal: Statement,
@@ -167,6 +170,7 @@ pub const Parser = struct {
         .{ .rparen, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .name, .lowest, parseName, leftDenotationUnhandled },
         .{ .assign, .equality, nullDenotationUnhandled, parseAssignment },
+        .{ .walrus, .equality, nullDenotationUnhandled, parseNamedExpression },
         .{ .lparen, .call, parseGroup, parseFunctionCall },
         .{ .decorator, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .string, .lowest, parseStringLiteral, leftDenotationUnhandled },
@@ -476,17 +480,40 @@ pub const Parser = struct {
         const name_token = try self.take();
         assert(name_token == .name);
         const name_node = try self.allocator.create(AstNode);
-        name_node.* = .{ .name = .{ .value = name_token.name.value } };
+        name_node.* = .{ .name = .{ .value = name_token.name.value, .context = .Load } };
         return name_node;
+    }
+
+    // TODO: This is a lame way of doing this.  In most cases we want LOAD_OP over STORE_OP.  We know
+    // STORE happens during assignment, but of course the left-hand-side of the parse has already passed
+    // us by - so we scan the lhs for name nodes and overwrite it to STORE
+    inline fn castExpressionContext(ast: *AstNode, context: ExpressionContext) void {
+        switch (ast.*) {
+            .name => |*name| {
+                name.context = context;
+            },
+            else => {},
+        }
     }
 
     fn parseAssignment(self: *Self, lhs: *AstNode) Error!*AstNode {
         const assign_token = try self.take(); // skip assign token
         assert(assign_token == .assign);
+        castExpressionContext(lhs, .Store);
         const rhs = try self.parseExpression(.equality);
         const assignment_node = try self.allocator.create(AstNode);
         assignment_node.* = .{ .assignment = .{ .lhs = lhs, .rhs = rhs } };
         return assignment_node;
+    }
+
+    fn parseNamedExpression(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const walrus_token = try self.take(); // skip walrus token
+        assert(walrus_token == .walrus);
+        castExpressionContext(lhs, .Store);
+        const rhs = try self.parseExpression(.equality);
+        const named_expression_node = try self.allocator.create(AstNode);
+        named_expression_node.* = .{ .named_expression = .{ .lhs = lhs, .rhs = rhs } };
+        return named_expression_node;
     }
 
     // a "suite" is the block following the colon in compound statements

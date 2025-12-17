@@ -26,7 +26,7 @@ Important macros:
  - [ ] `compiler_from_import`
  - [ ] `compiler_stmt_expr`...`compiler_visit_expr1`
    - See every branch in the switch statement contained in `compiler_visit_expr1`
-   - [ ] NamedExpr
+   - [x] NamedExpr
    - [ ] BoolOp
    - [ ] BinOp
    - [ ] UnaryOp

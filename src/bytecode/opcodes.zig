@@ -19,6 +19,7 @@ pub const OpCode = enum(u8) {
     import_name = 108,
     import_from = 109,
     pop_jump_if_false = 114,
+    copy = 120,
     return_const = 121,
     make_function = 132,
     jump_backward = 140,
