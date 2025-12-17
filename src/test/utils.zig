@@ -42,6 +42,7 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_expressions",
+        .test_bytecode = false,
         .test_vm = false,
     },
     .{

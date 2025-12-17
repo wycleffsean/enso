@@ -21,6 +21,7 @@ pub const OpCode = enum(u8) {
     pop_jump_if_false = 114,
     copy = 120,
     return_const = 121,
+    binary_op = 122,
     make_function = 132,
     jump_backward = 140,
     @"resume" = 151,

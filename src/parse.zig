@@ -15,9 +15,19 @@ const AstNodeTag = enum {
     integer,
     float,
     complex,
-    sum,
-    product,
-    division,
+    add,
+    sub,
+    mult,
+    mat_mult,
+    div,
+    mod,
+    pow,
+    lshift,
+    rshift,
+    bit_or,
+    bit_xor,
+    bit_and,
+    floor_div,
     group,
     name,
     var_decl,
@@ -34,7 +44,7 @@ const AstNodeTag = enum {
     import,
 };
 
-const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
+pub const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
 const List = std.ArrayList(*const AstNode);
 const Statement = List;
 const ClassDefinition = struct {
@@ -73,9 +83,19 @@ pub const AstNode = union(AstNodeTag) {
     integer: struct { value: ObjectInt },
     float: struct { value: ObjectFloat },
     complex: struct { real: ObjectFloat, imaginary: ObjectFloat },
-    sum: BinaryOp,
-    product: BinaryOp,
-    division: BinaryOp,
+    add: BinaryOp,
+    sub: BinaryOp,
+    mult: BinaryOp,
+    mat_mult: BinaryOp,
+    div: BinaryOp,
+    mod: BinaryOp,
+    pow: BinaryOp,
+    lshift: BinaryOp,
+    rshift: BinaryOp,
+    bit_or: BinaryOp,
+    bit_xor: BinaryOp,
+    bit_and: BinaryOp,
+    floor_div: BinaryOp,
     group: struct { value: *const AstNode },
     name: struct { value: []const u8, context: ExpressionContext },
     var_decl: struct { name: []const u8 },
@@ -164,27 +184,31 @@ pub const Parser = struct {
         .{ .integer, .lowest, parseInteger, leftDenotationUnhandled },
         .{ .float, .lowest, parseFloat, leftDenotationUnhandled },
         .{ .imaginary, .lowest, parseImaginary, leftDenotationUnhandled },
-        .{ .plus, .sum, nullDenotationUnhandled, parseSum },
-        .{ .asterisk, .product, nullDenotationUnhandled, parseProduct },
-        .{ .solidus, .product, nullDenotationUnhandled, parseDivision },
+        .{ .plus, .sum, nullDenotationUnhandled, parseBinaryOp },
+        .{ .asterisk, .product, nullDenotationUnhandled, parseBinaryOp },
+        .{ .double_asterisk, .product, nullDenotationUnhandled, parseBinaryOp },
+        .{ .solidus, .product, nullDenotationUnhandled, parseBinaryOp },
+        .{ .double_solidus, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .rparen, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .name, .lowest, parseName, leftDenotationUnhandled },
         .{ .assign, .equality, nullDenotationUnhandled, parseAssignment },
         .{ .walrus, .equality, nullDenotationUnhandled, parseNamedExpression },
         .{ .lparen, .call, parseGroup, parseFunctionCall },
-        .{ .decorator, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .at, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .string, .lowest, parseStringLiteral, leftDenotationUnhandled },
         .{ .dot, .call, nullDenotationUnhandled, parseFieldAccess },
         .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .comma, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .pipe, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .minus, .prefix, parseNegativeNumber, leftDenotationUnhandled },
-        .{ .percent, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .less, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .greater, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .pipe, .lowest, nullDenotationUnhandled, parseBinaryOp },
+        .{ .minus, .prefix, parseNegativeNumber, parseBinaryOp },
+        .{ .percent, .product, nullDenotationUnhandled, parseBinaryOp },
+        .{ .labracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .rabracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .double_labracket, .product, nullDenotationUnhandled, parseBinaryOp },
+        .{ .double_rabracket, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .bang, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .ampersand, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .caret, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .ampersand, .lowest, nullDenotationUnhandled, parseBinaryOp },
+        .{ .caret, .lowest, nullDenotationUnhandled, parseBinaryOp },
         .{ .tilde, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .lsbracket, .lowest, parseArrayLiteral, leftDenotationUnhandled },
         .{ .rsbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -397,35 +421,89 @@ pub const Parser = struct {
         }
     }
 
-    fn parseSum(self: *Self, lhs: *AstNode) Error!*AstNode {
-        const sum_token = try self.take(); // skip sum token
-        switch (sum_token) {
+    fn parseBinaryOp(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const op_token = try self.take(); // skip sum token
+        switch (op_token) {
             .plus => {
                 const rhs = try self.parseExpression(.sum);
-                const sum_node = try self.allocator.create(AstNode);
-                sum_node.* = .{ .sum = .{ .lhs = lhs, .rhs = rhs } };
-                return sum_node;
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .add = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .minus => {
+                const rhs = try self.parseExpression(.sum);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .sub = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .asterisk => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .mult = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .solidus => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .div = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .double_solidus => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .floor_div = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .percent => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .mod = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .double_asterisk => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .pow = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .double_labracket => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .lshift = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .double_rabracket => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .rshift = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .pipe => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .bit_or = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .caret => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .bit_xor = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .ampersand => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .bit_and = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
+            },
+            .at => {
+                const rhs = try self.parseExpression(.product);
+                const node = try self.allocator.create(AstNode);
+                node.* = .{ .mat_mult = .{ .lhs = lhs, .rhs = rhs } };
+                return node;
             },
             else => return Error.UnexpectedToken,
         }
-    }
-
-    fn parseProduct(self: *Self, lhs: *AstNode) Error!*AstNode {
-        const product_token = try self.take(); // skip asterisk token
-        assert(product_token == .asterisk);
-        const rhs = try self.parseExpression(.product);
-        const sum_node = try self.allocator.create(AstNode);
-        sum_node.* = .{ .product = .{ .lhs = lhs, .rhs = rhs } };
-        return sum_node;
-    }
-
-    fn parseDivision(self: *Self, lhs: *AstNode) Error!*AstNode {
-        const solidus_token = try self.take(); // skip solidus token
-        assert(solidus_token == .solidus);
-        const rhs = try self.parseExpression(.product);
-        const sum_node = try self.allocator.create(AstNode);
-        sum_node.* = .{ .division = .{ .lhs = lhs, .rhs = rhs } };
-        return sum_node;
     }
 
     fn parseGroup(self: *Self) Error!*AstNode {
@@ -693,11 +771,11 @@ test "parse: infix sum" {
 
     var parser = Parser.init(allocator, "1 + 2");
     const result = try parser.parseSimpleExpression();
-    try testing.expect(result.* == AstNode.sum);
-    try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
-    try testing.expect(result.sum.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.sum.rhs.integer.value);
+    try testing.expect(result.* == AstNode.add);
+    try testing.expect(result.add.lhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.add.lhs.integer.value);
+    try testing.expect(result.add.rhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.add.rhs.integer.value);
 }
 
 test "parse: infix product" {
@@ -707,14 +785,14 @@ test "parse: infix product" {
 
     var parser = Parser.init(allocator, "1 + 2 * 3");
     const result = try parser.parseSimpleExpression();
-    try testing.expect(result.* == AstNode.sum);
-    try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
-    try testing.expect(result.sum.rhs.* == AstNode.product);
-    try testing.expect(result.sum.rhs.product.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.sum.rhs.product.lhs.integer.value);
-    try testing.expect(result.sum.rhs.product.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.sum.rhs.product.rhs.integer.value);
+    try testing.expect(result.* == AstNode.add);
+    try testing.expect(result.add.lhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.add.lhs.integer.value);
+    try testing.expect(result.add.rhs.* == AstNode.mult);
+    try testing.expect(result.add.rhs.mult.lhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.add.rhs.mult.lhs.integer.value);
+    try testing.expect(result.add.rhs.mult.rhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.add.rhs.mult.rhs.integer.value);
 }
 
 test "parse: infix division" {
@@ -724,14 +802,14 @@ test "parse: infix division" {
 
     var parser = Parser.init(allocator, "1 + 2 / 3");
     const result = try parser.parseSimpleExpression();
-    try testing.expect(result.* == AstNode.sum);
-    try testing.expect(result.sum.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
-    try testing.expect(result.sum.rhs.* == AstNode.division);
-    try testing.expect(result.sum.rhs.division.lhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.sum.rhs.division.lhs.integer.value);
-    try testing.expect(result.sum.rhs.division.rhs.* == AstNode.integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.sum.rhs.division.rhs.integer.value);
+    try testing.expect(result.* == AstNode.add);
+    try testing.expect(result.add.lhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.add.lhs.integer.value);
+    try testing.expect(result.add.rhs.* == AstNode.div);
+    try testing.expect(result.add.rhs.div.lhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.add.rhs.div.lhs.integer.value);
+    try testing.expect(result.add.rhs.div.rhs.* == AstNode.integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.add.rhs.div.rhs.integer.value);
 }
 
 test "parse: group" {
@@ -742,15 +820,15 @@ test "parse: group" {
     var parser = Parser.init(allocator, "(1 + 2) / 3");
     const result = try parser.parseSimpleExpression();
 
-    try testing.expect(result.* == .division);
-    try testing.expect(result.division.lhs.* == .group);
-    try testing.expect(result.division.lhs.group.value.* == .sum);
-    try testing.expect(result.division.lhs.group.value.sum.lhs.* == .integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.division.lhs.group.value.sum.lhs.integer.value);
-    try testing.expect(result.division.lhs.group.value.sum.rhs.* == .integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.division.lhs.group.value.sum.rhs.integer.value);
-    try testing.expect(result.division.rhs.* == .integer);
-    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.division.rhs.integer.value);
+    try testing.expect(result.* == .div);
+    try testing.expect(result.div.lhs.* == .group);
+    try testing.expect(result.div.lhs.group.value.* == .add);
+    try testing.expect(result.div.lhs.group.value.add.lhs.* == .integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.div.lhs.group.value.add.lhs.integer.value);
+    try testing.expect(result.div.lhs.group.value.add.rhs.* == .integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(2)), result.div.lhs.group.value.add.rhs.integer.value);
+    try testing.expect(result.div.rhs.* == .integer);
+    try testing.expectEqual(@as(ObjectInt, @intCast(3)), result.div.rhs.integer.value);
 }
 
 // Test Assignment
@@ -850,7 +928,7 @@ test "parse: declare function" {
     const expr1 = result.fn_decl.suite.items[0];
     try testing.expect(expr1.* == AstNode.assignment);
     const expr2 = result.fn_decl.suite.items[1];
-    try testing.expect(expr2.* == AstNode.product);
+    try testing.expect(expr2.* == AstNode.mult);
 }
 
 test "parse: call function" {

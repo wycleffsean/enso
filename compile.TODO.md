@@ -28,7 +28,7 @@ Important macros:
    - See every branch in the switch statement contained in `compiler_visit_expr1`
    - [x] NamedExpr
    - [ ] BoolOp
-   - [ ] BinOp
+   - [x] BinOp
    - [ ] UnaryOp
    - [ ] Lambda
    - [ ] IfExp

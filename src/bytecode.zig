@@ -12,6 +12,21 @@ const testing = std.testing;
 const comptimePrint = std.fmt.comptimePrint;
 
 const RelativeJump = struct { delta: object.ObjectInt };
+const BinaryOperation = enum {
+    add,
+    sub,
+    mult,
+    div,
+    floor_div,
+    mod,
+    pow,
+    lshift,
+    rshift,
+    bit_or,
+    bit_xor,
+    bit_and,
+    mat_mult,
+};
 
 pub const Insn = union(OpCode) {
     pop_top: void,
@@ -36,6 +51,7 @@ pub const Insn = union(OpCode) {
     pop_jump_if_false: void,
     copy: void,
     return_const: void,
+    binary_op: BinaryOperation,
     make_function: void,
     jump_backward: RelativeJump,
     @"resume": usize,
@@ -126,10 +142,10 @@ pub const IrGen = struct {
                 }
                 try self.stack.append(.{ .block_end = Block{ .parent = block } });
             },
-            .sum, .product, .division, .assignment => |node| {
+            .add, .sub, .mult, .div, .floor_div, .mod, .pow, .lshift, .rshift, .bit_or, .bit_xor, .bit_and, .mat_mult, .assignment => {
                 // @call(.{ .always_tail }, buildStack, .{self, ast
-                try self.buildStack(node.lhs, block);
-                try self.buildStack(node.rhs, block);
+                // try self.buildStack(node.lhs, block);
+                // try self.buildStack(node.rhs, block);
                 try self.stack.append(.{ .ast_node = ast });
             },
             .named_expression => {
@@ -162,6 +178,12 @@ pub const IrGen = struct {
         }
     }
 
+    fn generateBinaryOp(self: *Self, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
+        try self.generateInsns(binary_op.lhs, insns);
+        try self.generateInsns(binary_op.rhs, insns);
+        try insns.append(.{ .binary_op = kind });
+    }
+
     fn generateInsns(self: *Self, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
         switch (ast_node.*) {
             // .root => break :blk Insn{ .@"resume" = 0 },
@@ -181,6 +203,19 @@ pub const IrGen = struct {
             // .block_end => {
             // .assignment => break :blk Insn{ .assign = {} },
             // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
+            .add => |*op| try self.generateBinaryOp(.add, op, insns),
+            .sub => |*op| try self.generateBinaryOp(.sub, op, insns),
+            .mult => |*op| try self.generateBinaryOp(.mult, op, insns),
+            .div => |*op| try self.generateBinaryOp(.div, op, insns),
+            .floor_div => |*op| try self.generateBinaryOp(.floor_div, op, insns),
+            .mod => |*op| try self.generateBinaryOp(.mod, op, insns),
+            .pow => |*op| try self.generateBinaryOp(.pow, op, insns),
+            .lshift => |*op| try self.generateBinaryOp(.lshift, op, insns),
+            .rshift => |*op| try self.generateBinaryOp(.rshift, op, insns),
+            .bit_or => |*op| try self.generateBinaryOp(.bit_or, op, insns),
+            .bit_xor => |*op| try self.generateBinaryOp(.bit_xor, op, insns),
+            .bit_and => |*op| try self.generateBinaryOp(.bit_and, op, insns),
+            .mat_mult => |*op| try self.generateBinaryOp(.mat_mult, op, insns),
             .call => |call| {
                 const len = call.args.items.len;
                 try insns.append(.{ .push_null = {} }); // TODO: eventually we'll need to push receiver here
