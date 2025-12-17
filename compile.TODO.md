@@ -1,0 +1,61 @@
+Important macros:
+  - `VISIT(c, TYPE, value)`
+    - this will invoke a function called `compiler_visit_TYPE` e.g. `compiler_visit_expr`
+    - it passes in the compiler/value and wraps the result in an error handler
+  - `ADDOP` - add an opcode with no arguments
+  - `ADDOP_I` - add an opcode with an integer argument
+  - `ADDOP_BINARY` - https://docs.python.org/3/library/dis.html#opcode-BINARY_OP
+
+- [ ] `compiler_visit_stmt`
+ - [ ] `compiler_func`
+ - [ ] `compiler_class`
+ - [ ] `compiler_typealias`
+ - [ ] `compiler_return`
+ - compile.c#3951 - Assign_kind
+ - [ ] `compiler_augassign`
+ - [ ] `compiler_annasign`
+ - [ ] `compiler_for`
+ - [ ] `compiler_while`
+ - [ ] `compiler_if`
+ - [ ] `compiler_match`
+ - compile.c#3976 - Raise_kind
+ - [ ] `compiler_try`
+ - [ ] `compiler_try_star`
+ - [ ] `compiler_assert`
+ - [ ] `compiler_import`
+ - [ ] `compiler_from_import`
+ - [ ] `compiler_stmt_expr`...`compiler_visit_expr1`
+   - See every branch in the switch statement contained in `compiler_visit_expr1`
+   - [ ] NamedExpr
+   - [ ] BoolOp
+   - [ ] BinOp
+   - [ ] UnaryOp
+   - [ ] Lambda
+   - [ ] IfExp
+   - [ ] Dict
+   - [ ] Set
+   - [ ] Generator
+   - [ ] ListComp
+   - [ ] DictComp
+   - [ ] Yield
+   - [ ] YieldFrom
+   - [ ] Await
+   - [ ] Compare
+   - [ ] Call
+   - [ ] Constant
+   - [ ] JoinedStr
+   - [ ] FormattedValue
+   - [ ] Attribute
+   - [ ] Subscript
+   - [ ] Starred
+   - [ ] Slice
+   - [ ] Name
+   - [ ] List
+   - [ ] Tuple
+ - compile.c#4007 - Pass_kind
+ - [ ] `compiler_break`
+ - [ ] `compiler_continue`
+ - [ ] `compiler_with`
+ - [ ] `compiler_function` - AsyncFunctionDef_kind
+ - [ ] `compiler_async_with`
+ - [ ] `compiler_async_for`

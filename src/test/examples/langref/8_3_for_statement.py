@@ -5,9 +5,9 @@ for i in []:
 
 for i in []:
 	print(i)
-# 	i = 5
+	# i = 5
 # else:
-# 	print(4)
+# 	print(None)
 
 # TODO: range() builtin
 # for i in range(3):

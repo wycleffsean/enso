@@ -79,7 +79,7 @@ pub const AstNode = union(AstNodeTag) {
     var_decl: struct { name: []const u8 },
     fn_decl: struct { name: []const u8, suite: Statement },
     assignment: BinaryOp,
-    call: struct { ref: *const AstNode, args: List },
+    call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
     field_access: BinaryOp,
     array_literal: Statement,
     target_list: List,
@@ -112,19 +112,33 @@ pub const Parser = struct {
 
     pub fn parse(self: *Self) Error!*const AstNode {
         const root = try self.allocator.create(AstNode);
-        var list = std.ArrayList(*const AstNode).init(self.allocator);
+        // const statement = try self.parseStatement();
+        var statement = std.ArrayList(*const AstNode).init(self.allocator);
         while (self.peek()) |token| {
             _ = token;
-            try list.append(try self.parseExpression(.lowest));
+            try statement.append(try self.parseExpression(.lowest));
         }
-        root.* = AstNode{ .root = try list.toOwnedSlice() };
+        root.* = AstNode{ .root = try statement.toOwnedSlice() };
         return root;
     }
 
-    pub fn parseStatement(self: *Self) Error!*const AstNode {
-        const node = try self.parseExpression(.lowest);
-        return node;
+    fn parseStatementWithIndent(self: *Self, owner_indent: lex.IndentLength) Error!Statement {
+        var statement = Statement.init(self.allocator);
+        while (self.peek()) |next_token| {
+            if (next_token.getLocation().indent <= owner_indent) break;
+            try statement.append(try self.parseExpression(.lowest));
+        }
+        return statement;
     }
+
+    // fn parseStatement(self: *Self) Error!*Statement {
+    //     var statement = Statement.init(self.allocator);
+    //     while (self.peek()) |token| {
+    //         _ = token;
+    //         try statement.append(try self.parseExpression(.lowest));
+    //     }
+    //     return &statement;
+    // }
 
     const Precedence = enum {
         lowest,
@@ -290,7 +304,23 @@ pub const Parser = struct {
             const infixFn = try leftDenotation(token);
             lhs = try infixFn(self, lhs);
         }
+
+        // this check is a little bit gross, but if the outermost bit of the expression
+        // is a function call then it means the return value of the call is discarded.
+        // This impacts bytecode generation and this is far easier than scanning or
+        // some other stateful solution
+        switch (lhs.*) {
+            .call => |*call| call.discard_return_value = true,
+            else => {},
+        }
+
         return lhs;
+    }
+
+    // simple utility for tests
+    fn parseSimpleExpression(self: *Self) Error!*const AstNode {
+        const node = try self.parseExpression(.lowest);
+        return node;
     }
 
     fn nullDenotationUnhandled(self: *Self) Error!*AstNode {
@@ -462,12 +492,7 @@ pub const Parser = struct {
     // a "suite" is the block following the colon in compound statements
     fn parseSuite(self: *Self, owner_indent: lex.IndentLength) Error!Statement {
         try self.expectAndSkip(.colon);
-        var statement = Statement.init(self.allocator);
-        while (self.peek()) |next_token| {
-            if (next_token.getLocation().indent <= owner_indent) break;
-            try statement.append(try self.parseStatement());
-        }
-        return statement;
+        return self.parseStatementWithIndent(owner_indent);
     }
 
     fn parseFunctionDefinition(self: *Self) Error!*AstNode {
@@ -640,7 +665,7 @@ test "parse: infix sum" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2");
-    const result = try parser.parseStatement();
+    const result = try parser.parseSimpleExpression();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
@@ -654,7 +679,7 @@ test "parse: infix product" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2 * 3");
-    const result = try parser.parseStatement();
+    const result = try parser.parseSimpleExpression();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
@@ -671,7 +696,7 @@ test "parse: infix division" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "1 + 2 / 3");
-    const result = try parser.parseStatement();
+    const result = try parser.parseSimpleExpression();
     try testing.expect(result.* == AstNode.sum);
     try testing.expect(result.sum.lhs.* == AstNode.integer);
     try testing.expectEqual(@as(ObjectInt, @intCast(1)), result.sum.lhs.integer.value);
@@ -688,7 +713,7 @@ test "parse: group" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "(1 + 2) / 3");
-    const result = try parser.parseStatement();
+    const result = try parser.parseSimpleExpression();
 
     try testing.expect(result.* == .division);
     try testing.expect(result.division.lhs.* == .group);
@@ -709,7 +734,7 @@ test "parse: assign" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "a = 1");
-    const result = try parser.parseStatement();
+    const result = try parser.parseSimpleExpression();
 
     try testing.expect(result.* == AstNode.assignment);
     try testing.expect(result.assignment.lhs.* == AstNode.name);
@@ -724,7 +749,7 @@ test "parse: string literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "\"yo\"");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
         try testing.expect(@as(AstNodeTag, result.*) == .string_literal);
         try testing.expectEqualStrings("yo", result.string_literal.value);
     }
@@ -733,7 +758,7 @@ test "parse: string literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "'''yo'''");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
         try testing.expect(@as(AstNodeTag, result.*) == .string_literal);
         try testing.expectEqualStrings("yo", result.string_literal.value);
     }
@@ -745,7 +770,7 @@ test "parse: array literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[]");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
         try testing.expect(result.array_literal.items.len == 0);
     }
     { // single element
@@ -753,7 +778,7 @@ test "parse: array literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1]");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
         try testing.expect(result.array_literal.items.len == 1);
     }
     { // trailing comma
@@ -761,7 +786,7 @@ test "parse: array literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,]");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
         try testing.expect(result.array_literal.items.len == 1);
     }
     { // Unclosed
@@ -769,14 +794,14 @@ test "parse: array literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,");
-        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseStatement());
+        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression());
     }
     { // illegal trailing comma
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[,]");
-        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseStatement());
+        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression());
     }
 }
 
@@ -788,7 +813,7 @@ test "parse: declare function" {
     // you can thank zig 0.14.0 for this
     const fn_decl = "def myFunction():\n\ta = 1\n\ta * 3";
     var parser = Parser.init(allocator, fn_decl);
-    const result = try parser.parseStatement();
+    const result = try parser.parseSimpleExpression();
 
     try testing.expect(result.* == AstNode.fn_decl);
     try testing.expectEqualSlices(u8, "myFunction", result.fn_decl.name);
@@ -808,7 +833,7 @@ test "parse: call function" {
         defer arena.deinit();
 
         var parser = Parser.init(allocator, "myFunction()");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
 
         try testing.expect(result.* == AstNode.call);
         try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
@@ -820,7 +845,7 @@ test "parse: call function" {
         defer arena.deinit();
 
         var parser = Parser.init(allocator, "myFunction(1 + 1)");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
 
         try testing.expect(result.* == AstNode.call);
         try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
@@ -833,7 +858,7 @@ test "parse: call function" {
         defer arena.deinit();
 
         var parser = Parser.init(allocator, "myFunction(1, 1)");
-        const result = try parser.parseStatement();
+        const result = try parser.parseSimpleExpression();
 
         try testing.expect(result.* == AstNode.call);
         try testing.expectEqualSlices(u8, "myFunction", result.call.ref.name.value);
@@ -892,7 +917,7 @@ test "parse: access field" {
     defer arena.deinit();
 
     var parser = Parser.init(allocator, "foo.bar");
-    const result = try parser.parseStatement();
+    const result = try parser.parseSimpleExpression();
 
     try testing.expect(result.* == AstNode.field_access);
     try testing.expectEqualSlices(u8, "foo", result.field_access.lhs.name.value);

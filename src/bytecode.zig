@@ -179,12 +179,17 @@ pub const IrGen = struct {
                     try self.generateInsns(node, insns);
                 }
                 try insns.append(.{ .call = len });
+                // if (call.discard_return_value)
+                //     try insns.append(.{ .pop_top = {} });
             },
             .integer => |int| try insns.append(.{ .load_const = .{ .int = int.value } }),
             .float => |float| try insns.append(.{ .load_const = .{ .float = float.value } }),
             .complex => |cmp| try insns.append(.{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } }),
             .array_literal => try insns.append(.{ .load_const = object.EmptyArray }),
             .pass => {}, // surprisingly not a nop
+            .assignment => |assignment| {
+                try self.generateInsns(assignment.rhs, insns);
+            },
             .for_in => |for_in| {
                 // push the iterable onto the stack
                 try self.generateInsns(for_in.iterable, insns);

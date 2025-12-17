@@ -20,6 +20,7 @@
                   zig # 0.14.1
                   zls
                   python312
+                  python312Packages.lxml
               ];
 
               shellHook = ''
