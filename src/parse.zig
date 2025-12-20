@@ -34,7 +34,10 @@ const AstNodeTag = enum {
     group,
     name,
     var_decl,
+    parameter,
+    parameters,
     fn_decl,
+    lambda,
     assignment,
     named_expression,
     call,
@@ -91,6 +94,17 @@ const ImportDefinition = struct {
 
 const ImportExpression = std.ArrayList(ImportDefinition);
 const ExpressionContext = enum { Load, Store };
+const Parameter = struct {
+    identifier: *const AstNode,
+    annotation: ?*const AstNode,
+    default_value: ?*const AstNode,
+};
+const ParameterList = std.ArrayList(Parameter);
+const Parameters = struct {
+    arguments: ParameterList,
+    position_only_arguments: ParameterList,
+    keyword_only_arguments: ParameterList,
+};
 
 pub const AstNode = union(AstNodeTag) {
     root: []*const AstNode,
@@ -118,7 +132,10 @@ pub const AstNode = union(AstNodeTag) {
     group: struct { value: *const AstNode },
     name: struct { value: []const u8, context: ExpressionContext },
     var_decl: struct { name: []const u8 },
-    fn_decl: struct { name: []const u8, suite: Statement },
+    parameter: Parameter,
+    parameters: Parameters,
+    fn_decl: struct { name: []const u8, parameters: Parameters, suite: Statement },
+    lambda: struct { parameters: Parameters, body: *const AstNode },
     assignment: BinaryOp,
     named_expression: BinaryOp,
     call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
@@ -252,7 +269,7 @@ pub const Parser = struct {
         .{ .and_kw, .sum, nullDenotationUnhandled, parseBoolOp },
         .{ .continue_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .for_kw, .lowest, parseForStatement, leftDenotationUnhandled },
-        .{ .lambda_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .lambda_kw, .lowest, parseLambdaDefinition, leftDenotationUnhandled },
         .{ .try_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .as_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .from_kw, .lowest, parseFromImport, leftDenotationUnhandled },
@@ -323,6 +340,14 @@ pub const Parser = struct {
             return;
         }
         return Error.UnexpectedToken;
+    }
+
+    fn expectAndSkipOptional(self: *Self, tag: lex.TokenTag) bool {
+        if (self.expect(tag)) {
+            _ = self.take() catch unreachable;
+            return true;
+        }
+        return false;
     }
 
     fn expectAndTake(self: *Self, tag: lex.TokenTag) Error!Token {
@@ -607,8 +632,7 @@ pub const Parser = struct {
     }
 
     fn parseName(self: *Self) Error!*AstNode {
-        const name_token = try self.take();
-        assert(name_token == .name);
+        const name_token = try self.expectAndTake(.name);
         const name_node = try self.allocator.create(AstNode);
         name_node.* = .{ .name = .{ .value = name_token.name.value, .context = .Load } };
         return name_node;
@@ -652,25 +676,94 @@ pub const Parser = struct {
         return self.parseStatementWithIndent(owner_indent);
     }
 
+    fn parseParameter(self: *Self, with_star: bool, with_annotation: bool) Error!Parameter {
+        if (with_star) try self.expectAndSkip(.asterisk);
+        const identifier = try self.parseName();
+        const annotation = blk: {
+            if (with_annotation and self.expectAndSkipOptional(.colon)) {
+                if (with_star) try self.expectAndSkip(.asterisk);
+                break :blk try self.parseExpression(.equality);
+            } else break :blk null;
+        };
+        const default_value = if (self.expectAndSkipOptional(.assign))
+            try self.parseExpression(.equality)
+        else
+            null;
+
+        return .{
+            .identifier = identifier,
+            .annotation = annotation,
+            .default_value = default_value,
+        };
+    }
+
+    fn parseParameterList(self: *Self, with_star: bool, with_annotation: bool) Error!ParameterList {
+        var parameters = ParameterList.init(self.allocator);
+
+        while (true) {
+            const parameter = self.parseParameter(with_star, with_annotation) catch break;
+            try parameters.append(parameter);
+            self.expectAndSkip(.comma) catch break;
+        }
+
+        return parameters;
+    }
+
+    // https://docs.python.org/3/reference/compound_stmts.html#grammar-token-python-grammar-parameter_list
+    fn parseParameters(self: *Self, with_annotation: bool) Error!Parameters {
+        const posargs = try self.parseParameterList(false, with_annotation);
+        var posargs2: ParameterList = undefined;
+        var positional_only_arguments = false;
+
+        if (self.expectAndSkipOptional(.solidus)) {
+            positional_only_arguments = true;
+            posargs2 = try self.parseParameterList(false, with_annotation);
+        }
+
+        const kwargs = try self.parseParameterList(true, with_annotation);
+
+        return .{
+            .arguments = if (positional_only_arguments) posargs2 else posargs,
+            .position_only_arguments = if (positional_only_arguments) posargs else ParameterList.init(self.allocator),
+            .keyword_only_arguments = kwargs,
+        };
+    }
+
     fn parseFunctionDefinition(self: *Self) Error!*AstNode {
         const def_kw_token = try self.take(); // skip fn_decl token
         assert(def_kw_token == .def_kw);
         const name_token = try self.take();
         if (name_token != .name) return Error.UnexpectedToken;
 
-        // TODO: properly parse argument definitions
-        const lparen_token = try self.take(); // skip lparen token
-        if (lparen_token != .lparen) return Error.UnexpectedToken;
-        const rparen_token = try self.take(); // skip rparen token
-        if (rparen_token != .rparen) return Error.UnexpectedToken;
+        try self.expectAndSkip(.lparen);
+        const parameters = try self.parseParameters(false);
+        try self.expectAndSkip(.rparen);
 
         const fn_decl = try self.allocator.create(AstNode);
         fn_decl.* = .{ .fn_decl = .{
             .name = name_token.name.value,
+            .parameters = parameters,
             .suite = try self.parseSuite(def_kw_token.getLocation().indent),
         } };
 
         return fn_decl;
+    }
+
+    // https://docs.python.org/3/reference/expressions.html#lambda
+    fn parseLambdaDefinition(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.lambda_kw);
+        // the language reference BNF grammar snippets imply that lambdas have
+        // the same parameter_list grammar as functions which is not true if you
+        // read the text.  We skip annotations as that would lead to ambiguity
+        const parameters = try self.parseParameters(false);
+        try self.expectAndSkip(.colon);
+        const body = try self.parseExpression(.lowest);
+        const node = try self.allocator.create(AstNode);
+        node.* = .{ .lambda = .{
+            .parameters = parameters,
+            .body = body,
+        } };
+        return node;
     }
 
     fn parseFunctionCall(self: *Self, lhs: *AstNode) Error!*AstNode {
@@ -1190,7 +1283,9 @@ fn highlightSource(filename: []const u8, source: []const u8, token: ?lex.Token) 
         while (iter.next()) |line| {
             i += 1;
             if (i != location.line) continue;
-            const beforeHighlight = line[0..(location.col - 1)];
+            const raw_index = if (location.col > 0) location.col - 1 else 0;
+            const index = @min(raw_index, line.len);
+            const beforeHighlight = line[0..index];
             const highlight = line[beforeHighlight.len..];
             std.debug.print("\t{d}: {s}{s}{s}{s}\n", .{ location.line, beforeHighlight, highlight_red, highlight, highlight_end });
         }
