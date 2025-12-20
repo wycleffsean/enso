@@ -12,10 +12,12 @@ const log = std.log.scoped(.parse);
 const AstNodeTag = enum {
     root,
     pass,
+    bool,
     integer,
     float,
     complex,
     unary_op,
+    bool_op,
     add,
     sub,
     mult,
@@ -54,6 +56,11 @@ const UnaryOpKind = enum {
 const UnaryOp = struct { value: *const AstNode, kind: UnaryOpKind };
 pub const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
 const List = std.ArrayList(*const AstNode);
+const BoolOpKind = enum {
+    @"and",
+    @"or",
+};
+const BoolOp = struct { lhs: *const AstNode, rhs: *const AstNode, kind: BoolOpKind };
 const Statement = List;
 const ClassDefinition = struct {
     name: []const u8,
@@ -88,10 +95,12 @@ const ExpressionContext = enum { Load, Store };
 pub const AstNode = union(AstNodeTag) {
     root: []*const AstNode,
     pass: void,
+    bool: bool,
     integer: struct { value: ObjectInt },
     float: struct { value: ObjectFloat },
     complex: struct { real: ObjectFloat, imaginary: ObjectFloat },
     unary_op: UnaryOp,
+    bool_op: BoolOp,
     // TODO: these really only have to be a single binary_op tag
     add: BinaryOp,
     sub: BinaryOp,
@@ -225,7 +234,7 @@ pub const Parser = struct {
         .{ .lcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .rcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .def_kw, .lowest, parseFunctionDefinition, leftDenotationUnhandled },
-        .{ .false_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .false_kw, .lowest, parseBool, leftDenotationUnhandled },
         .{ .await_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .else_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .import_kw, .lowest, parseImport, leftDenotationUnhandled },
@@ -235,12 +244,12 @@ pub const Parser = struct {
         .{ .except_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .in_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .raise_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .true_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .true_kw, .lowest, parseBool, leftDenotationUnhandled },
         .{ .class_kw, .lowest, parseClassDefinition, leftDenotationUnhandled },
         .{ .finally_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .is_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .return_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .and_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .and_kw, .sum, nullDenotationUnhandled, parseBoolOp },
         .{ .continue_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .for_kw, .lowest, parseForStatement, leftDenotationUnhandled },
         .{ .lambda_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -257,7 +266,7 @@ pub const Parser = struct {
         .{ .async_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .elif_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .if_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .or_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .or_kw, .sum, nullDenotationUnhandled, parseBoolOp },
         .{ .yield_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
     };
 
@@ -376,6 +385,18 @@ pub const Parser = struct {
         const pass_node = try self.allocator.create(AstNode);
         pass_node.* = .{ .pass = {} };
         return pass_node;
+    }
+
+    fn parseBool(self: *Self) Error!*AstNode {
+        const token = try self.take();
+        const value = switch (token) {
+            .true_kw => true,
+            .false_kw => false,
+            else => return Error.UnexpectedToken,
+        };
+        const node = try self.allocator.create(AstNode);
+        node.* = .{ .bool = value };
+        return node;
     }
 
     fn parseInteger(self: *Self) Error!*AstNode {
@@ -519,6 +540,22 @@ pub const Parser = struct {
             },
             else => return Error.UnexpectedToken,
         }
+    }
+
+    // TODO: in the future consider turning these into a chain/list of bool ops
+    // i.e. right now we just have a single bool op with a left/right children but
+    // it is probably optimal to unify successive operations into a chain
+    fn parseBoolOp(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const op_token = try self.take();
+        const bool_op_kind: BoolOpKind = switch (op_token) {
+            .and_kw => .@"and",
+            .or_kw => .@"or",
+            else => return Error.UnexpectedToken,
+        };
+        const rhs = try self.parseExpression(.lowest);
+        const node = try self.allocator.create(AstNode);
+        node.* = .{ .bool_op = .{ .lhs = lhs, .rhs = rhs, .kind = bool_op_kind } };
+        return node;
     }
 
     fn parseGroup(self: *Self) Error!*AstNode {

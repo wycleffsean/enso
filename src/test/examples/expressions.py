@@ -4,6 +4,9 @@
 # https://peps.python.org/pep-0572/
 (named_expression := 1)
 
+# bool ops
+True and False
+
 # binary ops
 # TODO: python folds all of this into a literal value
 #   in the future we can cheat by wrapping this in a closure
