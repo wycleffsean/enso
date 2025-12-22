@@ -52,6 +52,7 @@ pub const Insn = union(OpCode) {
     load_name: object.Object,
     build_tuple: void,
     build_list: void,
+    build_map: void,
     load_attr: void,
     compare_op: void,
     import_name: void,
@@ -65,7 +66,9 @@ pub const Insn = union(OpCode) {
     make_function: void,
     jump_backward: RelativeJump,
     @"resume": usize,
+    build_const_key_map: void,
     list_extend: void,
+    dict_update: void,
     call: usize,
     call_intrinsic_1: CallIntrinsic1Kind,
 
@@ -90,6 +93,7 @@ pub const Insn = union(OpCode) {
             // TODO...
             .build_tuple => .{ .build_tuple = {} },
             .build_list => .{ .build_list = {} },
+            .build_map => .{ .build_map = {} },
             .list_extend => .{ .list_extend = {} },
             .get_iter => .{ .get_iter = {} },
             .for_iter => .{ .for_iter = .{ .delta = value.int } },
@@ -99,6 +103,8 @@ pub const Insn = union(OpCode) {
             .pop_jump_if_true => .{ .pop_jump_if_true = {} },
             .end_for => .{ .end_for = {} },
             .make_function => .{ .make_function = {} },
+            .build_const_key_map => .{ .build_const_key_map = {} },
+            .dict_update => .{ .dict_update = {} },
             else => {
                 comptime {
                     @compileError(comptimePrint("uh-oh - we don't handle this opcode yet! - {s} ({})", .{ @tagName(kind), @intFromEnum(kind) }));

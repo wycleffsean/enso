@@ -43,6 +43,7 @@ const AstNodeTag = enum {
     call,
     field_access,
     array_literal,
+    dictionary,
     target_list,
     for_in,
     conditional,
@@ -65,6 +66,8 @@ const BoolOpKind = enum {
     @"or",
 };
 const BoolOp = struct { lhs: *const AstNode, rhs: *const AstNode, kind: BoolOpKind };
+const DictItem = struct { key: ?*const AstNode, value: *const AstNode };
+const Dictionary = std.ArrayList(DictItem);
 const Statement = List;
 const ClassDefinition = struct {
     name: []const u8,
@@ -142,6 +145,7 @@ pub const AstNode = union(AstNodeTag) {
     call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
     field_access: BinaryOp,
     array_literal: Statement,
+    dictionary: Dictionary,
     target_list: List,
     for_in: struct { target_list: List, iterable: *const AstNode, suite: Statement, else_suite: ?Statement },
     conditional: struct { predicate: *const AstNode, lhs: *const AstNode, rhs: *const AstNode },
@@ -250,7 +254,7 @@ pub const Parser = struct {
         .{ .tilde, .lowest, parseUnaryOp, leftDenotationUnhandled },
         .{ .lsbracket, .lowest, parseArrayLiteral, leftDenotationUnhandled },
         .{ .rsbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .lcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .lcbracket, .lowest, parseSetOrDictionary, leftDenotationUnhandled },
         .{ .rcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .def_kw, .lowest, parseFunctionDefinition, leftDenotationUnhandled },
         .{ .false_kw, .lowest, parseBool, leftDenotationUnhandled },
@@ -641,6 +645,49 @@ pub const Parser = struct {
 
         try self.expectAndSkip(.rsbracket);
         return array_literal_node;
+    }
+
+    fn parseDictItem(self: *Self) Error!DictItem {
+        if (self.expectAndSkipOptional(.double_asterisk)) {
+            const value = try self.parseExpression(.lowest);
+            return .{
+                .key = null,
+                .value = value,
+            };
+        }
+        const key = try self.parseExpression(.lowest);
+        try self.expectAndSkip(.colon);
+        const value = try self.parseExpression(.lowest);
+        return .{
+            .key = key,
+            .value = value,
+        };
+    }
+
+    fn parseDictionary(self: *Self) Error!*AstNode {
+        var dictionary = Dictionary.init(self.allocator);
+        errdefer dictionary.deinit();
+        while (true) {
+            if (self.expect(.rcbracket)) break;
+            const item = try self.parseDictItem();
+            try dictionary.append(item);
+            // trailing commas are grammatically allowed
+            self.expectAndSkip(.comma) catch break;
+        }
+        const dictionary_node = try self.allocator.create(AstNode);
+        dictionary_node.* = .{ .dictionary = dictionary };
+        return dictionary_node;
+    }
+
+    fn parseSetOrDictionary(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.lcbracket);
+        // the difference between a set and a dictionary is that a set
+        // has no dictionary items (i.e. "a": 1, or **variable).  An
+        // empty literal "{}" is considered a dictionary according to:
+        // https://docs.python.org/3/reference/expressions.html#set-displays
+        const result = self.parseDictionary();
+        try self.expectAndSkip(.rcbracket);
+        return result;
     }
 
     fn parseName(self: *Self) Error!*AstNode {

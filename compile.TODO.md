@@ -32,7 +32,7 @@ Important macros:
    - [x] UnaryOp
    - [ ] Lambda
    - [x] IfExp
-   - [ ] Dict
+   - [/] Dict
    - [ ] Set
    - [ ] Generator
    - [ ] ListComp

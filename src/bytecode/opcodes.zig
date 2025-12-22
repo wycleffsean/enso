@@ -18,6 +18,7 @@ pub const OpCode = enum(u8) {
     load_name = 101,
     build_tuple = 102,
     build_list = 103,
+    build_map = 105,
     load_attr = 106,
     compare_op = 107,
     import_name = 108,
@@ -31,7 +32,9 @@ pub const OpCode = enum(u8) {
     make_function = 132,
     jump_backward = 140,
     @"resume" = 151,
+    build_const_key_map = 156,
     list_extend = 162,
+    dict_update = 165,
     call = 171,
     call_intrinsic_1 = 173,
 };
