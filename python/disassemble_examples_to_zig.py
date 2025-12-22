@@ -2,7 +2,8 @@
 #   python -m dis the_file.py
 # but turning the output into a zig source file for easy consumption
 
-from dis import get_instructions
+import dis
+import types
 from pathlib import Path
 from collections import namedtuple
 import subprocess
@@ -20,26 +21,13 @@ const OpCode = @import("../bytecode/opcodes.zig").OpCode;
 const StaticStringMap = @import("std").StaticStringMap;
 const object = @import("../object.zig");
 
-pub const Instruction = struct {
-  opcode: OpCode,
-  arg: ?u8,
-  argval: object.Object,
-  argrepr: ?[]const u8 = null,
-  offset: u16,
-  starts_line: ?u16,
-  is_jump_target: bool,
-  // TODO: positions
-};
-
-const InstructionSet = []const Instruction;
-
 pub const Example = struct {
   path: [] const u8,
-  source: [] const u8,
   return_code: u8,
   captured_stdout: [] const u8,
   captured_stderr: [] const u8,
-  instructions: InstructionSet,
+  source: [] const u8,
+  co: *const object.Code,
 };
 
 fn opnameToEnum(opcode: u8, opcode_str: []const u8, opname: OpCode) OpCode {
@@ -56,6 +44,7 @@ def as_hex_string(s: str) -> str:
     byte_array = s.encode('utf-8')  # get bytes
     hex_values = [f"0x{b:02x}" for b in byte_array]  # format each byte
     return ", ".join(hex_values)
+
 def argval_to_PyArgVal(val):
     if val is None:
         return "object.None"
@@ -69,8 +58,13 @@ def argval_to_PyArgVal(val):
         return 'object.Object{ .float = ' + str(val) + ' }'
     elif isinstance(val, list):
         return 'object.EmptyArray'
-    elif isinstance(val, tuple): # For now we treat them the same
-        return 'object.EmptyArray'
+    elif isinstance(val, tuple):
+        res = 'object.Object{ .tuple = &[_]object.Object{\n'
+        for item in val:
+            res += argval_to_PyArgVal(item) + '\n,'
+        return res + '} }'
+    elif isinstance(val, types.CodeType):
+        return 'object.Object{ .code = ' + codeobject_to_zig(val) + ' }'
     else:
         # this is wrong, for example sometimes it can be a symbol
         # like a method name
@@ -88,26 +82,61 @@ def instruction_to_zig(insn):
       .offset = {insn.offset},
       .starts_line = {"null" if insn.starts_line is None else insn.starts_line},
       .is_jump_target = {"true" if insn.is_jump_target else "false"},
-  }},"""
-def instructions_to_zig(example_path, instruction_generator):
+  }}"""
+
+def instructions_to_zig(co):
+    insn_set = f"&[_]object.Instruction {{"
+    for instruction in dis.get_instructions(co):
+        insn_set += instruction_to_zig(instruction)
+        insn_set += ", "
+    return insn_set + "}"
+
+def codeobject_to_zig(co):
+    return f"""  .{{
+      .co_argcount = &{argval_to_PyArgVal(co.co_argcount)},
+      .co_code = &{argval_to_PyArgVal(co.co_code)},
+      .co_exceptiontable = &{argval_to_PyArgVal(co.co_exceptiontable)},
+      .co_firstlineno = &{argval_to_PyArgVal(co.co_firstlineno)},
+      .co_freevars = &{argval_to_PyArgVal(co.co_freevars)},
+      .co_lnotab = &{argval_to_PyArgVal(co.co_lnotab)},
+      .co_names = &{argval_to_PyArgVal(co.co_names)},
+      .co_qualname = &{argval_to_PyArgVal(co.co_qualname)},
+      .co_varnames = &{argval_to_PyArgVal(co.co_varnames)},
+      .co_cellvars = &{argval_to_PyArgVal(co.co_cellvars)},
+      .co_consts = &{argval_to_PyArgVal(co.co_consts)},
+      .co_filename = &{argval_to_PyArgVal(co.co_filename)},
+      .co_flags = &{argval_to_PyArgVal(co.co_flags)},
+      .co_kwonlyargcount = &{argval_to_PyArgVal(co.co_kwonlyargcount)},
+      .co_linetable = &{argval_to_PyArgVal(co.co_linetable)},
+      .co_name = &{argval_to_PyArgVal(co.co_name)},
+      .co_nlocals = &{argval_to_PyArgVal(co.co_nlocals)},
+      .co_posonlyargcount = &{argval_to_PyArgVal(co.co_posonlyargcount)},
+      .co_stacksize = &{argval_to_PyArgVal(co.co_stacksize)},
+      .instructions = {instructions_to_zig(co)},
+  }}"""
+
+def named_codeobject(example_path, co):
     x = Path(example_path)
     example_name = "_".join([x.parent.stem, x.stem])
 
     examples.append(Example(example_name, example_path))
-    print(f"pub const {example_name} = [_]Instruction {{")
-    for instruction in instruction_generator:
-        print(instruction_to_zig(instruction))
-    print("};")
+    print(f"pub const {example_name}: object.Code = ")
+    print(codeobject_to_zig(co))
+    print(";")
 
 # def bytes_to_zig_string(bytes):
 #     hex = bytes.hex()
 #     zig_hex = ",".join(["0x" + hex[i:i+2] for i in range(0, len(hex), 2)])
 #     return "".join(["[_]u8 {", zig_hex, "}"])
 
+def compile_file(path: str | Path) -> types.CodeType:
+    path = Path(path)
+    src = path.read_text(encoding="utf-8")
+    return compile(src, filename=str(path), mode="exec")
+
 for example_path in argv[1:]:
-    with open(example_path) as example_file:
-        example = example_file.read()
-        instructions_to_zig(example_path, get_instructions(example))
+    co = compile_file(example_path)
+    named_codeobject(example_path, co)
 
 print("""
 const KV = struct { []const u8, Example };
@@ -129,7 +158,7 @@ for example in examples:
     	.captured_stdout = "{stdout_result}",
     	.captured_stderr = "",
     	.source = @embedFile("{example.path}"),
-    	.instructions = &{example.name} }}
+    	.co = &{example.name}, }}
     }},
     """)
 print("});")

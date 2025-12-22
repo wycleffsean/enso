@@ -729,6 +729,7 @@ pub const Parser = struct {
         };
     }
 
+    // https://docs.python.org/3/reference/compound_stmts.html#function
     fn parseFunctionDefinition(self: *Self) Error!*AstNode {
         const def_kw_token = try self.take(); // skip fn_decl token
         assert(def_kw_token == .def_kw);
@@ -736,7 +737,7 @@ pub const Parser = struct {
         if (name_token != .name) return Error.UnexpectedToken;
 
         try self.expectAndSkip(.lparen);
-        const parameters = try self.parseParameters(false);
+        const parameters = try self.parseParameters(true);
         try self.expectAndSkip(.rparen);
 
         const fn_decl = try self.allocator.create(AstNode);

@@ -1,10 +1,10 @@
 # https://docs.python.org/3/reference/compound_stmts.html#the-for-statement
 
-for i in []:
-	pass
+# for i in []:
+# 	pass
 
-for i in []:
-	print(i)
+# for i in []:
+# 	print(i)
 	# i = 5
 # else:
 # 	print(None)

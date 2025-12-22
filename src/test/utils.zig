@@ -1,5 +1,6 @@
 const std = @import("std");
 const dis_examples = @import("./disassembled_examples.zig");
+const object = @import("../object.zig");
 
 pub const Example = struct {
     name: []const u8,
@@ -24,8 +25,8 @@ pub const Example = struct {
         return self.dis().source;
     }
 
-    pub fn instructions(comptime self: *const Self) []const dis_examples.Instruction {
-        return self.dis().instructions;
+    pub fn code(comptime self: *const Self) *const object.Code {
+        return self.dis().co;
     }
 
     pub fn stdout(comptime self: *const Self) []const u8 {
@@ -61,6 +62,11 @@ pub const examples = [_]Example{
         .name = "langref_6_14_lambdas",
         // the python compiler folds over these operations when using constants
         // so at this time we won't get the same results
+        // .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_8_7_function_definitions",
         .test_bytecode = false,
         .test_vm = false,
     },
@@ -80,6 +86,6 @@ test "lexing examples" {
     inline for (examples) |example| {
         _ = example.path();
         _ = example.source();
-        _ = example.instructions();
+        _ = example.code().instructions;
     }
 }

@@ -13,9 +13,11 @@ pub const Object = union(enum) {
     float: ObjectFloat,
     complex: ObjectComplex,
     array: []Object,
+    tuple: []const Object,
     string: String,
     symbol: Symbol, // symbols are just interned strings
     // callabe: Callable, // TODO: these are real objects that _have_ a callable
+    code: Code,
 
     const Self = @This();
 
@@ -32,6 +34,8 @@ pub const Object = union(enum) {
             // TODO - we have no reference to the pool so we can't retrieve the string
             .symbol => |sym| try writer.print("<<unprintable:{d}>>", .{sym}),
             .array => |arr| try writer.print("{any}", .{arr}),
+            .tuple => |t| try writer.print("{any}", .{t}),
+            .code => try writer.print("<code object>", .{}),
         }
     }
 };
@@ -58,14 +62,20 @@ pub inline fn dStr(comptime VMType: type, vm: *VMType, receiver: *const Object) 
         .float => |float| std.fmt.bufPrint(buffer[0..], "{d:19}", .{float}) catch unreachable,
         .complex => |cnum| std.fmt.bufPrint(buffer[0..], "({d}+{d}j)", .{ cnum.re, cnum.im }) catch unreachable,
         .array => std.fmt.bufPrint(buffer[0..], "<<array>>", .{}) catch unreachable,
+        .tuple => std.fmt.bufPrint(buffer[0..], "<<tuple>>", .{}) catch unreachable,
+        .code => std.fmt.bufPrint(buffer[0..], "<<code>>", .{}) catch unreachable,
     };
 }
 
 pub const None = Object{ .none = {} };
 pub const False = Object{ .bool = false };
 pub const True = Object{ .bool = true };
+pub const Zero = Object{ .int = 0 };
+pub const One = Object{ .int = 1 };
 pub const Symbol = intern.Index;
 pub const EmptyArray = Object{ .array = &[_]Object{} };
+pub const EmptyTuple = Object{ .tuple = &[_]Object{} };
+pub const EmptyString = Object{ .string = .{ .string = "" } };
 
 pub fn stringToSymbol(string: []const u8, intern_pool: *intern.StringInternPool) !Object {
     return .{ .symbol = try intern_pool.put(string) };
@@ -95,3 +105,47 @@ pub const CallResult = union(enum) {
 pub fn Callable(VMType: type) type {
     return *const fn (*VMType, []Object) CallResult;
 }
+
+pub const Code = struct {
+    co_argcount: *const Object = &Zero,
+    co_code: *const Object = &EmptyString,
+    co_exceptiontable: *const Object = &EmptyString,
+    co_firstlineno: *const Object = &One,
+    co_freevars: *const Object = &EmptyTuple,
+    co_lnotab: *const Object = &None, // Deprecated, use co_lines instead
+    co_names: *const Object = &EmptyTuple,
+    co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
+    co_varnames: *const Object = &EmptyTuple,
+    co_cellvars: *const Object = &EmptyTuple,
+    co_consts: *const Object = &EmptyTuple,
+    co_filename: *const Object = &EmptyString,
+    co_flags: *const Object = &Zero,
+    co_kwonlyargcount: *const Object = &Zero,
+    co_linetable: *const Object = &EmptyString,
+    co_name: *const Object = &.{ .string = .{ .string = "<module>" } },
+    co_nlocals: *const Object = &Zero,
+    co_posonlyargcount: *const Object = &Zero,
+    co_stacksize: *const Object = &One,
+
+    // TODO: we're leaving the world of "python objects" here,
+    //   at some point we'll need to reconcile that
+    instructions: []const Instruction = &[_]Instruction{},
+
+    // methods...
+    // replace(,
+    // co_positions(,
+    // co_lines(,
+};
+
+// Not "objects", but children of them
+const OpCode = @import("./bytecode/opcodes.zig").OpCode;
+pub const Instruction = struct {
+    opcode: OpCode,
+    arg: ?u8,
+    argval: Object,
+    argrepr: ?[]const u8 = null,
+    offset: u16,
+    starts_line: ?u16,
+    is_jump_target: bool,
+    // TODO: positions
+};

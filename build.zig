@@ -60,6 +60,7 @@ pub fn build(b: *std.Build) !void {
 fn generateZigFromPython(b: *std.Build, script_path: []const u8) *std.Build.Step.Run {
     const python_run = b.addSystemCommand(&.{"python"});
     python_run.addFileArg(b.path(script_path));
+    python_run.max_stdio_size = 20 * 1024 * 1024; // 20MB
     return python_run;
 }
 
