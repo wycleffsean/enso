@@ -31,7 +31,7 @@ Important macros:
    - [x] BinOp
    - [x] UnaryOp
    - [ ] Lambda
-   - [ ] IfExp
+   - [x] IfExp
    - [ ] Dict
    - [ ] Set
    - [ ] Generator

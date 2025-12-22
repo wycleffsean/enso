@@ -59,10 +59,14 @@ pub const examples = [_]Example{
         .test_vm = false,
     },
     .{
-        .name = "langref_6_14_lambdas",
+        .name = "langref_6_13_conditional_expressions",
         // the python compiler folds over these operations when using constants
         // so at this time we won't get the same results
-        // .test_bytecode = false,
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_14_lambdas",
         .test_vm = false,
     },
     .{

@@ -45,6 +45,7 @@ const AstNodeTag = enum {
     array_literal,
     target_list,
     for_in,
+    conditional,
     string_literal,
     class,
     import,
@@ -143,6 +144,7 @@ pub const AstNode = union(AstNodeTag) {
     array_literal: Statement,
     target_list: List,
     for_in: struct { target_list: List, iterable: *const AstNode, suite: Statement, else_suite: ?Statement },
+    conditional: struct { predicate: *const AstNode, lhs: *const AstNode, rhs: *const AstNode },
     string_literal: struct { value: []const u8 },
     class: ClassDefinition,
     import: []ImportDefinition,
@@ -282,7 +284,7 @@ pub const Parser = struct {
         .{ .with_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .async_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .elif_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .if_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .if_kw, .sum, nullDenotationUnhandled, parseIfExpression },
         .{ .or_kw, .sum, nullDenotationUnhandled, parseBoolOp },
         .{ .yield_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
     };
@@ -580,6 +582,16 @@ pub const Parser = struct {
         const rhs = try self.parseExpression(.lowest);
         const node = try self.allocator.create(AstNode);
         node.* = .{ .bool_op = .{ .lhs = lhs, .rhs = rhs, .kind = bool_op_kind } };
+        return node;
+    }
+
+    fn parseIfExpression(self: *Self, lhs: *AstNode) Error!*AstNode {
+        try self.expectAndSkip(.if_kw);
+        const predicate = try self.parseExpression(.lowest);
+        try self.expectAndSkip(.else_kw);
+        const rhs = try self.parseExpression(.lowest);
+        const node = try self.allocator.create(AstNode);
+        node.* = .{ .conditional = .{ .predicate = predicate, .lhs = lhs, .rhs = rhs } };
         return node;
     }
 
