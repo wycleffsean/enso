@@ -33,7 +33,7 @@ Important macros:
    - [ ] Lambda
    - [x] IfExp
    - [/] Dict
-   - [ ] Set
+   - [/] Set
    - [ ] Generator
    - [ ] ListComp
    - [ ] DictComp

@@ -43,6 +43,7 @@ const AstNodeTag = enum {
     call,
     field_access,
     array_literal,
+    set,
     dictionary,
     target_list,
     for_in,
@@ -66,6 +67,8 @@ const BoolOpKind = enum {
     @"or",
 };
 const BoolOp = struct { lhs: *const AstNode, rhs: *const AstNode, kind: BoolOpKind };
+const SetItem = struct { unpack: bool, value: *const AstNode };
+const Set = std.ArrayList(SetItem);
 const DictItem = struct { key: ?*const AstNode, value: *const AstNode };
 const Dictionary = std.ArrayList(DictItem);
 const Statement = List;
@@ -145,6 +148,7 @@ pub const AstNode = union(AstNodeTag) {
     call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
     field_access: BinaryOp,
     array_literal: Statement,
+    set: Set,
     dictionary: Dictionary,
     target_list: List,
     for_in: struct { target_list: List, iterable: *const AstNode, suite: Statement, else_suite: ?Statement },
@@ -159,6 +163,11 @@ pub const Parser = struct {
     lexer: lex.Lexer,
     peeked: ?Token = null,
     //taken: ?Token = null,
+    // sometimes there is enough ambiguity in the lanaguage
+    // that we have to rewind the parser and pursue another path.
+    // rather than rewind the token stream and bother parsing again,
+    // we retain the and return the last successfully parsed expression
+    unwound: ?*AstNode = null,
 
     const Self = @This();
 
@@ -374,6 +383,11 @@ pub const Parser = struct {
     }
 
     fn parseExpression(self: *Self, precedence: Precedence) Error!*AstNode {
+        if (self.unwound) |node| {
+            @branchHint(.unlikely);
+            defer self.unwound = null;
+            return node;
+        }
         var token = self.peek() orelse return Error.UnexpectedEndOfStream;
         const lhsFn = try nullDenotation(token);
         var lhs = try lhsFn(self);
@@ -656,6 +670,7 @@ pub const Parser = struct {
             };
         }
         const key = try self.parseExpression(.lowest);
+        errdefer self.unwound = key; // we're probably dealing with a set here
         try self.expectAndSkip(.colon);
         const value = try self.parseExpression(.lowest);
         return .{
@@ -679,13 +694,46 @@ pub const Parser = struct {
         return dictionary_node;
     }
 
+    fn parseSetItem(self: *Self) Error!SetItem {
+        const unpack = self.expectAndSkipOptional(.asterisk);
+        const value = try self.parseExpression(.lowest);
+        return .{
+            .unpack = unpack,
+            .value = value,
+        };
+    }
+
+    fn parseSet(self: *Self) Error!*AstNode {
+        var set = Set.init(self.allocator);
+        errdefer set.deinit();
+        while (true) {
+            if (self.unwound == null and self.expect(.rcbracket)) break;
+            const item = try self.parseSetItem();
+            try set.append(item);
+            // trailing commas are grammatically allowed
+            self.expectAndSkip(.comma) catch break;
+        }
+        const dictionary_node = try self.allocator.create(AstNode);
+        dictionary_node.* = .{ .set = set };
+        return dictionary_node;
+    }
+
     fn parseSetOrDictionary(self: *Self) Error!*AstNode {
         try self.expectAndSkip(.lcbracket);
         // the difference between a set and a dictionary is that a set
         // has no dictionary items (i.e. "a": 1, or **variable).  An
         // empty literal "{}" is considered a dictionary according to:
         // https://docs.python.org/3/reference/expressions.html#set-displays
-        const result = self.parseDictionary();
+        const result = blk: {
+            if (self.expect(.asterisk)) {
+                // special case - if the first token is an asterisk
+                // then we've got a set.  We can't rewind logged errors
+                // e.g. nullDenotationUnhandled
+                @branchHint(.unlikely);
+                break :blk try self.parseSet();
+            }
+            break :blk self.parseDictionary() catch try self.parseSet();
+        };
         try self.expectAndSkip(.rcbracket);
         return result;
     }
