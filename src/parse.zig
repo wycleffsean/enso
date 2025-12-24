@@ -18,6 +18,7 @@ const AstNodeTag = enum {
     complex,
     unary_op,
     bool_op,
+    comparison,
     add,
     sub,
     mult,
@@ -64,6 +65,15 @@ const UnaryOpKind = enum {
 };
 const UnaryOp = struct { value: *const AstNode, kind: UnaryOpKind };
 pub const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
+pub const ComparisonKind = enum {
+    lt,
+    gt,
+    eq,
+    leq,
+    geq,
+    neq,
+};
+pub const Comparison = struct { kind: ComparisonKind, lhs: *const AstNode, rhs: *const AstNode };
 const List = std.ArrayList(*const AstNode);
 const BoolOpKind = enum {
     @"and",
@@ -157,6 +167,7 @@ pub const AstNode = union(AstNodeTag) {
     complex: struct { real: ObjectFloat, imaginary: ObjectFloat },
     unary_op: UnaryOp,
     bool_op: BoolOp,
+    comparison: Comparison,
     // TODO: these really only have to be a single binary_op tag
     add: BinaryOp,
     sub: BinaryOp,
@@ -282,6 +293,9 @@ pub const Parser = struct {
         .{ .name, .lowest, parseName, leftDenotationUnhandled },
         .{ .assign, .equality, nullDenotationUnhandled, parseAssignment },
         .{ .walrus, .equality, nullDenotationUnhandled, parseNamedExpression },
+        // TODO: kinda dumb we call it equality but doesn't align with the
+        //   'equality' precedence.  let's fix that
+        .{ .equality, .lessgreater, nullDenotationUnhandled, parseComparison },
         .{ .lparen, .call, parseGroupOrGenerator, parseFunctionCall },
         .{ .at, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .string, .lowest, parseStringLiteral, leftDenotationUnhandled },
@@ -291,8 +305,11 @@ pub const Parser = struct {
         .{ .pipe, .lowest, nullDenotationUnhandled, parseBinaryOp },
         .{ .minus, .prefix, parseUnaryOp, parseBinaryOp },
         .{ .percent, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .labracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .rabracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .labracket, .lessgreater, nullDenotationIllegal, parseComparison },
+        .{ .rabracket, .lessgreater, nullDenotationUnhandled, parseComparison },
+        .{ .leq, .lessgreater, nullDenotationUnhandled, parseComparison },
+        .{ .geq, .lessgreater, nullDenotationUnhandled, parseComparison },
+        .{ .neq, .lessgreater, nullDenotationUnhandled, parseComparison },
         .{ .double_labracket, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .double_rabracket, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .bang, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -644,6 +661,23 @@ pub const Parser = struct {
         const node = try self.allocator.create(AstNode);
         node.* = .{ .bool_op = .{ .lhs = lhs, .rhs = rhs, .kind = bool_op_kind } };
         return node;
+    }
+
+    fn parseComparison(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const kind: ComparisonKind = switch (try self.take()) {
+            .labracket => .lt,
+            .rabracket => .gt,
+            .equality => .eq,
+            .leq => .leq,
+            .geq => .geq,
+            .neq => .neq,
+            else => return error.UnexpectedToken,
+        };
+
+        const rhs = try self.parseExpression(.lessgreater);
+        const result = try self.allocator.create(AstNode);
+        result.* = .{ .comparison = .{ .kind = kind, .lhs = lhs, .rhs = rhs } };
+        return result;
     }
 
     fn parseIfExpression(self: *Self, lhs: *AstNode) Error!*AstNode {

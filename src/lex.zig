@@ -49,13 +49,17 @@ pub const TokenTag = enum {
     double_solidus,
     percent,
     assign,
+    equality,
     walrus,
     bang,
+    neq,
     ampersand,
     caret,
     tilde,
     labracket,
+    leq,
     rabracket,
+    geq,
     double_labracket,
     double_rabracket,
     lsbracket,
@@ -133,13 +137,17 @@ pub const Token = union(TokenTag) {
     double_solidus: Bare,
     percent: Bare,
     assign: Bare,
+    equality: Bare,
     walrus: Bare,
     bang: Bare,
+    neq: Bare,
     ampersand: Bare,
     caret: Bare,
     tilde: Bare,
     labracket: Bare,
+    leq: Bare,
     rabracket: Bare,
+    geq: Bare,
     double_labracket: Bare,
     double_rabracket: Bare,
     lsbracket: Bare,
@@ -206,13 +214,17 @@ pub const Token = union(TokenTag) {
             .double_solidus => self.double_solidus.loc,
             .percent => self.percent.loc,
             .assign => self.assign.loc,
+            .equality => self.equality.loc,
             .walrus => self.walrus.loc,
             .bang => self.bang.loc,
+            .neq => self.neq.loc,
             .ampersand => self.ampersand.loc,
             .caret => self.caret.loc,
             .tilde => self.tilde.loc,
             .labracket => self.labracket.loc,
+            .leq => self.leq.loc,
             .rabracket => self.rabracket.loc,
+            .geq => self.geq.loc,
             .double_labracket => self.double_labracket.loc,
             .double_rabracket => self.double_rabracket.loc,
             .lsbracket => self.lsbracket.loc,
@@ -517,25 +529,55 @@ pub const Lexer = struct {
                 return Token{ .solidus = self.bare() };
             },
             '%' => return Token{ .percent = self.bare() },
-            '=' => return Token{ .assign = self.bare() },
-            '!' => return Token{ .bang = self.bare() },
+            '=' => {
+                if (self.peek()) |val| {
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .equality = self.bare() };
+                    }
+                }
+                return Token{ .assign = self.bare() };
+            },
+            '!' => {
+                if (self.peek()) |val| {
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .neq = self.bare() };
+                    }
+                }
+                return Token{ .bang = self.bare() };
+            },
             '&' => return Token{ .ampersand = self.bare() },
             '^' => return Token{ .caret = self.bare() },
             '~' => return Token{ .tilde = self.bare() },
             '<' => {
                 if (self.peek()) |val| {
-                    if (val == '<') {
-                        _ = self.take() catch unreachable;
-                        return Token{ .double_labracket = self.bare() };
+                    switch (val) {
+                        '<' => {
+                            _ = self.take() catch unreachable;
+                            return Token{ .double_labracket = self.bare() };
+                        },
+                        '=' => {
+                            _ = self.take() catch unreachable;
+                            return Token{ .leq = self.bare() };
+                        },
+                        else => {},
                     }
                 }
                 return Token{ .labracket = self.bare() };
             },
             '>' => {
                 if (self.peek()) |val| {
-                    if (val == '>') {
-                        _ = self.take() catch unreachable;
-                        return Token{ .double_rabracket = self.bare() };
+                    switch (val) {
+                        '>' => {
+                            _ = self.take() catch unreachable;
+                            return Token{ .double_rabracket = self.bare() };
+                        },
+                        '=' => {
+                            _ = self.take() catch unreachable;
+                            return Token{ .geq = self.bare() };
+                        },
+                        else => {},
                     }
                 }
                 return Token{ .rabracket = self.bare() };
@@ -716,15 +758,15 @@ test "lex: parens" {
 }
 
 test "lex: operators" {
-    var lex = Lexer{ .buffer = ":,+-*/<>=![]{}|%&^~:=**<<>>//" };
+    var lex = Lexer{ .buffer = ":,+-*<>/=![]{}|%&^~:=**<<>>//== <= >= !=" };
     try testing.expectEqual(Token{ .colon = .{ .loc = .{ .line = 1, .col = 1 } } }, lex.next());
     try testing.expectEqual(Token{ .comma = .{ .loc = .{ .line = 1, .col = 2 } } }, lex.next());
     try testing.expectEqual(Token{ .plus = .{ .loc = .{ .line = 1, .col = 3 } } }, lex.next());
     try testing.expectEqual(Token{ .minus = .{ .loc = .{ .line = 1, .col = 4 } } }, lex.next());
     try testing.expectEqual(Token{ .asterisk = .{ .loc = .{ .line = 1, .col = 5 } } }, lex.next());
-    try testing.expectEqual(Token{ .solidus = .{ .loc = .{ .line = 1, .col = 6 } } }, lex.next());
-    try testing.expectEqual(Token{ .labracket = .{ .loc = .{ .line = 1, .col = 7 } } }, lex.next());
-    try testing.expectEqual(Token{ .rabracket = .{ .loc = .{ .line = 1, .col = 8 } } }, lex.next());
+    try testing.expectEqual(Token{ .labracket = .{ .loc = .{ .line = 1, .col = 6 } } }, lex.next());
+    try testing.expectEqual(Token{ .rabracket = .{ .loc = .{ .line = 1, .col = 7 } } }, lex.next());
+    try testing.expectEqual(Token{ .solidus = .{ .loc = .{ .line = 1, .col = 8 } } }, lex.next());
     try testing.expectEqual(Token{ .assign = .{ .loc = .{ .line = 1, .col = 9 } } }, lex.next());
     try testing.expectEqual(Token{ .bang = .{ .loc = .{ .line = 1, .col = 10 } } }, lex.next());
     try testing.expectEqual(Token{ .lsbracket = .{ .loc = .{ .line = 1, .col = 11 } } }, lex.next());
@@ -743,7 +785,11 @@ test "lex: operators" {
     try testing.expectEqual(Token{ .double_labracket = .{ .loc = .{ .line = 1, .col = 25 } } }, lex.next());
     try testing.expectEqual(Token{ .double_rabracket = .{ .loc = .{ .line = 1, .col = 27 } } }, lex.next());
     try testing.expectEqual(Token{ .double_solidus = .{ .loc = .{ .line = 1, .col = 29 } } }, lex.next());
-    try testing.expectEqual(Token{ .eof = .{ .loc = .{ .line = 1, .col = 29 } } }, lex.next());
+    try testing.expectEqual(Token{ .equality = .{ .loc = .{ .line = 1, .col = 31 } } }, lex.next());
+    try testing.expectEqual(Token{ .leq = .{ .loc = .{ .line = 1, .col = 34 } } }, lex.next());
+    try testing.expectEqual(Token{ .geq = .{ .loc = .{ .line = 1, .col = 37 } } }, lex.next());
+    try testing.expectEqual(Token{ .neq = .{ .loc = .{ .line = 1, .col = 40 } } }, lex.next());
+    try testing.expectEqual(Token{ .eof = .{ .loc = .{ .line = 1, .col = 40 } } }, lex.next());
 }
 
 test "lex: whitespace ignored" {

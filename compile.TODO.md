@@ -40,7 +40,7 @@ Important macros:
    - [/] Yield
    - [/] YieldFrom
    - [/] Await
-   - [ ] Compare
+   - [/] Compare
    - [ ] Call
    - [ ] Constant
    - [ ] JoinedStr
