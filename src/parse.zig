@@ -52,6 +52,7 @@ const AstNodeTag = enum {
     string_literal,
     class,
     import,
+    yield,
 };
 
 const UnaryOpKind = enum {
@@ -77,13 +78,13 @@ const Comprehension = struct {
     expression: *const AstNode,
     for_expressions: std.ArrayList(ComprehensionFor),
 };
+const ListItem = struct { unpack: bool, value: *const AstNode };
 const ListDisplay = union(enum) {
-    list: List,
+    list: std.ArrayList(ListItem),
     comprehension: Comprehension,
     empty: void,
 };
-const SetItem = struct { unpack: bool, value: *const AstNode };
-const Set = std.ArrayList(SetItem);
+const Set = std.ArrayList(ListItem);
 const SetDisplay = union(enum) {
     set: Set,
     comprehension: Comprehension,
@@ -141,6 +142,11 @@ const Parameters = struct {
     keyword_only_arguments: ParameterList,
 };
 
+const Yield = union(enum) {
+    expression: *const AstNode,
+    list: std.ArrayList(ListItem),
+};
+
 pub const AstNode = union(AstNodeTag) {
     root: []*const AstNode,
     pass: void,
@@ -185,6 +191,7 @@ pub const AstNode = union(AstNodeTag) {
     string_literal: struct { value: []const u8 },
     class: ClassDefinition,
     import: []ImportDefinition,
+    yield: Yield,
 };
 
 pub const Parser = struct {
@@ -328,7 +335,7 @@ pub const Parser = struct {
         .{ .elif_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .if_kw, .sum, nullDenotationUnhandled, parseIfExpression },
         .{ .or_kw, .sum, nullDenotationUnhandled, parseBoolOp },
-        .{ .yield_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .yield_kw, .lowest, parseYield, leftDenotationUnhandled },
     };
 
     inline fn precedenceMap(token: Token) Error!Precedence {
@@ -733,15 +740,20 @@ pub const Parser = struct {
             return result;
         }
 
-        const first_expression = try self.parseExpression(.lowest);
+        var list_item = try self.parseListItem();
 
         if (self.expect(.for_kw)) {
-            const comprehension = try self.parseComprehension(Comprehension, first_expression);
+            const comprehension = try self.parseComprehension(Comprehension, list_item.value);
             result.* = .{ .list = .{ .comprehension = comprehension } };
         } else {
-            var list = List.init(self.allocator);
-            try list.append(first_expression);
-            if (self.expectAndSkipOptional(.comma)) try self.parseCommaSeparatedList(&list, .rsbracket);
+            var list = std.ArrayList(ListItem).init(self.allocator);
+            while (true) {
+                try list.append(list_item);
+                self.expectAndSkip(.comma) catch break;
+                // trailing commas are legal
+                if (self.expect(.rsbracket)) break;
+                list_item = try self.parseListItem();
+            }
             result.* = .{ .list = .{ .list = list } };
         }
 
@@ -799,7 +811,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn parseSetItem(self: *Self) Error!SetItem {
+    fn parseListItem(self: *Self) Error!ListItem {
         const unpack = self.expectAndSkipOptional(.asterisk);
         const value = try self.parseExpression(.lowest);
         return .{
@@ -814,7 +826,7 @@ pub const Parser = struct {
         const result = try self.allocator.create(AstNode);
         errdefer self.allocator.destroy(result);
 
-        var item = try self.parseSetItem();
+        var item = try self.parseListItem();
 
         // Is this a comprehension?
         if (self.expect(.for_kw)) {
@@ -828,7 +840,7 @@ pub const Parser = struct {
             try set.append(item);
             // trailing commas are grammatically allowed
             self.expectAndSkip(.comma) catch break;
-            item = try self.parseSetItem();
+            item = try self.parseListItem();
         }
         result.* = .{ .set = .{ .set = set } };
         return result;
@@ -891,6 +903,29 @@ pub const Parser = struct {
         const named_expression_node = try self.allocator.create(AstNode);
         named_expression_node.* = .{ .named_expression = .{ .lhs = lhs, .rhs = rhs } };
         return named_expression_node;
+    }
+
+    fn parseYield(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.yield_kw);
+        const result = try self.allocator.create(AstNode);
+        errdefer self.allocator.destroy(result);
+
+        if (self.expectAndSkipOptional(.from_kw)) {
+            const expression = try self.parseExpression(.lowest);
+            result.* = .{ .yield = .{ .expression = expression } };
+        } else {
+            var list = std.ArrayList(ListItem).init(self.allocator);
+            errdefer list.deinit();
+
+            while (true) {
+                const list_item = try self.parseListItem();
+                try list.append(list_item);
+                self.expectAndSkip(.comma) catch break;
+            }
+            result.* = .{ .yield = .{ .list = list } };
+        }
+
+        return result;
     }
 
     // a "suite" is the block following the colon in compound statements
@@ -1268,7 +1303,7 @@ test "parse: array literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,");
-        testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression()) catch |err| {
+        testing.expectError(Parser.Error.UnexpectedEndOfStream, parser.parseSimpleExpression()) catch |err| {
             highlightSource("Unclosed array literal", "[1,", parser.peek());
             return err;
         };

@@ -37,8 +37,8 @@ Important macros:
    - [/] Generator
    - [/] ListComp
    - [/] DictComp
-   - [ ] Yield
-   - [ ] YieldFrom
+   - [/] Yield
+   - [/] YieldFrom
    - [ ] Await
    - [ ] Compare
    - [ ] Call
