@@ -1,10 +1,11 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const testing = std.testing;
+
 const lex = @import("lex.zig");
-const ObjectInt = @import("object.zig").ObjectInt;
-const ObjectFloat = @import("object.zig").ObjectFloat;
 const Token = lex.Token;
+const ObjectFloat = @import("object.zig").ObjectFloat;
+const ObjectInt = @import("object.zig").ObjectInt;
 const test_examples = @import("test/utils.zig").examples;
 
 const log = std.log.scoped(.parse);
@@ -61,16 +62,16 @@ const UnaryOpKind = enum {
 };
 const UnaryOp = struct { value: *const AstNode, kind: UnaryOpKind };
 pub const BinaryOp = struct { lhs: *const AstNode, rhs: *const AstNode };
-const List = std.ArrayList(*const AstNode);
+const List = std.array_list.Managed(*const AstNode);
 const BoolOpKind = enum {
     @"and",
     @"or",
 };
 const BoolOp = struct { lhs: *const AstNode, rhs: *const AstNode, kind: BoolOpKind };
 const SetItem = struct { unpack: bool, value: *const AstNode };
-const Set = std.ArrayList(SetItem);
+const Set = std.array_list.Managed(SetItem);
 const DictItem = struct { key: ?*const AstNode, value: *const AstNode };
-const Dictionary = std.ArrayList(DictItem);
+const Dictionary = std.array_list.Managed(DictItem);
 const Statement = List;
 const ClassDefinition = struct {
     name: []const u8,
@@ -99,14 +100,14 @@ const ImportDefinition = struct {
     alias: ?Ref,
 };
 
-const ImportExpression = std.ArrayList(ImportDefinition);
+const ImportExpression = std.array_list.Managed(ImportDefinition);
 const ExpressionContext = enum { Load, Store };
 const Parameter = struct {
     identifier: *const AstNode,
     annotation: ?*const AstNode,
     default_value: ?*const AstNode,
 };
-const ParameterList = std.ArrayList(Parameter);
+const ParameterList = std.array_list.Managed(Parameter);
 const Parameters = struct {
     arguments: ParameterList,
     position_only_arguments: ParameterList,
@@ -187,7 +188,7 @@ pub const Parser = struct {
     pub fn parse(self: *Self) Error!*const AstNode {
         const root = try self.allocator.create(AstNode);
         // const statement = try self.parseStatement();
-        var statement = std.ArrayList(*const AstNode).init(self.allocator);
+        var statement = std.array_list.Managed(*const AstNode).init(self.allocator);
         while (self.peek()) |token| {
             _ = token;
             try statement.append(try self.parseExpression(.lowest));
@@ -938,7 +939,7 @@ pub const Parser = struct {
 
     fn parseImport(self: *Self) Error!*AstNode {
         self.expectAndSkip(.import_kw) catch unreachable;
-        var list = std.ArrayList(ImportDefinition).init(self.allocator);
+        var list = std.array_list.Managed(ImportDefinition).init(self.allocator);
 
         while (true) {
             const package = try self.parsePackageSpec(true);
@@ -958,7 +959,7 @@ pub const Parser = struct {
 
     fn parseFromImport(self: *Self) Error!*AstNode {
         self.expectAndSkip(.from_kw) catch unreachable;
-        var list = std.ArrayList(ImportDefinition).init(self.allocator);
+        var list = std.array_list.Managed(ImportDefinition).init(self.allocator);
         const module = try self.parseRefSpec();
 
         try self.expectAndSkip(.import_kw);
@@ -1003,7 +1004,7 @@ pub const Parser = struct {
     }
 
     fn parseRefSpec(self: *Self) Error!RefSpec {
-        var ref_spec = std.ArrayList(Ref).init(self.allocator);
+        var ref_spec = std.array_list.Managed(Ref).init(self.allocator);
         while (true) {
             const ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
             try ref_spec.append(ref);

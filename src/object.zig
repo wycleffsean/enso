@@ -1,5 +1,8 @@
 const std = @import("std");
+
+const OpCode = @import("./bytecode/opcodes.zig").OpCode;
 const intern = @import("bytecode/intern.zig");
+pub const Symbol = intern.Index;
 const Exception = @import("exception.zig");
 
 pub const ObjectInt = i64;
@@ -42,9 +45,9 @@ pub const Object = union(enum) {
 
 const max_digits = blk: {
     const math = std.math;
-    const max = math.maxInt(ObjectInt);
-    const ln_max = math.log(f32, math.e, max);
-    break :blk @as(u6, @intFromFloat(@as(f64, math.floor(ln_max / math.ln10)))) + 1;
+    const max = math.floatMax(ObjectFloat);
+    const ln_max = math.log(f64, math.e, max);
+    break :blk @as(u16, @intFromFloat(@as(f64, math.floor(ln_max / math.ln10)))) + 1;
 };
 
 // __str__ - a temporary solution
@@ -72,7 +75,6 @@ pub const False = Object{ .bool = false };
 pub const True = Object{ .bool = true };
 pub const Zero = Object{ .int = 0 };
 pub const One = Object{ .int = 1 };
-pub const Symbol = intern.Index;
 pub const EmptyArray = Object{ .array = &[_]Object{} };
 pub const EmptyTuple = Object{ .tuple = &[_]Object{} };
 pub const EmptyString = Object{ .string = .{ .string = "" } };
@@ -138,7 +140,6 @@ pub const Code = struct {
 };
 
 // Not "objects", but children of them
-const OpCode = @import("./bytecode/opcodes.zig").OpCode;
 pub const Instruction = struct {
     opcode: OpCode,
     arg: ?u8,

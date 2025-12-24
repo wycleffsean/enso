@@ -1,10 +1,11 @@
 const std = @import("std");
+const testing = std.testing;
+
 const bc = @import("bytecode.zig");
 const intern = @import("bytecode/intern.zig");
 const utils = @import("utils.zig");
 const Iterator = utils.Iterator;
 const TestParse = utils.testing.TestParse;
-const testing = std.testing;
 
 // analogue of Block in IR
 //   - always pushes a scope
@@ -14,15 +15,15 @@ const testing = std.testing;
 const Scope = struct {
     const Self = @This();
 
-    children: std.ArrayList(Self),
+    children: std.array_list.Managed(Self),
     parent: ?*const Self,
-    symbols: std.ArrayList(intern.Index),
+    symbols: std.array_list.Managed(intern.Index),
 
     fn init(allocator: std.mem.Allocator, parent: ?*Self) Self {
         return .{
             .parent = parent,
-            .children = std.ArrayList(Self).init(allocator),
-            .symbols = std.ArrayList(intern.Index).init(allocator),
+            .children = std.array_list.Managed(Self).init(allocator),
+            .symbols = std.array_list.Managed(intern.Index).init(allocator),
         };
     }
 

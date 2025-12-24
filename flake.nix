@@ -2,10 +2,10 @@
   description = "Enso development environment";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";
   };
 
-  outputs = { self , flake-utils, nixpkgs ,... }:
+  outputs = { self , flake-utils, nixpkgs,... }:
       flake-utils.lib.eachDefaultSystem (system:
           let
                 pkgs = nixpkgs.legacyPackages.${system};

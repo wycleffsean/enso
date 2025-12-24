@@ -1,20 +1,20 @@
 const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
+
 const bytecode = @import("bytecode.zig");
-const builtins = @import("vm/builtins.zig");
+const intern = @import("bytecode/intern.zig");
 const OpCode = @import("bytecode/opcodes.zig").OpCode;
-const object = @import("object.zig");
 const fatalExit = @import("utils.zig").fatalExit;
+const object = @import("object.zig");
 const Object = object.Object;
 const None = object.None;
-
-const assert = std.debug.assert;
-// for tests
-const testing = std.testing;
-const intern = @import("bytecode/intern.zig");
 const Parser = @import("parse.zig").Parser;
 const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
+const builtins = @import("vm/builtins.zig");
 
+// for tests
 const stack_depth = 1000;
 
 pub const Error = error{
@@ -147,7 +147,7 @@ fn testExample(comptime example: test_utils.Example) !void {
     var ctx = try testSetup(example.source(), &buffer);
     defer testTeardown(&ctx);
 
-    var stdout = std.ArrayList(u8).init(testing.allocator);
+    var stdout = std.array_list.Managed(u8).init(testing.allocator);
     defer stdout.deinit();
     const stdout_writer = stdout.writer();
 

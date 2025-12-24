@@ -1,15 +1,15 @@
 const std = @import("std");
-const parse = @import("parse.zig");
+const testing = std.testing;
+const comptimePrint = std.fmt.comptimePrint;
+
 const intern = @import("bytecode/intern.zig");
 const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const object = @import("object.zig");
-const test_utils = @import("test/utils.zig");
-const test_examples = test_utils.examples;
+const parse = @import("parse.zig");
 const AstNode = parse.AstNode;
 const Parser = parse.Parser;
-const testing = std.testing;
-
-const comptimePrint = std.fmt.comptimePrint;
+const test_utils = @import("test/utils.zig");
+const test_examples = test_utils.examples;
 
 const RelativeJump = struct { delta: object.ObjectInt };
 const BinaryOperation = enum {
@@ -129,7 +129,7 @@ const StackItem = union(enum) {
 
 pub const IrGen = struct {
     ast: *const AstNode,
-    stack: std.ArrayList(StackItem),
+    stack: std.array_list.Managed(StackItem),
     intern_pool: *intern.StringInternPool,
 
     const Self = @This();
@@ -142,7 +142,7 @@ pub const IrGen = struct {
         intern_pool: *intern.StringInternPool,
         ast: *const AstNode,
     ) Self {
-        const stack = std.ArrayList(StackItem).init(allocator);
+        const stack = std.array_list.Managed(StackItem).init(allocator);
         return .{
             .ast = ast,
             .intern_pool = intern_pool,
@@ -209,13 +209,13 @@ pub const IrGen = struct {
         }
     }
 
-    fn generateBinaryOp(self: *Self, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
+    fn generateBinaryOp(self: *Self, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.array_list.Managed(Insn)) Error!void {
         try self.generateInsns(binary_op.lhs, insns);
         try self.generateInsns(binary_op.rhs, insns);
         try insns.append(.{ .binary_op = kind });
     }
 
-    fn generateInsns(self: *Self, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
+    fn generateInsns(self: *Self, ast_node: *const AstNode, insns: *std.array_list.Managed(Insn)) Error!void {
         switch (ast_node.*) {
             // .root => break :blk Insn{ .@"resume" = 0 },
             // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
@@ -349,7 +349,7 @@ pub const IrGen = struct {
     }
 
     pub fn generate(self: *Self, allocator: std.mem.Allocator) Error![]Insn {
-        var insns = std.ArrayList(Insn).init(allocator);
+        var insns = std.array_list.Managed(Insn).init(allocator);
         const root_block = Block{ .parent = null };
         var current_block: *const Block = &root_block;
         try self.buildStack(self.ast, current_block);

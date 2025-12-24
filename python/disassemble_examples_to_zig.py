@@ -3,11 +3,10 @@
 # but turning the output into a zig source file for easy consumption
 
 import dis
-import types
-from pathlib import Path
-from collections import namedtuple
 import subprocess
-
+import types
+from collections import namedtuple
+from pathlib import Path
 from sys import argv
 
 # Instruction(opname='RESUME', opcode=151, arg=0, argval=0, argrepr='', offset=0, starts_line=0, is_jump_target=False, positions=Positions(lineno=0, end_lineno=1, col_offset=0, end_col_offset=0)
@@ -40,35 +39,37 @@ fn opnameToEnum(opcode: u8, opcode_str: []const u8, opname: OpCode) OpCode {
 
 examples = []
 
+
 def as_hex_string(s: str) -> str:
-    byte_array = s.encode('utf-8')  # get bytes
+    byte_array = s.encode("utf-8")  # get bytes
     hex_values = [f"0x{b:02x}" for b in byte_array]  # format each byte
     return ", ".join(hex_values)
+
 
 def argval_to_PyArgVal(val):
     if val is None:
         return "object.None"
-    elif isinstance(val, str):
-        return 'object.Object{ .string = .{ .string = &[_]u8{' + as_hex_string(val) + '} } }'
+    # elif isinstance(val, str):
+    # return 'object.Object{ .string = .{ .string = &[_]u8{' + as_hex_string(val) + '} } }'
     elif isinstance(val, bool):
-        return 'object.Object{ .bool = ' + str(val).lower() + ' }'
+        return "object.Object{ .bool = " + str(val).lower() + " }"
     elif isinstance(val, int):
-        return 'object.Object{ .int = ' + str(val) + ' }'
+        return "object.Object{ .int = " + str(val) + " }"
     elif isinstance(val, float):
-        return 'object.Object{ .float = ' + str(val) + ' }'
+        return "object.Object{ .float = " + str(val) + " }"
     elif isinstance(val, list):
-        return 'object.EmptyArray'
+        return "object.EmptyArray"
     elif isinstance(val, tuple):
-        res = 'object.Object{ .tuple = &[_]object.Object{\n'
+        res = "object.Object{ .tuple = &[_]object.Object{\n"
         for item in val:
-            res += argval_to_PyArgVal(item) + '\n,'
-        return res + '} }'
+            res += argval_to_PyArgVal(item) + "\n,"
+        return res + "} }"
     elif isinstance(val, types.CodeType):
-        return 'object.Object{ .code = ' + codeobject_to_zig(val) + ' }'
+        return "object.Object{ .code = " + codeobject_to_zig(val) + " }"
     else:
         # this is wrong, for example sometimes it can be a symbol
         # like a method name
-        return 'object.None'
+        return "object.None"
 
 
 def instruction_to_zig(insn):
@@ -84,12 +85,14 @@ def instruction_to_zig(insn):
       .is_jump_target = {"true" if insn.is_jump_target else "false"},
   }}"""
 
+
 def instructions_to_zig(co):
     insn_set = f"&[_]object.Instruction {{"
     for instruction in dis.get_instructions(co):
         insn_set += instruction_to_zig(instruction)
         insn_set += ", "
     return insn_set + "}"
+
 
 def codeobject_to_zig(co):
     return f"""  .{{
@@ -115,6 +118,7 @@ def codeobject_to_zig(co):
       .instructions = {instructions_to_zig(co)},
   }}"""
 
+
 def named_codeobject(example_path, co):
     x = Path(example_path)
     example_name = "_".join([x.parent.stem, x.stem])
@@ -124,15 +128,18 @@ def named_codeobject(example_path, co):
     print(codeobject_to_zig(co))
     print(";")
 
+
 # def bytes_to_zig_string(bytes):
 #     hex = bytes.hex()
 #     zig_hex = ",".join(["0x" + hex[i:i+2] for i in range(0, len(hex), 2)])
 #     return "".join(["[_]u8 {", zig_hex, "}"])
 
+
 def compile_file(path: str | Path) -> types.CodeType:
     path = Path(path)
     src = path.read_text(encoding="utf-8")
     return compile(src, filename=str(path), mode="exec")
+
 
 for example_path in argv[1:]:
     co = compile_file(example_path)
@@ -147,7 +154,7 @@ for example in examples:
     cmd_result = subprocess.run(["python", example.path], capture_output=True)
     # clip out quotes and final newline
     stdout_result = repr(cmd_result.stdout.decode())[1:-3]
-	# TODO!!!! figure out how to print a valid zig string from python bytes
+    # TODO!!!! figure out how to print a valid zig string from python bytes
     # stderr_result = repr(cmd_result.stderr.decode())[1:-1]
     # stderr_result.encode("unicode_escape")
 

@@ -1,18 +1,19 @@
 const std = @import("std");
 const io = std.io;
-const clap = @import("clap");
-const intern = @import("bytecode/intern.zig");
+const testing = std.testing;
 
-// for tests
-const lex = @import("lex.zig");
-const parse = @import("parse.zig");
+const clap = @import("clap");
+
 const bytecode = @import("bytecode.zig");
+const intern = @import("bytecode/intern.zig");
 const eval = @import("eval.zig");
 const gen = @import("gen.zig");
-const vm = @import("vm.zig");
-const testing = std.testing;
+const lex = @import("lex.zig");
+const parse = @import("parse.zig");
 const test_utils = @import("test/utils.zig");
+const vm = @import("vm.zig");
 
+// for tests
 const ReferenceCapabilities = enum {
     isolated,
     value,
@@ -33,8 +34,8 @@ pub fn main() anyerror!void {
     var allocator = gpa.allocator();
 
     const params = comptime clap.parseParamsComptime(
-    // tabs aren't cool in multiline literals: https://github.com/ziglang/zig-spec/issues/38
-    // so this formatting is a bit lame
+        // tabs aren't cool in multiline literals: https://github.com/ziglang/zig-spec/issues/38
+        // so this formatting is a bit lame
         \\-h, --help Display this help and exit.
         \\-c,--command <str> Specify the command to execute
         \\<str> File to execute
@@ -46,13 +47,13 @@ pub fn main() anyerror!void {
         .diagnostic = &diag,
         .allocator = gpa.allocator(),
     }) catch |err| {
-        diag.report(io.getStdErr().writer(), err) catch {};
+        diag.report(std.io.getStdErrWriter()().writer(), err) catch {};
         return err;
     };
     defer res.deinit();
 
     if (res.args.help != 0)
-        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return clap.help(std.io.getStdErrWriter().writer(), clap.Help, &params, .{});
     if (res.args.command) |cmd|
         try interpret(allocator, cmd);
     if (res.positionals[0]) |file_path| {
