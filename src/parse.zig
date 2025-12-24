@@ -19,6 +19,7 @@ const AstNodeTag = enum {
     unary_op,
     bool_op,
     comparison,
+    membership,
     add,
     sub,
     mult,
@@ -168,6 +169,7 @@ pub const AstNode = union(AstNodeTag) {
     unary_op: UnaryOp,
     bool_op: BoolOp,
     comparison: Comparison,
+    membership: BinaryOp,
     // TODO: these really only have to be a single binary_op tag
     add: BinaryOp,
     sub: BinaryOp,
@@ -329,7 +331,7 @@ pub const Parser = struct {
         .{ .none_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .break_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .except_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .in_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .in_kw, .lessgreater, nullDenotationUnhandled, parseMembershipTest },
         .{ .raise_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .true_kw, .lowest, parseBool, leftDenotationUnhandled },
         .{ .class_kw, .lowest, parseClassDefinition, leftDenotationUnhandled },
@@ -677,6 +679,15 @@ pub const Parser = struct {
         const rhs = try self.parseExpression(.lessgreater);
         const result = try self.allocator.create(AstNode);
         result.* = .{ .comparison = .{ .kind = kind, .lhs = lhs, .rhs = rhs } };
+        return result;
+    }
+
+    fn parseMembershipTest(self: *Self, lhs: *AstNode) Error!*AstNode {
+        try self.expectAndSkip(.in_kw);
+
+        const rhs = try self.parseExpression(.lowest);
+        const result = try self.allocator.create(AstNode);
+        result.* = .{ .membership = .{ .lhs = lhs, .rhs = rhs } };
         return result;
     }
 
