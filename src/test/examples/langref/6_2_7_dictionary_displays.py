@@ -4,3 +4,4 @@
 empty = {}
 x = { "a": 1, }
 y = { "b": 2, "c": 3, **x }
+c = {z : z for z in range(5)}

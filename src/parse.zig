@@ -42,12 +42,13 @@ const AstNodeTag = enum {
     named_expression,
     call,
     field_access,
-    array_literal,
+    list,
     set,
     dictionary,
     target_list,
     for_in,
     conditional,
+    comprehension,
     string_literal,
     class,
     import,
@@ -67,10 +68,37 @@ const BoolOpKind = enum {
     @"or",
 };
 const BoolOp = struct { lhs: *const AstNode, rhs: *const AstNode, kind: BoolOpKind };
+const ComprehensionFor = struct {
+    target_list: List,
+    iterator: *const AstNode,
+    predicate_expression: ?*const AstNode,
+};
+const Comprehension = struct {
+    expression: *const AstNode,
+    for_expressions: std.ArrayList(ComprehensionFor),
+};
+const ListDisplay = union(enum) {
+    list: List,
+    comprehension: Comprehension,
+    empty: void,
+};
 const SetItem = struct { unpack: bool, value: *const AstNode };
 const Set = std.ArrayList(SetItem);
+const SetDisplay = union(enum) {
+    set: Set,
+    comprehension: Comprehension,
+};
 const DictItem = struct { key: ?*const AstNode, value: *const AstNode };
 const Dictionary = std.ArrayList(DictItem);
+const DictComprehension = struct {
+    expression: DictItem,
+    for_expressions: std.ArrayList(ComprehensionFor),
+};
+const DictionaryDisplay = union(enum) {
+    dictionary: Dictionary,
+    comprehension: DictComprehension,
+    empty: void,
+};
 const Statement = List;
 const ClassDefinition = struct {
     name: []const u8,
@@ -147,12 +175,13 @@ pub const AstNode = union(AstNodeTag) {
     named_expression: BinaryOp,
     call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
     field_access: BinaryOp,
-    array_literal: Statement,
-    set: Set,
-    dictionary: Dictionary,
+    list: ListDisplay,
+    set: SetDisplay,
+    dictionary: DictionaryDisplay,
     target_list: List,
     for_in: struct { target_list: List, iterable: *const AstNode, suite: Statement, else_suite: ?Statement },
     conditional: struct { predicate: *const AstNode, lhs: *const AstNode, rhs: *const AstNode },
+    comprehension: Comprehension,
     string_literal: struct { value: []const u8 },
     class: ClassDefinition,
     import: []ImportDefinition,
@@ -244,12 +273,12 @@ pub const Parser = struct {
         .{ .name, .lowest, parseName, leftDenotationUnhandled },
         .{ .assign, .equality, nullDenotationUnhandled, parseAssignment },
         .{ .walrus, .equality, nullDenotationUnhandled, parseNamedExpression },
-        .{ .lparen, .call, parseGroup, parseFunctionCall },
+        .{ .lparen, .call, parseGroupOrGenerator, parseFunctionCall },
         .{ .at, .product, nullDenotationUnhandled, parseBinaryOp },
         .{ .string, .lowest, parseStringLiteral, leftDenotationUnhandled },
         .{ .dot, .call, nullDenotationUnhandled, parseFieldAccess },
         .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .comma, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .comma, .lowest, nullDenotationIllegal, leftDenotationUnhandled },
         .{ .pipe, .lowest, nullDenotationUnhandled, parseBinaryOp },
         .{ .minus, .prefix, parseUnaryOp, parseBinaryOp },
         .{ .percent, .product, nullDenotationUnhandled, parseBinaryOp },
@@ -261,7 +290,7 @@ pub const Parser = struct {
         .{ .ampersand, .lowest, nullDenotationUnhandled, parseBinaryOp },
         .{ .caret, .lowest, nullDenotationUnhandled, parseBinaryOp },
         .{ .tilde, .lowest, parseUnaryOp, leftDenotationUnhandled },
-        .{ .lsbracket, .lowest, parseArrayLiteral, leftDenotationUnhandled },
+        .{ .lsbracket, .lowest, parseList, leftDenotationUnhandled },
         .{ .rsbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .lcbracket, .lowest, parseSetOrDictionary, leftDenotationUnhandled },
         .{ .rcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -418,6 +447,11 @@ pub const Parser = struct {
     fn nullDenotationUnhandled(self: *Self) Error!*AstNode {
         log.err("oh no! we don't handle this null denotation: {any}", .{try self.take()});
         return Error.NullDenotationUnhandled;
+    }
+
+    fn nullDenotationIllegal(self: *Self) Error!*AstNode {
+        _ = self;
+        return Error.UnexpectedToken;
     }
 
     fn leftDenotationUnhandled(self: *Self, lhs: *AstNode) Error!*AstNode {
@@ -613,16 +647,55 @@ pub const Parser = struct {
         return node;
     }
 
-    fn parseGroup(self: *Self) Error!*AstNode {
-        const lparen_token = try self.take(); // skip lparen token
-        assert(lparen_token == .lparen);
-        const rhs = try self.parseExpression(.lowest);
-        const group_node = try self.allocator.create(AstNode);
-        group_node.* = .{ .group = .{ .value = rhs } };
-        const rparen_token = try self.take(); // skip rparen token
-        // we raise here because this could be user error
-        if (rparen_token != .rparen) return Error.UnexpectedToken;
-        return group_node;
+    fn parseGroupOrGenerator(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.lparen);
+        const expression = try self.parseExpression(.lowest);
+        const result = try self.allocator.create(AstNode);
+        errdefer self.allocator.destroy(result);
+
+        if (self.expect(.for_kw)) {
+            // generator
+            const comprehension = try self.parseComprehension(Comprehension, expression);
+            result.* = .{ .comprehension = comprehension };
+        } else {
+            // group
+            result.* = .{ .group = .{ .value = expression } };
+        }
+        try self.expectAndSkip(.rparen);
+        return result;
+    }
+
+    // comprehension: assignment_expression comp_for
+    // comp_for:      ["async"] "for" target_list "in" or_test [comp_iter]
+    // comp_iter:     comp_for | comp_if
+    // comp_if:       "if" or_test [comp_iter]
+    fn parseComprehension(self: *Self, comptime T: type, expression: anytype) Error!T {
+        var comprehension = T{
+            .expression = expression,
+            .for_expressions = std.ArrayList(ComprehensionFor).init(self.allocator),
+        };
+        while (self.expect(.for_kw)) {
+            try self.expectAndSkip(.for_kw);
+            const comp_for = try self.parseComprehensionFor();
+            try comprehension.for_expressions.append(comp_for);
+        }
+        return comprehension;
+    }
+
+    inline fn parseComprehensionFor(self: *Self) Error!ComprehensionFor {
+        const target_list = try self.parseTargetList();
+        try self.expectAndSkip(.in_kw);
+        const iterator = try self.parseExpression(.lowest);
+        var predicate_expression: ?*const AstNode = null;
+        if (self.expect(.if_kw)) {
+            try self.expectAndSkip(.if_kw);
+            predicate_expression = try self.parseExpression(.lowest);
+        }
+        return .{
+            .target_list = target_list,
+            .iterator = iterator,
+            .predicate_expression = predicate_expression,
+        };
     }
 
     // TODO: as we evolve and more formally attempt to match the grammar, this should probably be replaced
@@ -649,16 +722,31 @@ pub const Parser = struct {
         return list;
     }
 
-    fn parseArrayLiteral(self: *Self) Error!*AstNode {
+    fn parseList(self: *Self) Error!*AstNode {
         try self.expectAndSkip(.lsbracket);
+        const result = try self.allocator.create(AstNode);
+        errdefer self.allocator.destroy(result);
 
-        var array_literal_node = try self.allocator.create(AstNode);
-        array_literal_node.* = .{ .array_literal = Statement.init(self.allocator) };
+        if (self.expect(.rsbracket)) {
+            self.expectAndSkip(.rsbracket) catch unreachable;
+            result.* = .{ .list = .{ .empty = {} } };
+            return result;
+        }
 
-        try self.parseCommaSeparatedList(&array_literal_node.array_literal, .rsbracket);
+        const first_expression = try self.parseExpression(.lowest);
+
+        if (self.expect(.for_kw)) {
+            const comprehension = try self.parseComprehension(Comprehension, first_expression);
+            result.* = .{ .list = .{ .comprehension = comprehension } };
+        } else {
+            var list = List.init(self.allocator);
+            try list.append(first_expression);
+            if (self.expectAndSkipOptional(.comma)) try self.parseCommaSeparatedList(&list, .rsbracket);
+            result.* = .{ .list = .{ .list = list } };
+        }
 
         try self.expectAndSkip(.rsbracket);
-        return array_literal_node;
+        return result;
     }
 
     fn parseDictItem(self: *Self) Error!DictItem {
@@ -682,16 +770,33 @@ pub const Parser = struct {
     fn parseDictionary(self: *Self) Error!*AstNode {
         var dictionary = Dictionary.init(self.allocator);
         errdefer dictionary.deinit();
+        const result = try self.allocator.create(AstNode);
+        errdefer self.allocator.destroy(result);
+
+        if (self.expect(.rcbracket)) {
+            result.* = .{ .dictionary = .{ .empty = {} } };
+            return result;
+        }
+
+        var item = try self.parseDictItem();
+
+        // Is this a comprehension?
+        if (self.expect(.for_kw)) {
+            // TODO: is unpacking legal here?
+            const comprehension = try self.parseComprehension(DictComprehension, item);
+            result.* = .{ .dictionary = .{ .comprehension = comprehension } };
+            return result;
+        }
+
         while (true) {
-            if (self.expect(.rcbracket)) break;
-            const item = try self.parseDictItem();
             try dictionary.append(item);
             // trailing commas are grammatically allowed
             self.expectAndSkip(.comma) catch break;
+            if (self.expect(.rcbracket)) break;
+            item = try self.parseDictItem();
         }
-        const dictionary_node = try self.allocator.create(AstNode);
-        dictionary_node.* = .{ .dictionary = dictionary };
-        return dictionary_node;
+        result.* = .{ .dictionary = .{ .dictionary = dictionary } };
+        return result;
     }
 
     fn parseSetItem(self: *Self) Error!SetItem {
@@ -706,16 +811,27 @@ pub const Parser = struct {
     fn parseSet(self: *Self) Error!*AstNode {
         var set = Set.init(self.allocator);
         errdefer set.deinit();
+        const result = try self.allocator.create(AstNode);
+        errdefer self.allocator.destroy(result);
+
+        var item = try self.parseSetItem();
+
+        // Is this a comprehension?
+        if (self.expect(.for_kw)) {
+            const comprehension = try self.parseComprehension(Comprehension, item.value);
+            result.* = .{ .set = .{ .comprehension = comprehension } };
+            return result;
+        }
+
         while (true) {
             if (self.unwound == null and self.expect(.rcbracket)) break;
-            const item = try self.parseSetItem();
             try set.append(item);
             // trailing commas are grammatically allowed
             self.expectAndSkip(.comma) catch break;
+            item = try self.parseSetItem();
         }
-        const dictionary_node = try self.allocator.create(AstNode);
-        dictionary_node.* = .{ .set = set };
-        return dictionary_node;
+        result.* = .{ .set = .{ .set = set } };
+        return result;
     }
 
     fn parseSetOrDictionary(self: *Self) Error!*AstNode {
@@ -1129,7 +1245,7 @@ test "parse: array literal" {
         defer arena.deinit();
         var parser = Parser.init(allocator, "[]");
         const result = try parser.parseSimpleExpression();
-        try testing.expect(result.array_literal.items.len == 0);
+        try testing.expect(result.list == .empty);
     }
     { // single element
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -1137,7 +1253,7 @@ test "parse: array literal" {
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1]");
         const result = try parser.parseSimpleExpression();
-        try testing.expect(result.array_literal.items.len == 1);
+        try testing.expect(result.list.list.items.len == 1);
     }
     { // trailing comma
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -1145,21 +1261,27 @@ test "parse: array literal" {
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,]");
         const result = try parser.parseSimpleExpression();
-        try testing.expect(result.array_literal.items.len == 1);
+        try testing.expect(result.list.list.items.len == 1);
     }
     { // Unclosed
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,");
-        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression());
+        testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression()) catch |err| {
+            highlightSource("Unclosed array literal", "[1,", parser.peek());
+            return err;
+        };
     }
     { // illegal trailing comma
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[,]");
-        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression());
+        testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression()) catch |err| {
+            highlightSource("Illegal trailiing comma", "[,]", parser.peek());
+            return err;
+        };
     }
 }
 

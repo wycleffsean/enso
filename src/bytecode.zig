@@ -43,6 +43,7 @@ pub const Insn = union(OpCode) {
     store_subscr: void,
     get_iter: void,
     load_build_class: void,
+    return_generator: void,
     return_value: void,
     setup_annotations: void,
     store_name: object.Object,
@@ -60,12 +61,20 @@ pub const Insn = union(OpCode) {
     import_from: void,
     pop_jump_if_false: RelativeJump,
     pop_jump_if_true: RelativeJump,
+    load_global: object.Object,
+    reraise: void,
     copy: void,
     return_const: void,
     binary_op: BinaryOperation,
     load_fast: object.Object,
+    store_fast: object.Object,
     make_function: void,
     jump_backward: RelativeJump,
+    load_fast_and_clear: void,
+    list_append: void,
+    set_add: void,
+    map_add: void,
+    yield_value: void,
     @"resume": usize,
     build_const_key_map: void,
     list_extend: void,
@@ -289,7 +298,11 @@ pub const IrGen = struct {
             .bool => |b| try insns.append(.{ .load_const = .{ .bool = b } }),
             .float => |float| try insns.append(.{ .load_const = .{ .float = float.value } }),
             .complex => |cmp| try insns.append(.{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } }),
-            .array_literal => try insns.append(.{ .load_const = object.EmptyArray }),
+            .list => |list| switch (list) {
+                .empty => try insns.append(.{ .load_const = object.EmptyArray }),
+                // TODO - make exhaustive
+                else => try insns.append(.{ .load_const = object.EmptyArray }),
+            },
             .pass => {}, // surprisingly not a nop
             .assignment => |assignment| {
                 try self.generateInsns(assignment.rhs, insns);

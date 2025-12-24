@@ -30,13 +30,13 @@ Important macros:
    - [x] BoolOp
    - [x] BinOp
    - [x] UnaryOp
-   - [ ] Lambda
+   - [/] Lambda
    - [x] IfExp
    - [/] Dict
    - [/] Set
-   - [ ] Generator
-   - [ ] ListComp
-   - [ ] DictComp
+   - [/] Generator
+   - [/] ListComp
+   - [/] DictComp
    - [ ] Yield
    - [ ] YieldFrom
    - [ ] Await
