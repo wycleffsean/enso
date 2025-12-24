@@ -65,6 +65,7 @@ pub const Insn = union(OpCode) {
     pop_jump_if_false: RelativeJump,
     pop_jump_if_true: RelativeJump,
     load_global: object.Object,
+    is_op: void,
     contains_op: void,
     reraise: void,
     copy: void,

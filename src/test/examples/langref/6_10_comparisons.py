@@ -18,3 +18,8 @@ f = "" in "yo"
 # 'not' is a unary or infix operator in the parser.  We'll have to
 # revisit this
 # g = "yo" not in ""
+
+
+## Identity Comparisons
+h = a is a
+i = a is not b

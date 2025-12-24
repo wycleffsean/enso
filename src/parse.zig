@@ -73,6 +73,8 @@ pub const ComparisonKind = enum {
     leq,
     geq,
     neq,
+    identity,
+    not_identity,
 };
 pub const Comparison = struct { kind: ComparisonKind, lhs: *const AstNode, rhs: *const AstNode };
 const List = std.ArrayList(*const AstNode);
@@ -336,7 +338,7 @@ pub const Parser = struct {
         .{ .true_kw, .lowest, parseBool, leftDenotationUnhandled },
         .{ .class_kw, .lowest, parseClassDefinition, leftDenotationUnhandled },
         .{ .finally_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .is_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .is_kw, .lessgreater, nullDenotationUnhandled, parseIdentityComparison },
         .{ .return_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .and_kw, .sum, nullDenotationUnhandled, parseBoolOp },
         .{ .continue_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -688,6 +690,16 @@ pub const Parser = struct {
         const rhs = try self.parseExpression(.lowest);
         const result = try self.allocator.create(AstNode);
         result.* = .{ .membership = .{ .lhs = lhs, .rhs = rhs } };
+        return result;
+    }
+
+    fn parseIdentityComparison(self: *Self, lhs: *AstNode) Error!*AstNode {
+        try self.expectAndSkip(.is_kw);
+        const kind: ComparisonKind = if (self.expectAndSkipOptional(.not_kw)) .not_identity else .identity;
+
+        const rhs = try self.parseExpression(.lowest);
+        const result = try self.allocator.create(AstNode);
+        result.* = .{ .comparison = .{ .kind = kind, .lhs = lhs, .rhs = rhs } };
         return result;
     }
 

@@ -31,6 +31,7 @@ pub const OpCode = enum(u8) {
     pop_jump_if_false = 114,
     pop_jump_if_true = 115,
     load_global = 116,
+    is_op = 117,
     contains_op = 118,
     reraise = 119,
     copy = 120,
