@@ -41,7 +41,7 @@ Important macros:
    - [/] YieldFrom
    - [/] Await
    - [/] Compare
-   - [ ] Call
+   - [/] Call
    - [ ] Constant
    - [ ] JoinedStr
    - [ ] FormattedValue
