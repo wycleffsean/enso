@@ -39,7 +39,7 @@ Important macros:
    - [/] DictComp
    - [/] Yield
    - [/] YieldFrom
-   - [ ] Await
+   - [/] Await
    - [ ] Compare
    - [ ] Call
    - [ ] Constant

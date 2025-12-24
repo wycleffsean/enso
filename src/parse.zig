@@ -53,6 +53,7 @@ const AstNodeTag = enum {
     class,
     import,
     yield,
+    @"await",
 };
 
 const UnaryOpKind = enum {
@@ -175,7 +176,7 @@ pub const AstNode = union(AstNodeTag) {
     var_decl: struct { name: []const u8 },
     parameter: Parameter,
     parameters: Parameters,
-    fn_decl: struct { name: []const u8, parameters: Parameters, suite: Statement },
+    fn_decl: struct { name: []const u8, @"async": bool = false, parameters: Parameters, suite: Statement },
     lambda: struct { parameters: Parameters, body: *const AstNode },
     assignment: BinaryOp,
     named_expression: BinaryOp,
@@ -192,6 +193,7 @@ pub const AstNode = union(AstNodeTag) {
     class: ClassDefinition,
     import: []ImportDefinition,
     yield: Yield,
+    @"await": *const AstNode,
 };
 
 pub const Parser = struct {
@@ -303,7 +305,7 @@ pub const Parser = struct {
         .{ .rcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .def_kw, .lowest, parseFunctionDefinition, leftDenotationUnhandled },
         .{ .false_kw, .lowest, parseBool, leftDenotationUnhandled },
-        .{ .await_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .await_kw, .lowest, parseAwait, leftDenotationUnhandled },
         .{ .else_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .import_kw, .lowest, parseImport, leftDenotationUnhandled },
         .{ .pass_kw, .lowest, parsePass, leftDenotationUnhandled },
@@ -331,7 +333,7 @@ pub const Parser = struct {
         .{ .global_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .not_kw, .lowest, parseUnaryOp, leftDenotationUnhandled },
         .{ .with_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .async_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+        .{ .async_kw, .lowest, parseAsyncFunctionDefinition, leftDenotationUnhandled },
         .{ .elif_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
         .{ .if_kw, .sum, nullDenotationUnhandled, parseIfExpression },
         .{ .or_kw, .sum, nullDenotationUnhandled, parseBoolOp },
@@ -928,6 +930,14 @@ pub const Parser = struct {
         return result;
     }
 
+    fn parseAwait(self: *Self) Error!*AstNode {
+        // TODO: we don't have the concept of a "primary", but
+        // technically we should not allow parsing arbitrary
+        // expressions if we want to align with the python grammar
+        try self.expectAndSkip(.await_kw);
+        return self.parseExpression(.lowest);
+    }
+
     // a "suite" is the block following the colon in compound statements
     fn parseSuite(self: *Self, owner_indent: lex.IndentLength) Error!Statement {
         try self.expectAndSkip(.colon);
@@ -1005,6 +1015,12 @@ pub const Parser = struct {
             .suite = try self.parseSuite(def_kw_token.getLocation().indent),
         } };
 
+        return fn_decl;
+    }
+
+    fn parseAsyncFunctionDefinition(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.async_kw);
+        const fn_decl = try self.parseFunctionDefinition();
         return fn_decl;
     }
 

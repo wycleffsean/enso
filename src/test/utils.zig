@@ -77,6 +77,11 @@ pub const examples = [_]Example{
         .test_vm = false,
     },
     .{
+        .name = "langref_6_4_await_expression",
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
         .name = "langref_6_11_boolean_operations",
         // the python compiler folds over these operations when using constants
         // so at this time we won't get the same results

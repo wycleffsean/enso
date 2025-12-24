@@ -72,6 +72,7 @@ pub const Insn = union(OpCode) {
     send: void,
     load_fast: object.Object,
     store_fast: object.Object,
+    get_awaitable: void,
     make_function: void,
     jump_backward_no_interrupt: RelativeJump,
     jump_backward: RelativeJump,

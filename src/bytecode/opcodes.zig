@@ -38,6 +38,7 @@ pub const OpCode = enum(u8) {
     send = 123,
     load_fast = 124,
     store_fast = 125,
+    get_awaitable = 131,
     make_function = 132,
     jump_backward_no_interrupt = 134,
     jump_backward = 140,
