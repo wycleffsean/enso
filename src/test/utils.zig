@@ -52,6 +52,11 @@ pub const examples = [_]Example{
         .test_vm = false,
     },
     .{
+        .name = "langref_6_2_2_1_string_literal_concatenation",
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
         .name = "langref_6_2_5_list_displays",
         .test_bytecode = false,
         .test_vm = false,
