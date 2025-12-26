@@ -26,6 +26,10 @@
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
             .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
         },
+        .mir = .{
+            .url = "https://github.com/vnmakarov/mir/archive/99c65079038f3ba9242ef646f308c266cfd7a8e5.tar.gz",
+            .hash = "N-V-__8AAIN8BgOokMNpgQaOLFu5jg-M0OXPX6_A_edqBL2c",
+        },
     },
     .paths = .{
         "build.zig",

@@ -23,6 +23,20 @@ pub fn build(b: *std.Build) !void {
     const clap = b.dependency("clap", .{});
     exe.root_module.addImport("clap", clap.module("clap"));
 
+    const mir_dep = b.dependency("mir", .{});
+    const mir = addMirDeps(b, mir_dep, target, optimize);
+    exe.linkLibrary(mir.mir_core);
+    exe.linkLibrary(mir.c2mir);
+    exe.linkLibrary(mir.mir2c);
+    exe.linkLibC();
+
+    exe.addIncludePath(mir_dep.path("."));
+    exe.addIncludePath(mir_dep.path("c2mir"));
+    exe.addIncludePath(mir_dep.path("mir2c"));
+
+    const mir_mod = b.addModule("mir", .{ .root_source_file = b.path("src/mir.zig") });
+    exe.root_module.addImport("mir", mir_mod);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 
@@ -114,4 +128,131 @@ fn pythonDisExamples(b: *std.Build) !*std.Build.Step.InstallFile {
     }
 
     return b.addInstallFile(python_run.captureStdOut(), "../src/test/disassembled_examples.zig");
+}
+
+const MirArtifacts = struct {
+    mir_core: *std.Build.Step.Compile,
+    c2mir: *std.Build.Step.Compile,
+    mir2c: *std.Build.Step.Compile,
+};
+
+fn addMirDeps(
+    b: *std.Build,
+    mir_dep: *std.Build.Dependency,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) MirArtifacts {
+    const mir_root = mir_dep.path(".");
+
+    const c_flags = &[_][]const u8{
+        "-std=c11",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_GNU_SOURCE",
+        // "-DMIR_x86_64",
+    };
+
+    const mir_core = b.addStaticLibrary(.{
+        .name = "mir_core",
+        .target = target,
+        .optimize = optimize,
+    });
+    mir_core.linkLibC();
+    mir_core.addIncludePath(mir_root);
+
+    mir_core.addCSourceFiles(.{
+        .root = mir_root,
+        .files = &[_][]const u8{
+            "mir.c",
+            "mir-gen.c",
+            // "mir-interp.c", // included by mir.c, not a separate translation unit
+            "mir-alloc-default.c",
+            "mir-code-alloc-default.c",
+        },
+        .flags = c_flags,
+    });
+
+    // c2mir
+    const c2mir = b.addStaticLibrary(.{
+        .name = "c2mir",
+        .target = target,
+        .optimize = optimize,
+    });
+    c2mir.linkLibC();
+    c2mir.addIncludePath(mir_root);
+    c2mir.addIncludePath(mir_dep.path("c2mir"));
+
+    addCFilesFromDirExcluding(
+        b,
+        c2mir,
+        mir_dep.path("c2mir"),
+        c_flags,
+        &[_][]const u8{"c2mir-driver.c"},
+    );
+
+    // mir2c
+    const mir2c = b.addStaticLibrary(.{
+        .name = "mir2c",
+        .target = target,
+        .optimize = optimize,
+    });
+    mir2c.linkLibC();
+    mir2c.addIncludePath(mir_root);
+    mir2c.addIncludePath(mir_dep.path("mir2c"));
+
+    addCFilesFromDirExcluding(
+        b,
+        mir2c,
+        mir_dep.path("mir2c"),
+        c_flags,
+        &[_][]const u8{
+            // add exclusions if there’s a driver main()
+        },
+    );
+
+    return .{ .mir_core = mir_core, .c2mir = c2mir, .mir2c = mir2c };
+}
+
+fn addCFilesFromDirExcluding(
+    b: *std.Build,
+    lib: *std.Build.Step.Compile,
+    dir_path: std.Build.LazyPath,
+    c_flags: []const []const u8,
+    exclude: []const []const u8,
+) void {
+    // Build scripts run on the host, so we can walk the directory at build time.
+    const arena = b.allocator;
+
+    const abs_dir = dir_path.getPath(b);
+    var dir = std.fs.openDirAbsolute(abs_dir, .{ .iterate = true }) catch |e| {
+        std.debug.panic("openDirAbsolute({s}) failed: {any}", .{ abs_dir, e });
+    };
+    defer dir.close();
+
+    var it = dir.iterate();
+    var files = std.ArrayList([]const u8).init(arena);
+
+    while (it.next() catch |e| {
+        std.debug.panic("iterate({s}) failed: {any}", .{ abs_dir, e });
+    }) |ent| {
+        if (ent.kind != .file) continue;
+        if (!std.mem.endsWith(u8, ent.name, ".c")) continue;
+
+        var skip = false;
+        for (exclude) |ex| {
+            if (std.mem.eql(u8, ent.name, ex)) {
+                skip = true;
+                break;
+            }
+        }
+        if (skip) continue;
+
+        // Store relative-to-dir filenames (Build API wants relative to .root)
+        files.append(arena.dupe(u8, ent.name) catch @panic("oom")) catch @panic("oom");
+    }
+
+    lib.addCSourceFiles(.{
+        .root = dir_path,
+        .files = files.items,
+        .flags = c_flags,
+    });
 }
