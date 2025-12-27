@@ -146,38 +146,41 @@ fn addMirDeps(
 
     const c_flags = &[_][]const u8{
         "-std=c11",
-        "-D_POSIX_C_SOURCE=200809L",
         "-D_GNU_SOURCE",
-        // "-DMIR_x86_64",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-fno-sanitize=alignment",
+        "-fno-sanitize=undefined",
     };
 
-    const mir_core = b.addStaticLibrary(.{
+    // mir_core (static)
+    const mir_core = b.addLibrary(.{
         .name = "mir_core",
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
-    mir_core.linkLibC();
+    mir_core.root_module.sanitize_c = .off;
     mir_core.addIncludePath(mir_root);
 
-    mir_core.addCSourceFiles(.{
-        .root = mir_root,
-        .files = &[_][]const u8{
-            "mir.c",
-            "mir-gen.c",
-            // "mir-interp.c", // included by mir.c, not a separate translation unit
-            "mir-alloc-default.c",
-            "mir-code-alloc-default.c",
-        },
+    mir_core.addCSourceFile(.{
+        .file = b.path("src/c/mir_unity.c"),
         .flags = c_flags,
     });
 
-    // c2mir
-    const c2mir = b.addStaticLibrary(.{
+    // c2mir (static)
+    const c2mir = b.addLibrary(.{
         .name = "c2mir",
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
-    c2mir.linkLibC();
+    c2mir.root_module.sanitize_c = .off;
     c2mir.addIncludePath(mir_root);
     c2mir.addIncludePath(mir_dep.path("c2mir"));
 
@@ -189,13 +192,17 @@ fn addMirDeps(
         &[_][]const u8{"c2mir-driver.c"},
     );
 
-    // mir2c
-    const mir2c = b.addStaticLibrary(.{
+    // mir2c (static)
+    const mir2c = b.addLibrary(.{
         .name = "mir2c",
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
-    mir2c.linkLibC();
+    mir2c.root_module.sanitize_c = .off;
     mir2c.addIncludePath(mir_root);
     mir2c.addIncludePath(mir_dep.path("mir2c"));
 
@@ -229,7 +236,7 @@ fn addCFilesFromDirExcluding(
     defer dir.close();
 
     var it = dir.iterate();
-    var files = std.ArrayList([]const u8).init(arena);
+    var files: std.ArrayList([]const u8) = .{};
 
     while (it.next() catch |e| {
         std.debug.panic("iterate({s}) failed: {any}", .{ abs_dir, e });
@@ -247,7 +254,7 @@ fn addCFilesFromDirExcluding(
         if (skip) continue;
 
         // Store relative-to-dir filenames (Build API wants relative to .root)
-        files.append(arena.dupe(u8, ent.name) catch @panic("oom")) catch @panic("oom");
+        files.append(arena, arena.dupe(u8, ent.name) catch @panic("oom")) catch @panic("oom");
     }
 
     lib.addCSourceFiles(.{

@@ -1,6 +1,7 @@
 const std = @import("std");
 const clap = @import("clap");
 const intern = @import("bytecode/intern.zig");
+const mir = @import("./mir.zig");
 
 // for tests
 const lex = @import("lex.zig");
@@ -76,6 +77,10 @@ fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
 
     var irgen = bytecode.IrGen.init(arena_allocator, intern_pool, ast);
     const ir = try irgen.generate(arena_allocator);
+
+    // just to ensure it builds
+    const context = try mir.Context.init();
+    defer context.deinit();
 
     var buffer: [1024]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buffer);
