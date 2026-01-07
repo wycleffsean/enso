@@ -47,6 +47,30 @@ pub fn build(b: *std.Build) !void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    // MIR example
+
+    const mir_exe = b.addExecutable(.{
+        .name = "mir-example",
+        .root_source_file = b.path("src/mir-example.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    mir_exe.linkLibrary(mir.mir_core);
+    mir_exe.linkLibrary(mir.c2mir);
+    mir_exe.linkLibrary(mir.mir2c);
+    mir_exe.linkLibC();
+
+    mir_exe.addIncludePath(mir_dep.path("."));
+    mir_exe.addIncludePath(mir_dep.path("c2mir"));
+    mir_exe.addIncludePath(mir_dep.path("mir2c"));
+    mir_exe.root_module.addImport("mir", mir_mod);
+
+    b.installArtifact(mir_exe);
+    const run_mir_cmd = b.addRunArtifact(exe);
+    run_mir_cmd.step.dependOn(b.getInstallStep());
+    const run_mir_step = b.step("run-mir", "Run the mir example");
+    run_mir_step.dependOn(&run_cmd.step);
+
     // Testing
 
     // const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse .{};
