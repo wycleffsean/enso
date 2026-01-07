@@ -101,7 +101,7 @@ pub fn VM(WriterType: type) type {
             const receiver = self.pop();
             const callable = self.fetchMethod(receiver, funcname) catch |err| {
                 switch (err) {
-                    error.NameError => fatalExit(1, "NameError: name '{s}' is not defined", .{funcname}),
+                    error.NameError => fatalExit(1, "NameError: name '{f}' is not defined", .{funcname}),
                     error.TypeError => fatalExit(1, "TypeError", .{}),
                 }
             };
@@ -147,9 +147,9 @@ fn testExample(comptime example: test_utils.Example) !void {
     var ctx = try testSetup(example.source(), &buffer);
     defer testTeardown(&ctx);
 
-    var stdout = std.ArrayList(u8).init(testing.allocator);
-    defer stdout.deinit();
-    const stdout_writer = stdout.writer();
+    var stdout: std.ArrayList(u8) = .{};
+    defer stdout.deinit(testing.allocator);
+    const stdout_writer = stdout.writer(testing.allocator);
 
     var vm = VM(@TypeOf(stdout_writer)).init(ctx.intern_pool, stdout_writer);
     try vm.eval(ctx.ir);

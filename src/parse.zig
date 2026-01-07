@@ -55,7 +55,7 @@ const AstNodeTag = enum {
     class,
     import,
     yield,
-    @"await",
+    await,
 };
 
 const UnaryOpKind = enum {
@@ -191,7 +191,7 @@ pub const AstNode = union(AstNodeTag) {
     var_decl: struct { name: []const u8 },
     parameter: Parameter,
     parameters: Parameters,
-    fn_decl: struct { name: []const u8, @"async": bool = false, parameters: Parameters, suite: Statement },
+    fn_decl: struct { name: []const u8, async: bool = false, parameters: Parameters, suite: Statement },
     lambda: struct { parameters: Parameters, body: *const AstNode },
     assignment: BinaryOp,
     named_expression: BinaryOp,
@@ -208,7 +208,7 @@ pub const AstNode = union(AstNodeTag) {
     class: ClassDefinition,
     import: []ImportDefinition,
     yield: Yield,
-    @"await": *const AstNode,
+    await: *const AstNode,
 };
 
 pub const Parser = struct {
@@ -240,20 +240,20 @@ pub const Parser = struct {
     pub fn parse(self: *Self) Error!*const AstNode {
         const root = try self.allocator.create(AstNode);
         // const statement = try self.parseStatement();
-        var statement = std.ArrayList(*const AstNode).init(self.allocator);
+        var statement: std.ArrayList(*const AstNode) = .{};
         while (self.peek()) |token| {
             _ = token;
-            try statement.append(try self.parseExpression(.lowest));
+            try statement.append(self.allocator, try self.parseExpression(.lowest));
         }
-        root.* = AstNode{ .root = try statement.toOwnedSlice() };
+        root.* = AstNode{ .root = try statement.toOwnedSlice(self.allocator) };
         return root;
     }
 
     fn parseStatementWithIndent(self: *Self, owner_indent: lex.IndentLength) Error!Statement {
-        var statement = Statement.init(self.allocator);
+        var statement: Statement = .{};
         while (self.peek()) |next_token| {
             if (next_token.getLocation().indent <= owner_indent) break;
-            try statement.append(try self.parseExpression(.lowest));
+            try statement.append(self.allocator, try self.parseExpression(.lowest));
         }
         return statement;
     }
@@ -738,12 +738,12 @@ pub const Parser = struct {
     fn parseComprehension(self: *Self, comptime T: type, expression: anytype) Error!T {
         var comprehension = T{
             .expression = expression,
-            .for_expressions = std.ArrayList(ComprehensionFor).init(self.allocator),
+            .for_expressions = .{},
         };
         while (self.expect(.for_kw)) {
             try self.expectAndSkip(.for_kw);
             const comp_for = try self.parseComprehensionFor();
-            try comprehension.for_expressions.append(comp_for);
+            try comprehension.for_expressions.append(self.allocator, comp_for);
         }
         return comprehension;
     }
@@ -771,18 +771,18 @@ pub const Parser = struct {
             if (next_token == terminal_token) break;
             try self.illegal(.comma);
             const item = try self.parseExpression(.lowest);
-            try list.append(item);
+            try list.append(self.allocator, item);
             self.expectAndSkip(.comma) catch break;
         }
     }
 
     // https://docs.python.org/3/reference/simple_stmts.html#grammar-token-python-grammar-target_list
     fn parseTargetList(self: *Self) Error!List {
-        var list = List.init(self.allocator);
+        var list: List = .{};
         while (true) {
             // TODO: there are many more types of targets
             const target = try self.parseName();
-            try list.append(target);
+            try list.append(self.allocator, target);
             self.expectAndSkip(.comma) catch break;
         }
         return list;
@@ -805,9 +805,9 @@ pub const Parser = struct {
             const comprehension = try self.parseComprehension(Comprehension, list_item.value);
             result.* = .{ .list = .{ .comprehension = comprehension } };
         } else {
-            var list = std.ArrayList(ListItem).init(self.allocator);
+            var list: std.ArrayList(ListItem) = .{};
             while (true) {
-                try list.append(list_item);
+                try list.append(self.allocator, list_item);
                 self.expectAndSkip(.comma) catch break;
                 // trailing commas are legal
                 if (self.expect(.rsbracket)) break;
@@ -839,8 +839,8 @@ pub const Parser = struct {
     }
 
     fn parseDictionary(self: *Self) Error!*AstNode {
-        var dictionary = Dictionary.init(self.allocator);
-        errdefer dictionary.deinit();
+        var dictionary: Dictionary = .{};
+        errdefer dictionary.deinit(self.allocator);
         const result = try self.allocator.create(AstNode);
         errdefer self.allocator.destroy(result);
 
@@ -860,7 +860,7 @@ pub const Parser = struct {
         }
 
         while (true) {
-            try dictionary.append(item);
+            try dictionary.append(self.allocator, item);
             // trailing commas are grammatically allowed
             self.expectAndSkip(.comma) catch break;
             if (self.expect(.rcbracket)) break;
@@ -880,8 +880,8 @@ pub const Parser = struct {
     }
 
     fn parseSet(self: *Self) Error!*AstNode {
-        var set = Set.init(self.allocator);
-        errdefer set.deinit();
+        var set: Set = .{};
+        errdefer set.deinit(self.allocator);
         const result = try self.allocator.create(AstNode);
         errdefer self.allocator.destroy(result);
 
@@ -896,7 +896,7 @@ pub const Parser = struct {
 
         while (true) {
             if (self.unwound == null and self.expect(.rcbracket)) break;
-            try set.append(item);
+            try set.append(self.allocator, item);
             // trailing commas are grammatically allowed
             self.expectAndSkip(.comma) catch break;
             item = try self.parseListItem();
@@ -973,12 +973,12 @@ pub const Parser = struct {
             const expression = try self.parseExpression(.lowest);
             result.* = .{ .yield = .{ .expression = expression } };
         } else {
-            var list = std.ArrayList(ListItem).init(self.allocator);
-            errdefer list.deinit();
+            var list: std.ArrayList(ListItem) = .{};
+            errdefer list.deinit(self.allocator);
 
             while (true) {
                 const list_item = try self.parseListItem();
-                try list.append(list_item);
+                try list.append(self.allocator, list_item);
                 self.expectAndSkip(.comma) catch break;
             }
             result.* = .{ .yield = .{ .list = list } };
@@ -1023,11 +1023,11 @@ pub const Parser = struct {
     }
 
     fn parseParameterList(self: *Self, with_star: bool, with_annotation: bool) Error!ParameterList {
-        var parameters = ParameterList.init(self.allocator);
+        var parameters: ParameterList = .{};
 
         while (true) {
             const parameter = self.parseParameter(with_star, with_annotation) catch break;
-            try parameters.append(parameter);
+            try parameters.append(self.allocator, parameter);
             self.expectAndSkip(.comma) catch break;
         }
 
@@ -1049,7 +1049,7 @@ pub const Parser = struct {
 
         return .{
             .arguments = if (positional_only_arguments) posargs2 else posargs,
-            .position_only_arguments = if (positional_only_arguments) posargs else ParameterList.init(self.allocator),
+            .position_only_arguments = if (positional_only_arguments) posargs else .{},
             .keyword_only_arguments = kwargs,
         };
     }
@@ -1101,7 +1101,7 @@ pub const Parser = struct {
     fn parseFunctionCall(self: *Self, lhs: *AstNode) Error!*AstNode {
         self.expectAndSkip(.lparen) catch unreachable;
         var call_node = try self.allocator.create(AstNode);
-        call_node.* = .{ .call = .{ .ref = lhs, .args = List.init(self.allocator) } };
+        call_node.* = .{ .call = .{ .ref = lhs, .args = .{} } };
         try self.parseCommaSeparatedList(&call_node.call.args, .rparen);
         try self.expectAndSkip(.rparen);
         return call_node;
@@ -1162,7 +1162,7 @@ pub const Parser = struct {
 
     fn parseImport(self: *Self) Error!*AstNode {
         self.expectAndSkip(.import_kw) catch unreachable;
-        var list = std.ArrayList(ImportDefinition).init(self.allocator);
+        var list: std.ArrayList(ImportDefinition) = .{};
 
         while (true) {
             const package = try self.parsePackageSpec(true);
@@ -1172,17 +1172,17 @@ pub const Parser = struct {
                 const ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
                 import_def.alias = ref;
             }
-            try list.append(import_def);
+            try list.append(self.allocator, import_def);
             self.expectAndSkip(.comma) catch break;
         }
         const result = try self.allocator.create(AstNode);
-        result.* = .{ .import = try list.toOwnedSlice() };
+        result.* = .{ .import = try list.toOwnedSlice(self.allocator) };
         return result;
     }
 
     fn parseFromImport(self: *Self) Error!*AstNode {
         self.expectAndSkip(.from_kw) catch unreachable;
-        var list = std.ArrayList(ImportDefinition).init(self.allocator);
+        var list: std.ArrayList(ImportDefinition) = .{};
         const module = try self.parseRefSpec();
 
         try self.expectAndSkip(.import_kw);
@@ -1195,11 +1195,11 @@ pub const Parser = struct {
                 const ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
                 import_def.alias = ref;
             }
-            try list.append(import_def);
+            try list.append(self.allocator, import_def);
             self.expectAndSkip(.comma) catch break;
         }
         const result = try self.allocator.create(AstNode);
-        result.* = .{ .import = try list.toOwnedSlice() };
+        result.* = .{ .import = try list.toOwnedSlice(self.allocator) };
         return result;
     }
 
@@ -1227,13 +1227,13 @@ pub const Parser = struct {
     }
 
     fn parseRefSpec(self: *Self) Error!RefSpec {
-        var ref_spec = std.ArrayList(Ref).init(self.allocator);
+        var ref_spec: std.ArrayList(Ref) = .{};
         while (true) {
             const ref = Ref{ .symbol = (try self.expectAndTake(.name)).name.value };
-            try ref_spec.append(ref);
+            try ref_spec.append(self.allocator, ref);
             self.expectAndSkip(.dot) catch break;
         }
-        const owned = ref_spec.toOwnedSlice();
+        const owned = ref_spec.toOwnedSlice(self.allocator);
         const results = RefSpec{ .refs = try owned };
         return results;
     }

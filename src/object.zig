@@ -21,10 +21,8 @@ pub const Object = union(enum) {
 
     const Self = @This();
 
-    pub fn format(value: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = options;
-        _ = fmt;
-        switch (value) {
+    pub fn format(self: Self, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
             .none => try writer.print("None", .{}),
             .bool => |b| try writer.print("{s}", .{if (b) "True" else "False"}),
             .string => |str| try writer.print("'{s}'", .{str.string}),
@@ -42,9 +40,11 @@ pub const Object = union(enum) {
 
 const max_digits = blk: {
     const math = std.math;
-    const max = math.maxInt(ObjectInt);
-    const ln_max = math.log(f32, math.e, max);
-    break :blk @as(u6, @intFromFloat(@as(f64, math.floor(ln_max / math.ln10)))) + 1;
+    const max_signed: ObjectInt = math.maxInt(ObjectInt);
+    // log10_int requires unsigned
+    const U = std.meta.Int(.unsigned, @bitSizeOf(ObjectInt));
+    const max_u: U = @intCast(max_signed);
+    break :blk @as(u6, math.log10_int(max_u) + 1);
 };
 
 // __str__ - a temporary solution

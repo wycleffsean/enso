@@ -11,9 +11,11 @@ pub fn build(b: *std.Build) !void {
 
     const exe = b.addExecutable(.{
         .name = "enso",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     b.installArtifact(exe);
 
@@ -33,14 +35,16 @@ pub fn build(b: *std.Build) !void {
 
     // Testing
 
-    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match any filter") orelse null;
+    // const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse .{};
 
     const unit_tests = b.addTest(.{
         .name = "enso_tests",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .filter = test_filter,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        // .filters = test_filters,
     });
     const python_examples = try pythonDisExamples(b);
     unit_tests.step.dependOn(&python_examples.step);
@@ -77,7 +81,7 @@ fn collectPythonFiles(
         switch (entry.kind) {
             .file => {
                 if (std.mem.endsWith(u8, entry.name, ".py")) {
-                    try paths.append(full_path);
+                    try paths.append(allocator, full_path);
                 }
             },
             .directory => {
@@ -98,7 +102,7 @@ fn pythonDisExamples(b: *std.Build) !*std.Build.Step.InstallFile {
 
     const python_run = generateZigFromPython(b, "python/disassemble_examples_to_zig.py");
 
-    var paths = std.ArrayList([]const u8).init(allocator);
+    var paths: std.ArrayList([]const u8) = .{};
 
     var root_dir = try std.fs.cwd().openDir("src/test/examples", .{ .iterate = true });
     defer root_dir.close();

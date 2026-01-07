@@ -1,5 +1,4 @@
 const std = @import("std");
-const io = std.io;
 const clap = @import("clap");
 const intern = @import("bytecode/intern.zig");
 
@@ -33,8 +32,8 @@ pub fn main() anyerror!void {
     var allocator = gpa.allocator();
 
     const params = comptime clap.parseParamsComptime(
-    // tabs aren't cool in multiline literals: https://github.com/ziglang/zig-spec/issues/38
-    // so this formatting is a bit lame
+        // tabs aren't cool in multiline literals: https://github.com/ziglang/zig-spec/issues/38
+        // so this formatting is a bit lame
         \\-h, --help Display this help and exit.
         \\-c,--command <str> Specify the command to execute
         \\<str> File to execute
@@ -46,13 +45,13 @@ pub fn main() anyerror!void {
         .diagnostic = &diag,
         .allocator = gpa.allocator(),
     }) catch |err| {
-        diag.report(io.getStdErr().writer(), err) catch {};
+        diag.reportToFile(.stderr(), err) catch {};
         return err;
     };
     defer res.deinit();
 
     if (res.args.help != 0)
-        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return clap.helpToFile(.stderr(), clap.Help, &params, .{});
     if (res.args.command) |cmd|
         try interpret(allocator, cmd);
     if (res.positionals[0]) |file_path| {
@@ -78,8 +77,11 @@ fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
     var irgen = bytecode.IrGen.init(arena_allocator, intern_pool, ast);
     const ir = try irgen.generate(arena_allocator);
 
-    const stdout_writer = std.io.getStdOut().writer();
-    var virtual_machine = vm.VM(@TypeOf(stdout_writer)).init(intern_pool, stdout_writer);
+    var buffer: [1024]u8 = undefined;
+    const stdout_writer = std.fs.File.stdout().writer(&buffer);
+    // TODO:  VM doesn't need to be generic/comptime anymore
+    //   since all writers are Io.Writer anyway
+    var virtual_machine = vm.VM(@TypeOf(stdout_writer.interface)).init(intern_pool, stdout_writer.interface);
     try virtual_machine.eval(ir);
 }
 
