@@ -1,8 +1,9 @@
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
-const builtins = @import("vm/builtins.zig");
+const Builtins = @import("vm/builtins.zig").Builtins;
 const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const object = @import("object.zig");
+const Callable = object.Callable;
 const fatalExit = @import("utils.zig").fatalExit;
 const Object = object.Object;
 const None = object.None;
@@ -22,101 +23,93 @@ pub const Error = error{
     TypeError,
 };
 
-pub fn VM(WriterType: type) type {
-    return struct {
-        const Self = @This();
-        const Callable = object.Callable(Self);
-        const Builtins = builtins.Builtins(Self);
+pub const VM = struct {
+    const Self = @This();
 
-        stack: [stack_depth]Object = undefined,
-        sp: u8 = 0,
-        intern_pool: *intern.StringInternPool,
-        stdout: WriterType,
+    stack: [stack_depth]Object = undefined,
+    sp: u8 = 0,
+    intern_pool: *intern.StringInternPool,
+    stdout: *std.Io.Writer,
 
-        pub fn init(intern_pool: *intern.StringInternPool, stdout: WriterType) Self {
-            return .{ .intern_pool = intern_pool, .stdout = stdout };
-        }
+    fn push(self: *Self, obj: Object) void {
+        self.sp += 1;
+        assert(self.sp < stack_depth);
+        self.stack[self.sp] = obj;
+    }
 
-        fn push(self: *Self, obj: Object) void {
-            self.sp += 1;
-            assert(self.sp < stack_depth);
-            self.stack[self.sp] = obj;
-        }
+    fn pop(self: *Self) Object {
+        assert(self.sp >= 0);
+        defer self.sp -= 1;
+        // std.debug.print("pop: {d} {any}\n", .{ self.sp, self.stack[self.sp] });
+        return self.stack[self.sp];
+    }
 
-        fn pop(self: *Self) Object {
-            assert(self.sp >= 0);
-            defer self.sp -= 1;
-            // std.debug.print("pop: {d} {any}\n", .{ self.sp, self.stack[self.sp] });
-            return self.stack[self.sp];
-        }
-
-        pub fn eval(self: *Self, insns: []const bytecode.Insn) !void {
-            // TODO: does a labeled switch earn us anything here?  I would guess no, but let's experiment
-            for (insns) |insn| {
-                switch (insn) {
-                    .push_null => {
-                        self.push(None);
-                    },
-                    .return_value => {},
-                    .load_const => |obj| {
-                        self.push(obj);
-                    },
-                    .load_name => |name| {
-                        self.push(name);
-                    },
-                    .return_const => {},
-                    .@"resume" => {},
-                    .call => |arity| try self.call(arity),
-                    else => {
-                        // @compileError("uh-oh - we don't handle this Instruction yet!"); // - "); ++ @tagName(insn));
-                    },
-                }
-            }
-        }
-
-        fn fetchMethod(self: *Self, receiver: Object, funcname: Object) Error!Callable {
-            switch (receiver) {
-                .none => {
-                    // special case - we lookup the module table
-                    // which can fall thru to the builtins
-
-                    return try Builtins.fetchBuiltinFunction(object.dStr(Self, self, &funcname));
+    pub fn eval(self: *Self, insns: []const bytecode.Insn) !void {
+        // TODO: does a labeled switch earn us anything here?  I would guess no, but let's experiment
+        for (insns) |insn| {
+            switch (insn) {
+                .push_null => {
+                    self.push(None);
                 },
-                else => unreachable,
-            }
-        }
-
-        fn call(self: *Self, arity: usize) !void {
-            // TODO: this is not compatible with python 3.7+, where a method may
-            // have unlimited arguments.  We need to reconcile comptime with unlimited
-            // memory allocation
-            //https://stackoverflow.com/a/48051450
-            var args_buf: [255]Object = undefined;
-            assert(arity <= 255);
-            for (0..arity) |i| {
-                args_buf[i] = self.pop();
-            }
-            const funcname = self.pop();
-            assert(funcname == .symbol);
-            const receiver = self.pop();
-            const callable = self.fetchMethod(receiver, funcname) catch |err| {
-                switch (err) {
-                    error.NameError => fatalExit(1, "NameError: name '{f}' is not defined", .{funcname}),
-                    error.TypeError => fatalExit(1, "TypeError", .{}),
-                }
-            };
-            // TODO - when there is an actual receiver we'll need to pass it as the first argument
-            const res = callable(self, args_buf[0..arity]);
-            switch (res) {
-                .object => |obj| self.push(obj),
-                .exception => {
-                    // TODO - handle exceptions for real
-                    fatalExit(1, "Unhandled Exception", .{});
+                .return_value => {},
+                .load_const => |obj| {
+                    self.push(obj);
+                },
+                .load_name => |name| {
+                    self.push(name);
+                },
+                .return_const => {},
+                .@"resume" => {},
+                .call => |arity| try self.call(arity),
+                else => {
+                    // @compileError("uh-oh - we don't handle this Instruction yet!"); // - "); ++ @tagName(insn));
                 },
             }
         }
-    };
-}
+    }
+
+    fn fetchMethod(self: *Self, receiver: Object, funcname: Object) Error!Callable {
+        switch (receiver) {
+            .none => {
+                // special case - we lookup the module table
+                // which can fall thru to the builtins
+
+                return try Builtins.fetchBuiltinFunction(object.dStr(Self, self, &funcname));
+            },
+            else => unreachable,
+        }
+    }
+
+    fn call(self: *Self, arity: usize) !void {
+        // TODO: this is not compatible with python 3.7+, where a method may
+        // have unlimited arguments.  We need to reconcile comptime with unlimited
+        // memory allocation
+        //https://stackoverflow.com/a/48051450
+        var args_buf: [255]Object = undefined;
+        assert(arity <= 255);
+        for (0..arity) |i| {
+            args_buf[i] = self.pop();
+        }
+        const funcname = self.pop();
+        assert(funcname == .symbol);
+        const receiver = self.pop();
+        const callable = self.fetchMethod(receiver, funcname) catch |err| {
+            switch (err) {
+                error.NameError => fatalExit(1, "NameError: name '{f}' is not defined", .{funcname}),
+                error.TypeError => fatalExit(1, "TypeError", .{}),
+            }
+        };
+        // TODO - when there is an actual receiver we'll need to pass it as the first argument
+        const res = callable(self, args_buf[0..arity]);
+        switch (res) {
+            .object => |obj| self.push(obj),
+            .exception => {
+                // TODO - handle exceptions for real
+                fatalExit(1, "Unhandled Exception", .{});
+            },
+        }
+    }
+};
 
 const TestContext = struct {
     ir: []const bytecode.Insn,
@@ -147,14 +140,16 @@ fn testExample(comptime example: test_utils.Example) !void {
     var ctx = try testSetup(example.source(), &buffer);
     defer testTeardown(&ctx);
 
-    var stdout: std.ArrayList(u8) = .{};
-    defer stdout.deinit(testing.allocator);
-    const stdout_writer = stdout.writer(testing.allocator);
+    // var stdout_list: std.ArrayList(u8) = .{};
+    // defer stdout_list.deinit(testing.allocator);
+    // var stdout: std.Io.Writer.Allocating = .fromArrayList(testing.allocator, &stdout_list);
+    var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer stdout.deinit();
 
-    var vm = VM(@TypeOf(stdout_writer)).init(ctx.intern_pool, stdout_writer);
+    var vm = VM{ .intern_pool = ctx.intern_pool, .stdout = &stdout.writer };
     try vm.eval(ctx.ir);
 
-    testing.expectEqualStrings(example.stdout(), stdout.items) catch |err| {
+    testing.expectEqualStrings(example.stdout(), stdout.written()) catch |err| {
         std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
         return err;
     };

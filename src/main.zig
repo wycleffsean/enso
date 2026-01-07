@@ -78,10 +78,9 @@ fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
     const ir = try irgen.generate(arena_allocator);
 
     var buffer: [1024]u8 = undefined;
-    const stdout_writer = std.fs.File.stdout().writer(&buffer);
-    // TODO:  VM doesn't need to be generic/comptime anymore
-    //   since all writers are Io.Writer anyway
-    var virtual_machine = vm.VM(@TypeOf(stdout_writer.interface)).init(intern_pool, stdout_writer.interface);
+    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+
+    var virtual_machine = vm.VM{ .intern_pool = intern_pool, .stdout = &stdout_writer.interface };
     try virtual_machine.eval(ir);
 }
 

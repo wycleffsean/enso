@@ -1,6 +1,7 @@
 const std = @import("std");
 const intern = @import("bytecode/intern.zig");
 const Exception = @import("exception.zig");
+const VM = @import("./vm.zig").VM;
 
 pub const ObjectInt = i64;
 pub const ObjectFloat = f64;
@@ -102,9 +103,7 @@ pub const CallResult = union(enum) {
 // we have our own exceptions that are distinct
 // from zig.  If we can enforce that callables
 // don't return zig errors that would be great
-pub fn Callable(VMType: type) type {
-    return *const fn (*VMType, []Object) CallResult;
-}
+pub const Callable = *const fn (*VM, []Object) CallResult;
 
 pub const Code = struct {
     co_argcount: *const Object = &Zero,
