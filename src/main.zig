@@ -79,7 +79,7 @@ fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
     const ir = try irgen.generate(arena_allocator);
 
     // just to ensure it builds
-    const context = try mir.Context.init();
+    var context = try mir.Context.init();
     defer context.deinit();
 
     var buffer: [1024]u8 = undefined;

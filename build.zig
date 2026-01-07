@@ -1,5 +1,13 @@
 const std = @import("std");
 
+const mir_c_flags = &[_][]const u8{
+    "-std=c11",
+    "-D_GNU_SOURCE",
+    "-D_POSIX_C_SOURCE=200809L",
+    "-fno-sanitize=alignment",
+    "-fno-sanitize=undefined",
+};
+
 pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -9,6 +17,45 @@ pub fn build(b: *std.Build) !void {
 
     const optimize = b.standardOptimizeOption(.{});
 
+    // dependencies
+    const clap = b.dependency("clap", .{});
+
+    const mir_dep = b.dependency("mir", .{});
+    const mir = addMirDeps(b, mir_dep, target, optimize);
+
+    // MIR probe + codegen
+    // We need to do this because mir.h has bitfields
+    // which zig translate-c turns into opaque types.
+    // It's important that MIR_op_t types can be
+    // allocated and returned - so we run a C
+    // program which fetches the alignment and size
+    // which we can pass to zig
+    const mir_probe_exe = b.addExecutable(.{
+        .name = "mir-probe",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = .ReleaseSmall,
+            .link_libc = true,
+        }),
+    });
+    mir_probe_exe.linkLibC();
+    mir_probe_exe.addCSourceFile(.{
+        .file = b.path("src/c/mir_probe.c"),
+        .flags = mir_c_flags,
+    });
+    mir_probe_exe.addIncludePath(mir_dep.path("."));
+    const mir_probe_run = b.addRunArtifact(mir_probe_exe);
+    const mir_probe_out = mir_probe_run.captureStdOut();
+    const mir_probe_gen = b.addWriteFiles();
+    const mir_abi_file = mir_probe_gen.add("mir_abi.zig", "");
+    // TODO: this copy is lame, there's gotta
+    // be a better method
+    const copy_mir_abi = b.addSystemCommand(&.{"cp"});
+    copy_mir_abi.addFileArg(mir_probe_out); // source file
+    copy_mir_abi.addFileArg(mir_abi_file); // destination file
+    copy_mir_abi.step.dependOn(&mir_probe_run.step);
+
+    // enso exe
     const exe = b.addExecutable(.{
         .name = "enso",
         .root_module = b.createModule(.{
@@ -19,12 +66,7 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(exe);
 
-    // dependencies
-    const clap = b.dependency("clap", .{});
     exe.root_module.addImport("clap", clap.module("clap"));
-
-    const mir_dep = b.dependency("mir", .{});
-    const mir = addMirDeps(b, mir_dep, target, optimize);
     exe.linkLibrary(mir.mir_core);
     exe.linkLibrary(mir.c2mir);
     exe.linkLibrary(mir.mir2c);
@@ -33,6 +75,10 @@ pub fn build(b: *std.Build) !void {
     exe.addIncludePath(mir_dep.path("."));
     exe.addIncludePath(mir_dep.path("c2mir"));
     exe.addIncludePath(mir_dep.path("mir2c"));
+    exe.root_module.addAnonymousImport("mir_abi", .{
+        .root_source_file = mir_abi_file,
+    });
+    exe.step.dependOn(&copy_mir_abi.step);
 
     const mir_mod = b.addModule("mir", .{ .root_source_file = b.path("src/mir.zig") });
     exe.root_module.addImport("mir", mir_mod);
@@ -51,9 +97,11 @@ pub fn build(b: *std.Build) !void {
 
     const mir_exe = b.addExecutable(.{
         .name = "mir-example",
-        .root_source_file = b.path("src/mir-example.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mir-example.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     mir_exe.linkLibrary(mir.mir_core);
     mir_exe.linkLibrary(mir.c2mir);
@@ -64,12 +112,19 @@ pub fn build(b: *std.Build) !void {
     mir_exe.addIncludePath(mir_dep.path("c2mir"));
     mir_exe.addIncludePath(mir_dep.path("mir2c"));
     mir_exe.root_module.addImport("mir", mir_mod);
+    mir_exe.root_module.addAnonymousImport("mir_abi", .{
+        .root_source_file = mir_abi_file,
+    });
+    mir_exe.step.dependOn(&copy_mir_abi.step);
 
     b.installArtifact(mir_exe);
-    const run_mir_cmd = b.addRunArtifact(exe);
+    const run_mir_cmd = b.addRunArtifact(mir_exe);
     run_mir_cmd.step.dependOn(b.getInstallStep());
-    const run_mir_step = b.step("run-mir", "Run the mir example");
-    run_mir_step.dependOn(&run_cmd.step);
+    const run_mir_step = b.step("run-mir-example", "Run the mir example");
+    exe.root_module.addAnonymousImport("mir_abi", .{
+        .root_source_file = mir_abi_file,
+    });
+    run_mir_step.dependOn(&run_mir_cmd.step);
 
     // Testing
 
@@ -168,14 +223,6 @@ fn addMirDeps(
 ) MirArtifacts {
     const mir_root = mir_dep.path(".");
 
-    const c_flags = &[_][]const u8{
-        "-std=c11",
-        "-D_GNU_SOURCE",
-        "-D_POSIX_C_SOURCE=200809L",
-        "-fno-sanitize=alignment",
-        "-fno-sanitize=undefined",
-    };
-
     // mir_core (static)
     const mir_core = b.addLibrary(.{
         .name = "mir_core",
@@ -191,7 +238,11 @@ fn addMirDeps(
 
     mir_core.addCSourceFile(.{
         .file = b.path("src/c/mir_unity.c"),
-        .flags = c_flags,
+        .flags = mir_c_flags,
+    });
+    mir_core.addCSourceFile(.{
+        .file = mir_dep.path("mir-gen.c"),
+        .flags = mir_c_flags,
     });
 
     // c2mir (static)
@@ -212,7 +263,7 @@ fn addMirDeps(
         b,
         c2mir,
         mir_dep.path("c2mir"),
-        c_flags,
+        mir_c_flags,
         &[_][]const u8{"c2mir-driver.c"},
     );
 
@@ -234,7 +285,7 @@ fn addMirDeps(
         b,
         mir2c,
         mir_dep.path("mir2c"),
-        c_flags,
+        mir_c_flags,
         &[_][]const u8{
             // add exclusions if there’s a driver main()
         },

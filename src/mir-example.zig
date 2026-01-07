@@ -6,11 +6,11 @@ pub fn main() !void {
     defer ctx.deinit();
 
     // Use generator (optional here). For JIT interfaces, you should init gen before linking with gen interfaces.
-    // ctx.genInit();
-    // defer ctx.genFinish();
-    // ctx.genSetOptimizeLevel(2);
+    ctx.genInit();
+    defer ctx.genFinish();
+    ctx.genSetOptimizeLevel(2);
 
-    var m = mir.Module.init(&ctx, "m");
+    var m = mir.Module.init(&ctx, ".foo.bar.baz");
     // function: i64 loop(i64 arg1)
     const res_types = [_]mir.c.MIR_type_t{mir.c.MIR_T_I64};
     const args = [_]mir.c.MIR_var_t{
@@ -66,6 +66,8 @@ pub fn main() !void {
 
     ctx.loadModule(m.m);
 
+    ctx.dumpAll();
+
     // Choose interface:
     // - interpret:
     // ctx.link(mir.c.MIR_set_interp_interface, null);
@@ -79,7 +81,7 @@ pub fn main() !void {
 
     // Or call via function pointer after interface setup:
     const addr = fb.func_item.*.addr;
-    const Fn = *const fn (i64) callconv(.C) i64;
+    const Fn = *const fn (i64) callconv(.c) i64;
     const f: Fn = @ptrCast(addr);
     const r = f(10);
     std.debug.print("loop(10)={}\n", .{r});

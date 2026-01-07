@@ -1,10 +1,26 @@
 const std = @import("std");
 // pub const c = @import("./mir/consts.zig");
+const abi = @import("mir_abi");
 
 pub const c = @cImport({
     @cInclude("mir.h");
     @cInclude("mir-gen.h");
 });
+
+// extern fn enso_mir_op_reg(ctx: c.MIR_context_t, out: *c.MIR_op_t, reg: c.MIR_reg_t) void;
+// extern fn enso_mir_op_int(ctx: c.MIR_context_t, out: *c.MIR_op_t, v: i64) void;
+// extern fn enso_mir_op_label(ctx: c.MIR_context_t, out: *c.MIR_op_t, lab: c.MIR_label_t) void;
+// extern fn enso_mir_new_insn_arr(ctx: c.MIR_context_t, code: c.MIR_insn_code_t, nops: usize, ops: [*]c.MIR_op_t) c.MIR_insn_t;
+
+extern fn MIR_new_reg_op(ctx: c.MIR_context_t, reg: c.MIR_reg_t) abi.MIR_op_t;
+extern fn MIR_new_int_op(ctx: c.MIR_context_t, v: i64) abi.MIR_op_t;
+extern fn MIR_new_uint_op(ctx: c.MIR_context_t, v: u64) abi.MIR_op_t;
+extern fn MIR_new_label_op(ctx: c.MIR_context_t, lab: c.MIR_label_t) abi.MIR_op_t;
+extern fn MIR_new_ref_op(ctx: c.MIR_context_t, item: c.MIR_item_t) abi.MIR_op_t;
+extern fn MIR_new_mem_op(ctx: c.MIR_context_t, t: c.MIR_type_t, disp: c.MIR_disp_t, base: c.MIR_reg_t, index: c.MIR_reg_t, scale: c.MIR_scale_t) abi.MIR_op_t;
+
+// And the insn constructor we care about:
+extern fn MIR_new_insn_arr(ctx: c.MIR_context_t, code: c.MIR_insn_code_t, nops: usize, ops: [*]const abi.MIR_op_t) c.MIR_insn_t;
 
 pub const MirError = error{
     InitFailed,
@@ -64,23 +80,23 @@ pub const Context = struct {
     // }
 
     /// Initialize MIR generator (JIT backend) for this context.
-    // pub fn genInit(self: *Context) void {
-    //     c.MIR_gen_init(self.ctx);
-    // }
+    pub fn genInit(self: *Context) void {
+        c.MIR_gen_init(self.ctx);
+    }
 
     /// Set generator optimize level:
     /// 0 = regalloc+codegen only
     /// 1 = + code selection
     /// 2 = + CSE + SCCP (default)
     /// 3 = + reg renaming + LICM
-    // pub fn genSetOptimizeLevel(self: *Context, level: u32) void {
-    //     c.MIR_gen_set_optimize_level(self.ctx, level);
-    // }
+    pub fn genSetOptimizeLevel(self: *Context, level: u32) void {
+        c.MIR_gen_set_optimize_level(self.ctx, level);
+    }
 
     /// Finish generator and free generator internal data for this context.
-    // pub fn genFinish(self: *Context) void {
-    //     c.MIR_gen_finish(self.ctx);
-    // }
+    pub fn genFinish(self: *Context) void {
+        c.MIR_gen_finish(self.ctx);
+    }
 
     /// Load a finished module into the context. This simplifies the code
     /// and allocates module data/bss/refs/lrefs sections.
@@ -102,8 +118,8 @@ pub const Context = struct {
     /// - MIR_set_lazy_bb_gen_interface: compile basic blocks on first execution (enables BB versioning)
     pub fn link(
         self: *Context,
-        set_interface: ?*const fn (c.MIR_context_t, c.MIR_item_t) callconv(.C) void,
-        import_resolver: ?*const fn ([*c]const u8) callconv(.C) ?*anyopaque,
+        set_interface: ?*const fn (c.MIR_context_t, c.MIR_item_t) callconv(.c) void,
+        import_resolver: ?*const fn ([*c]const u8) callconv(.c) ?*anyopaque,
     ) void {
         c.MIR_link(self.ctx, set_interface, import_resolver);
     }
@@ -117,6 +133,16 @@ pub const Context = struct {
         args: [*c]c.MIR_val_t,
     ) void {
         c.MIR_interp_arr(self.ctx, func_item, results, nargs, args);
+    }
+
+    /// TODO: ideally we aren't calling into libc here, but
+    /// not sure of a better way to do it.  This is only relevant
+    /// for debugging anyway so probably ok
+    pub fn dumpAll(self: *Context) void {
+        const stderr = std.fs.File.stderr();
+        // FILE* is hidden inside libc; use fdopen
+        const file: *c.FILE = @ptrCast(c.fdopen(stderr.handle, "w"));
+        c.MIR_output(self.ctx, file);
     }
 };
 
@@ -220,9 +246,15 @@ pub const FuncBuilder = struct {
     }
 
     /// Convenience: append a `RET` with given operands (0..N).
-    pub fn ret(self: *FuncBuilder, ops: []const c.MIR_op_t) void {
-        const isn = c.MIR_new_ret_insn(self.ctx.ctx, ops.len, ops.ptr);
-        self.append(isn);
+    pub fn ret(self: *FuncBuilder, ops: []const abi.MIR_op_t) void {
+        // const insn = insn.newRet(self.ctx, rets);
+        // c.MIR_append_insn(self.ctx.ctx, self.func_item, insn);
+        // const isn = c.MIR_new_ret_insn(self.ctx.ctx, ops.len, ops.ptr);
+
+        // const isn = c.MIR_new_insn_arr(self.ctx.ctx, c.MIR_RET, ops.len, ops.ptr);
+        // self.append(isn);
+
+        self.append(insn.ret(self.ctx, ops));
     }
 
     /// Convenience: append a CALL.
@@ -232,52 +264,72 @@ pub const FuncBuilder = struct {
     ///   [1] callee address (ref op or reg containing address)
     ///   [2..2+nres) result destinations
     ///   remaining: args
-    pub fn call(self: *FuncBuilder, ops: []const c.MIR_op_t) void {
+    pub fn call(self: *FuncBuilder, ops: []const abi.MIR_op_t) void {
         const isn = c.MIR_new_call_insn(self.ctx.ctx, ops.len, ops.ptr);
         self.append(isn);
     }
 };
 
-/// Operand constructors (ergonomic and LSP-friendly).
 pub const op = struct {
-    pub fn reg(ctx: *Context, r: c.MIR_reg_t) c.MIR_op_t {
-        return c.MIR_new_reg_op(ctx.ctx, r);
+    pub fn reg(ctx: *Context, r: c.MIR_reg_t) abi.MIR_op_t {
+        return MIR_new_reg_op(ctx.ctx, r);
     }
-    pub fn i(ctx: *Context, v: i64) c.MIR_op_t {
-        return c.MIR_new_int_op(ctx.ctx, v);
+    pub fn i(ctx: *Context, v: i64) abi.MIR_op_t {
+        return MIR_new_int_op(ctx.ctx, v);
     }
-    pub fn u(ctx: *Context, v: u64) c.MIR_op_t {
-        return c.MIR_new_uint_op(ctx.ctx, v);
+    pub fn u(ctx: *Context, v: u64) abi.MIR_op_t {
+        return MIR_new_uint_op(ctx.ctx, v);
     }
-    pub fn ref(ctx: *Context, item: c.MIR_item_t) c.MIR_op_t {
-        return c.MIR_new_ref_op(ctx.ctx, item);
+    pub fn ref(ctx: *Context, item: c.MIR_item_t) abi.MIR_op_t {
+        return MIR_new_ref_op(ctx.ctx, item);
     }
-    pub fn label(ctx: *Context, lab: c.MIR_label_t) c.MIR_op_t {
-        return c.MIR_new_label_op(ctx.ctx, lab);
+    pub fn label(ctx: *Context, lab: c.MIR_label_t) abi.MIR_op_t {
+        return MIR_new_label_op(ctx.ctx, lab);
     }
     /// Memory operand: type: [disp](base, index, scale)
-    pub fn mem(ctx: *Context, ty: c.MIR_type_t, disp: c.MIR_disp_t, base: c.MIR_reg_t, index: c.MIR_reg_t, scale: c.MIR_scale_t) c.MIR_op_t {
-        return c.MIR_new_mem_op(ctx.ctx, ty, disp, base, index, scale);
+    pub fn mem(ctx: *Context, ty: c.MIR_type_t, disp: c.MIR_disp_t, base: c.MIR_reg_t, index: c.MIR_reg_t, scale: c.MIR_scale_t) abi.MIR_op_t {
+        return MIR_new_mem_op(ctx.ctx, ty, disp, base, index, scale);
     }
-    /// Memory operand with alias/nonalias.
-    pub fn memAlias(
-        ctx: *Context,
-        ty: c.MIR_type_t,
-        disp: c.MIR_disp_t,
-        base: c.MIR_reg_t,
-        index: c.MIR_reg_t,
-        scale: c.MIR_scale_t,
-        alias: c.MIR_alias_t,
-        @"noalias": c.MIR_alias_t,
-    ) c.MIR_op_t {
-        return c.MIR_new_alias_mem_op(ctx.ctx, ty, disp, base, index, scale, alias, @"noalias");
-    }
+    // /// Memory operand with alias/nonalias.
+    // pub fn memAlias(
+    //     ctx: *Context,
+    //     ty: c.MIR_type_t,
+    //     disp: c.MIR_disp_t,
+    //     base: c.MIR_reg_t,
+    //     index: c.MIR_reg_t,
+    //     scale: c.MIR_scale_t,
+    //     alias: c.MIR_alias_t,
+    //     @"noalias": c.MIR_alias_t,
+    // ) abi.MIR_op_t {
+    //     return MIR_new_alias_mem_op(ctx.ctx, ty, disp, base, index, scale, alias, @"noalias");
+    // }
 };
+
+// const Op = struct { storage: c.MIR_op_t };
+
+// /// Operand constructors (ergonomic and LSP-friendly).
+// pub const op = struct {
+//     pub fn reg(ctx: *Context, r: c.MIR_reg_t) Op {
+//         var o: Op = undefined;
+//         enso_mir_op_reg(ctx.ctx, &o.storage, r);
+//         return o;
+//     }
+//     pub fn i(ctx: *Context, s: i64) Op {
+//         var o: Op = undefined;
+//         enso_mir_op_int(ctx.ctx, &o.storage, s);
+//         return o;
+//     }
+//     pub fn label(ctx: *Context, lab: c.MIR_label_t) Op {
+//         var o: Op = undefined;
+//         enso_mir_op_label(ctx.ctx, &o.storage, lab);
+//         return o;
+//     }
+// };
 
 /// Instruction constructors.
 pub const insn = struct {
     /// Fixed-arity insns: c.MIR_new_insn_arr(code, nops, ops)
-    pub fn fixed(ctx: *Context, code: c.MIR_insn_code_t, ops: []const c.MIR_op_t) c.MIR_insn_t {
+    pub fn fixed(ctx: *Context, code: c.MIR_insn_code_t, ops: []const abi.MIR_op_t) c.MIR_insn_t {
         return c.MIR_new_insn_arr(ctx.ctx, code, ops.len, @ptrCast(@constCast(ops.ptr)));
     }
 
@@ -288,14 +340,22 @@ pub const insn = struct {
     }
 
     /// PRBEQ label, var, const
-    pub fn prbeq(ctx: *Context, label_op: c.MIR_op_t, var_op: c.MIR_op_t, k: i64) c.MIR_insn_t {
+    pub fn prbeq(ctx: *Context, label_op: c.MIR_op_t, var_op: abi.MIR_op_t, k: i64) c.MIR_insn_t {
         var ops = [_]c.MIR_op_t{ label_op, var_op, c.MIR_new_int_op(ctx.ctx, k) };
         return c.MIR_new_insn_arr(ctx.ctx, c.c.MIR_PRBEQ, ops.len, &ops);
     }
 
     /// PRBNE label, var, const
-    pub fn prbne(ctx: *Context, label_op: c.MIR_op_t, var_op: c.MIR_op_t, k: i64) c.MIR_insn_t {
+    pub fn prbne(ctx: *Context, label_op: c.MIR_op_t, var_op: abi.MIR_op_t, k: i64) c.MIR_insn_t {
         var ops = [_]c.MIR_op_t{ label_op, var_op, c.MIR_new_int_op(ctx.ctx, k) };
         return c.MIR_new_insn_arr(ctx.ctx, c.c.MIR_PRBNE, ops.len, &ops);
+    }
+
+    // pub fn fixed(ctx: *Context, code: c.MIR_insn_code_t, ops: []const MIR_op_t) c.MIR_insn_t {
+    //     return MIR_new_insn_arr(ctx.ctx, code, ops.len, ops.ptr);
+    // }
+
+    pub fn ret(ctx: *Context, ops: []const abi.MIR_op_t) c.MIR_insn_t {
+        return MIR_new_insn_arr(ctx.ctx, c.MIR_RET, ops.len, ops.ptr);
     }
 };
