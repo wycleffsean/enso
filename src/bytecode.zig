@@ -11,8 +11,10 @@ const testing = std.testing;
 
 const comptimePrint = std.fmt.comptimePrint;
 
-const RelativeJump = struct { delta: object.ObjectInt };
-const BinaryOperation = enum {
+// TODO: this is only public because it's a struct with a fieldname
+//   just make it an object.ObjectInt instead
+pub const RelativeJump = struct { delta: object.ObjectInt };
+pub const BinaryOperation = enum {
     add,
     sub,
     mult,
@@ -28,7 +30,7 @@ const BinaryOperation = enum {
     mat_mult,
 };
 
-const CallIntrinsic1Kind = enum {
+pub const CallIntrinsic1Kind = enum {
     unary_positive,
 };
 

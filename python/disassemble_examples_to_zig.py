@@ -85,7 +85,7 @@ def instruction_to_zig(insn):
   }}"""
 
 def instructions_to_zig(co):
-    insn_set = f"&[_]object.Instruction {{"
+    insn_set = "&[_]object.Instruction {"
     for instruction in dis.get_instructions(co):
         insn_set += instruction_to_zig(instruction)
         insn_set += ", "

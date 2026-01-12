@@ -57,3 +57,85 @@ pub const OpCode = enum(u8) {
     call = 171,
     call_intrinsic_1 = 173,
 };
+
+const OpSpec = struct {
+    handler: []const u8,
+
+    /// “Straight-line” stack effect (i.e. `dis.stack_effect(op, arg, jump=false)`).
+    pops: u8,
+    pushes: u8,
+
+    /// If true, pops/pushes depend on oparg in a non-constant way (see notes).
+    var_stack: bool = false,
+
+    /// If true, this opcode can change control flow.
+    has_jump: bool = false,
+
+    /// If true, this opcode ends the current frame (return).
+    is_return: bool = false,
+
+    /// Notes for opcodes whose effect depends on flags/jump/argc/etc.
+    notes: []const u8 = "",
+};
+
+pub fn opEffect(comptime opcode: OpCode) OpSpec {
+    return switch (opcode) {
+        .binary_op => .{ .handler = "binaryOp", .pops = 2, .pushes = 1 },
+        .build_const_key_map => .{ .handler = "buildConstKeyMap", .pops = 0, .pushes = 1, .var_stack = true, .notes = "Pops keys tuple (1) plus `count` values => total pops = count+1, pushes 1 dict." },
+        .build_list => .{ .handler = "buildList", .pops = 0, .pushes = 1, .var_stack = true, .notes = "Consumes `count` items, pushes 1 list." },
+        .build_map => .{ .handler = "buildMap", .pops = 0, .pushes = 1, .var_stack = true, .notes = "Consumes `2*count` items (k,v pairs), pushes 1 dict." },
+        .build_set => .{ .handler = "buildSet", .pops = 0, .pushes = 1, .var_stack = true, .notes = "Consumes `count` items, pushes 1 set." },
+        .build_tuple => .{ .handler = "buildTuple", .pops = 0, .pushes = 1, .var_stack = true, .notes = "Consumes `count` items, pushes 1 tuple." },
+        .call => .{ .handler = "call", .pops = 0, .pushes = 1, .var_stack = true, .notes = "Stack layout: [callable, self_or_NULL, args...]. Pops (argc + 2) items, pushes return value." },
+        .call_intrinsic_1 => .{ .handler = "callIntrinsic1", .pops = 1, .pushes = 1, .notes = "One-arg intrinsic call (effectively unary: consumes 1, produces 1)." },
+        .cleanup_throw => .{ .handler = "cleanupThrow", .pops = 0, .pushes = 0, .var_stack = true, .notes = "If TOS is StopIteration: pop 3 and push value; else re-raise." },
+        .compare_op => .{ .handler = "compareOp", .pops = 2, .pushes = 1 },
+        .contains_op => .{ .handler = "containsOp", .pops = 2, .pushes = 1 },
+        .copy => .{ .handler = "copy", .pops = 0, .pushes = 1, .var_stack = true, .notes = "Pushes a copy of the i-th item (STACK.append(STACK[-i]))." },
+        .dict_update => .{ .handler = "dictUpdate", .pops = 1, .pushes = 0, .var_stack = true, .notes = "Pops map; dict.update(dict_at_-i, map)." },
+        .end_for => .{ .handler = "endFor", .pops = 1, .pushes = 0, .notes = "Equivalent to POP_TOP." },
+        .end_send => .{ .handler = "endSend", .pops = 0, .pushes = 0, .var_stack = true, .notes = "Implements `del STACK[-2]` (removes 2nd-from-top). Net effect depends on current depth." },
+        .for_iter => .{ .handler = "forIter", .pops = 1, .pushes = 2, .var_stack = true, .has_jump = true, .notes = "On success: pushes next value (net +1). On StopIteration: pops iterator and jumps (net -1). This entry uses the ‘success’ shape (iterator + value) => pops=1 pushes=2." },
+        .get_awaitable => .{ .handler = "getAwaitable", .pops = 1, .pushes = 1, .notes = "Replaces TOS with get_awaitable(TOS)." },
+        .get_iter => .{ .handler = "getIter", .pops = 1, .pushes = 1, .notes = "Replaces TOS with iter(TOS)." },
+        .get_yield_from_iter => .{ .handler = "getYieldFromIter", .pops = 1, .pushes = 1, .notes = "If TOS is gen/coro: unchanged; else iter(TOS)." },
+        .import_from => .{ .handler = "importFrom", .pops = 0, .pushes = 1, .notes = "Module remains on stack; pushes attribute from module." },
+        .import_name => .{ .handler = "importName", .pops = 2, .pushes = 1, .notes = "Pops fromlist and level, pushes module." },
+        .is_op => .{ .handler = "isOp", .pops = 2, .pushes = 1 },
+        .jump_backward => .{ .handler = "jumpBackward", .pops = 0, .pushes = 0, .has_jump = true },
+        .jump_backward_no_interrupt => .{ .handler = "jumpBackwardNoInterrupt", .pops = 0, .pushes = 0, .has_jump = true },
+        .list_append => .{ .handler = "listAppend", .pops = 1, .pushes = 0, .var_stack = true, .notes = "Pops item; mutates list at STACK[-i]." },
+        .list_extend => .{ .handler = "listExtend", .pops = 1, .pushes = 0, .var_stack = true, .notes = "Pops seq; list.extend(list_at_-i, seq)." },
+        .load_attr => .{ .handler = "loadAttr", .pops = 0, .pushes = 0, .var_stack = true, .notes = "If low bit not set: replaces TOS (net 0, pops=1 pushes=1). If low bit set (method load): pops obj then pushes (method,obj) or (NULL,attr) (net +1, pops=1 pushes=2)." },
+        .load_build_class => .{ .handler = "loadBuildClass", .pops = 0, .pushes = 1 },
+        .load_const => .{ .handler = "loadConst", .pops = 0, .pushes = 1 },
+        .load_fast_and_clear => .{ .handler = "loadFastAndClear", .pops = 0, .pushes = 1, .notes = "Pushes local or NULL, then clears local slot." },
+        .load_fast => .{ .handler = "loadFast", .pops = 0, .pushes = 1 },
+        .load_global => .{ .handler = "loadGlobal", .pops = 0, .pushes = 0, .var_stack = true, .notes = "Normally pushes the global (pushes=1). If low bit set: pushes NULL then global (pushes=2)." },
+        .load_name => .{ .handler = "loadName", .pops = 0, .pushes = 1 },
+        .make_function => .{ .handler = "makeFunction", .pops = 0, .pushes = 0, .var_stack = true, .notes = "At minimum: replaces code object at TOS with function (net 0). Historically consumed additional items depending on flags; check your target version semantics." },
+        .map_add => .{ .handler = "mapAdd", .pops = 2, .pushes = 0, .var_stack = true, .notes = "Pops value then key; mutates dict at STACK[-i]." },
+        .nop => .{ .handler = "nop", .pops = 0, .pushes = 0 },
+        .pop_jump_if_false => .{ .handler = "popJumpIfFalse", .pops = 1, .pushes = 0, .has_jump = true },
+        .pop_jump_if_true => .{ .handler = "popJumpIfTrue", .pops = 1, .pushes = 0, .has_jump = true },
+        .pop_top => .{ .handler = "popTop", .pops = 1, .pushes = 0 },
+        .push_null => .{ .handler = "pushNull", .pops = 0, .pushes = 1 },
+        .reraise => .{ .handler = "reraise", .pops = 1, .pushes = 0, .var_stack = true, .notes = "Re-raises TOS; if oparg != 0 pops an additional value." },
+        .@"resume" => .{ .handler = "resume", .pops = 0, .pushes = 0, .notes = "No stack effect (acts like a VM resume point)." },
+        .return_const => .{ .handler = "returnConst", .pops = 0, .pushes = 0, .is_return = true, .notes = "Returns with co_consts[consti]." },
+        .return_generator => .{ .handler = "returnGenerator", .pops = 0, .pushes = 0, .is_return = true, .notes = "Creates & returns a generator; frame ends." },
+        .return_value => .{ .handler = "returnValue", .pops = 1, .pushes = 0, .is_return = true, .notes = "Returns with TOS to caller." },
+        .send => .{ .handler = "send", .pops = 0, .pushes = 0, .var_stack = true, .has_jump = true, .notes = "Generator/coroutine send machinery; stack effect is control-flow dependent." },
+        .set_add => .{ .handler = "setAdd", .pops = 1, .pushes = 0, .var_stack = true, .notes = "Pops item; mutates set at STACK[-i]." },
+        .setup_annotations => .{ .handler = "setupAnnotations", .pops = 0, .pushes = 0 },
+        .set_update => .{ .handler = "setUpdate", .pops = 1, .pushes = 0, .var_stack = true, .notes = "Pops seq; set.update(set_at_-i, seq)." },
+        .store_fast => .{ .handler = "storeFast", .pops = 1, .pushes = 0 },
+        .store_name => .{ .handler = "storeName", .pops = 1, .pushes = 0 },
+        .store_subscr => .{ .handler = "storeSubscr", .pops = 3, .pushes = 0 },
+        .swap => .{ .handler = "swap", .pops = 0, .pushes = 0, .var_stack = true, .notes = "Swaps TOS with i-th element; no net effect." },
+        .unary_invert => .{ .handler = "unaryInvert", .pops = 1, .pushes = 1, .notes = "Replaces TOS with ~TOS." },
+        .unary_negative => .{ .handler = "unaryNegative", .pops = 1, .pushes = 1, .notes = "Replaces TOS with -TOS." },
+        .unary_not => .{ .handler = "unaryNot", .pops = 1, .pushes = 1, .notes = "Replaces TOS with not TOS." },
+        .yield_value => .{ .handler = "yieldValue", .pops = 1, .pushes = 0, .notes = "Yields STACK.pop(). Control resumes later." },
+    };
+}
