@@ -1,5 +1,5 @@
 const std = @import("std");
-const dis_examples = @import("./disassembled_examples.zig");
+const dis_examples = @import("disassembled_examples");
 const object = @import("../object.zig");
 
 pub const Example = struct {

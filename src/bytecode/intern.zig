@@ -1,5 +1,5 @@
 const std = @import("std");
-const StringArrayHashMap = std.StringArrayHashMap;
+const StringArrayHashMap = std.array_hash_map.String;
 const testing = std.testing;
 
 pub const Index = usize;
@@ -19,17 +19,17 @@ pub const StringInternPool = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         // TODO: unsure how to guard here, allocator.ptr is opaque
         return .{
-            .pool = StringArrayHashMap(void).init(allocator),
+            .pool = .empty,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.pool.deinit();
+        self.pool.deinit(self.allocator);
     }
 
     pub fn put(self: *Self, string: []const u8) Error!Index {
-        var entry = try self.pool.getOrPut(string);
+        var entry = try self.pool.getOrPut(self.allocator, string);
         if (!entry.found_existing) {
             var string_dup = try self.allocator.dupe(u8, string);
             entry.key_ptr = @ptrCast(&string_dup);
@@ -39,7 +39,7 @@ pub const StringInternPool = struct {
 
     // O(n)
     pub fn getIndex(self: *Self, needle: []const u8) ?Index {
-        const slice = self.pool.unmanaged.entries.slice();
+        const slice = self.pool.entries.slice();
         const keys_array = slice.items(.key);
         var index: Index = 0;
         for (keys_array) |key| {
@@ -52,7 +52,7 @@ pub const StringInternPool = struct {
     }
 
     pub fn get(self: *Self, index: Index) []const u8 {
-        const slice = self.pool.unmanaged.entries.slice();
+        const slice = self.pool.entries.slice();
         const keys_array = slice.items(.key);
         return keys_array[index];
     }

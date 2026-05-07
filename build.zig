@@ -140,7 +140,11 @@ pub fn build(b: *std.Build) !void {
         // .filters = test_filters,
     });
     const python_examples = try pythonDisExamples(b);
-    unit_tests.step.dependOn(&python_examples.step);
+    const examples_mod = b.addModule("disassembled_examples", .{
+        .root_source_file = python_examples,
+    });
+    unit_tests.root_module.addImport("disassembled_examples", examples_mod);
+    // unit_tests.step.dependOn(&python_examples.step);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -157,18 +161,19 @@ pub fn build(b: *std.Build) !void {
 fn generateZigFromPython(b: *std.Build, script_path: []const u8) *std.Build.Step.Run {
     const python_run = b.addSystemCommand(&.{"python"});
     python_run.addFileArg(b.path(script_path));
-    python_run.max_stdio_size = 20 * 1024 * 1024; // 20MB
+    // python_run.stdio_limit = .limited(20 * 1024 * 1024); // 20MB
     return python_run;
 }
 
 fn collectPythonFiles(
     allocator: std.mem.Allocator,
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     dir_path: []const u8,
     paths: *std.ArrayList([]const u8),
 ) !void {
     var it = dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         const full_path = try std.fs.path.join(allocator, &.{ dir_path, entry.name });
 
         switch (entry.kind) {
@@ -179,34 +184,36 @@ fn collectPythonFiles(
             },
             .directory => {
                 // Recurse into subdirectory
-                var subdir = try dir.openDir(entry.name, .{ .iterate = true });
-                defer subdir.close();
-                try collectPythonFiles(allocator, subdir, full_path, paths);
+                var subdir = try dir.openDir(io, entry.name, .{ .iterate = true });
+                defer subdir.close(io);
+                try collectPythonFiles(allocator, io, subdir, full_path, paths);
             },
             else => {},
         }
     }
 }
 
-fn pythonDisExamples(b: *std.Build) !*std.Build.Step.InstallFile {
+fn pythonDisExamples(b: *std.Build) !std.Build.LazyPath {
     var arena = std.heap.ArenaAllocator.init(b.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const io = b.graph.io;
 
     const python_run = generateZigFromPython(b, "python/disassemble_examples_to_zig.py");
 
-    var paths: std.ArrayList([]const u8) = .{};
+    var paths: std.ArrayList([]const u8) = .empty;
+    // var root_dir = try std.fs.cwd().openDir("src/test/examples", .{ .iterate = true });
+    var root_dir = try std.Io.Dir.cwd().openDir(io, "src/test/examples", .{ .iterate = true });
+    defer root_dir.close(io);
 
-    var root_dir = try std.fs.cwd().openDir("src/test/examples", .{ .iterate = true });
-    defer root_dir.close();
-
-    try collectPythonFiles(allocator, root_dir, "src/test/examples", &paths);
+    try collectPythonFiles(allocator, io, root_dir, "src/test/examples", &paths);
 
     for (paths.items) |path| {
         python_run.addFileArg(b.path(path));
     }
 
-    return b.addInstallFile(python_run.captureStdOut(), "../src/test/disassembled_examples.zig");
+    // return b.addInstallFile(python_run.captureStdOut(.{}), "disassembled_examples.zig");
+    return python_run.addOutputFileArg("disassembled_examples.zig");
 }
 
 const MirArtifacts = struct {

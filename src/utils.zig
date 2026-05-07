@@ -20,7 +20,7 @@ pub fn Iterator(comptime T: type) type {
 pub fn fatalExit(exit_code: u8, comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print(fmt ++ "\n", args); // TODO: stderr instead?
     const mode = @import("builtin").mode;
-    if (mode == .Debug) std.debug.dumpCurrentStackTrace(null);
+    if (mode == .Debug) std.debug.dumpCurrentStackTrace(.{});
     std.process.exit(exit_code);
 }
 

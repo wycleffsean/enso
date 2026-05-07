@@ -26,10 +26,10 @@ const Allocation = enum {
     heap,
 };
 
-pub fn main() anyerror!void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var allocator = gpa.allocator();
+pub fn main(init: std.process.Init) anyerror!void {
+    var allocator = init.gpa;
+    // defer _ = gpa.deinit();
+    // var allocator = gpa.allocator();
 
     const params = comptime clap.parseParamsComptime(
         // tabs aren't cool in multiline literals: https://github.com/ziglang/zig-spec/issues/38
@@ -41,27 +41,27 @@ pub fn main() anyerror!void {
     );
 
     var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, init.minimal.args, .{
         .diagnostic = &diag,
-        .allocator = gpa.allocator(),
+        .allocator = allocator,
     }) catch |err| {
-        diag.reportToFile(.stderr(), err) catch {};
+        diag.reportToFile(init.io, .stderr(), err) catch {};
         return err;
     };
     defer res.deinit();
 
     if (res.args.help != 0)
-        return clap.helpToFile(.stderr(), clap.Help, &params, .{});
+        return clap.helpToFile(init.io, .stderr(), clap.Help, &params, .{});
     if (res.args.command) |cmd|
-        try interpret(allocator, cmd);
+        try interpret(allocator, init.io, cmd);
     if (res.positionals[0]) |file_path| {
-        const file_bytes = try readFile(allocator, file_path);
+        const file_bytes = try readFile(allocator, init.io, file_path);
         defer allocator.free(file_bytes);
-        try interpret(allocator, file_bytes);
+        try interpret(allocator, init.io, file_bytes);
     }
 }
 
-fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
+fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var arena_allocator = arena.allocator();
@@ -78,22 +78,15 @@ fn interpret(allocator: std.mem.Allocator, code: []const u8) !void {
     const ir = try irgen.generate(arena_allocator);
 
     var buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &buffer);
 
     var virtual_machine = vm.VM{ .intern_pool = intern_pool, .stdout = &stdout_writer.interface };
     try virtual_machine.eval(ir);
 }
 
-fn readFile(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-
-    const stat = try file.stat();
-    const size = stat.size;
-
-    const buffer = try allocator.alloc(u8, size);
-    _ = try file.readAll(buffer);
-    return buffer;
+fn readFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]const u8 {
+    const cwd = std.Io.Dir.cwd();
+    return cwd.readFileAlloc(io, path, allocator, .unlimited);
 }
 test {
     try testing.expect(true);
