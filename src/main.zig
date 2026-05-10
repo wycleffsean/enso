@@ -5,7 +5,8 @@ const intern = @import("bytecode/intern.zig");
 // for tests
 const lex = @import("lex.zig");
 const parse = @import("parse.zig");
-const bytecode = @import("bytecode.zig");
+pub const bytecode = @import("bytecode.zig");
+pub const object = @import("object.zig");
 const eval = @import("eval.zig");
 const gen = @import("gen.zig");
 const vm = @import("vm.zig");

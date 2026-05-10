@@ -139,12 +139,9 @@ pub fn build(b: *std.Build) !void {
         }),
         // .filters = test_filters,
     });
-    const python_examples = try pythonDisExamples(b);
-    const examples_mod = b.addModule("disassembled_examples", .{
-        .root_source_file = python_examples,
-    });
-    unit_tests.root_module.addImport("disassembled_examples", examples_mod);
-    // unit_tests.step.dependOn(&python_examples.step);
+    const python_examples_mod = try pythonDisExamples(b);
+    python_examples_mod.addImport("enso", unit_tests.root_module);
+    unit_tests.root_module.addImport("disassembled_examples", python_examples_mod);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
@@ -193,27 +190,38 @@ fn collectPythonFiles(
     }
 }
 
-fn pythonDisExamples(b: *std.Build) !std.Build.LazyPath {
+// We create a separate module for this test support content.  It is generated during the build
+// and all relevant files are copied into the zig cache.  It codegens a file/module called
+// disassembled_examples
+fn pythonDisExamples(b: *std.Build) !*std.Build.Module {
     var arena = std.heap.ArenaAllocator.init(b.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     const io = b.graph.io;
+    const wf = b.addWriteFiles();
 
     const python_run = generateZigFromPython(b, "python/disassemble_examples_to_zig.py");
 
     var paths: std.ArrayList([]const u8) = .empty;
-    // var root_dir = try std.fs.cwd().openDir("src/test/examples", .{ .iterate = true });
-    var root_dir = try std.Io.Dir.cwd().openDir(io, "src/test/examples", .{ .iterate = true });
+    var root_dir = try std.Io.Dir.cwd().openDir(io, "python/examples", .{ .iterate = true });
     defer root_dir.close(io);
 
-    try collectPythonFiles(allocator, io, root_dir, "src/test/examples", &paths);
+    try collectPythonFiles(allocator, io, root_dir, "python/examples", &paths);
 
     for (paths.items) |path| {
         python_run.addFileArg(b.path(path));
+        // copy python examples into the zig cache. We truncate the
+        // path part therefore all example names must be unique
+        const file_name = std.fs.path.basename(path);
+        _ = wf.addCopyFile(b.path(path), file_name);
     }
 
-    // return b.addInstallFile(python_run.captureStdOut(.{}), "disassembled_examples.zig");
-    return python_run.addOutputFileArg("disassembled_examples.zig");
+    const python_dis_examples = python_run.addOutputFileArg("disassembled_examples.zig");
+    const zig_file_in_wf = wf.addCopyFile(python_dis_examples, "disassembled_examples.zig");
+    const python_examples_mod = b.addModule("disassembled_examples", .{
+        .root_source_file = zig_file_in_wf,
+    });
+    return python_examples_mod;
 }
 
 const MirArtifacts = struct {

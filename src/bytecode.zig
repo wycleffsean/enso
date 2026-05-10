@@ -1,7 +1,7 @@
 const std = @import("std");
 const parse = @import("parse.zig");
 const intern = @import("bytecode/intern.zig");
-const OpCode = @import("bytecode/opcodes.zig").OpCode;
+pub const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const object = @import("object.zig");
 const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
