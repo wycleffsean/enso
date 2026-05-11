@@ -38,14 +38,13 @@ pub fn build(b: *std.Build) !void {
             .link_libc = true,
         }),
     });
-    mir_probe_exe.linkLibC();
-    mir_probe_exe.addCSourceFile(.{
+    mir_probe_exe.root_module.addCSourceFile(.{
         .file = b.path("src/c/mir_probe.c"),
         .flags = mir_c_flags,
     });
-    mir_probe_exe.addIncludePath(mir_dep.path("."));
+    mir_probe_exe.root_module.addIncludePath(mir_dep.path("."));
     const mir_probe_run = b.addRunArtifact(mir_probe_exe);
-    const mir_probe_out = mir_probe_run.captureStdOut();
+    const mir_probe_out = mir_probe_run.captureStdOut(.{});
     const mir_probe_gen = b.addWriteFiles();
     const mir_abi_file = mir_probe_gen.add("mir_abi.zig", "");
     // TODO: this copy is lame, there's gotta
@@ -62,19 +61,19 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     b.installArtifact(exe);
 
     exe.root_module.addImport("clap", clap.module("clap"));
-    exe.linkLibrary(mir.mir_core);
-    exe.linkLibrary(mir.c2mir);
-    exe.linkLibrary(mir.mir2c);
-    exe.linkLibC();
+    exe.root_module.linkLibrary(mir.mir_core);
+    exe.root_module.linkLibrary(mir.c2mir);
+    exe.root_module.linkLibrary(mir.mir2c);
 
-    exe.addIncludePath(mir_dep.path("."));
-    exe.addIncludePath(mir_dep.path("c2mir"));
-    exe.addIncludePath(mir_dep.path("mir2c"));
+    exe.root_module.addIncludePath(mir_dep.path("."));
+    exe.root_module.addIncludePath(mir_dep.path("c2mir"));
+    exe.root_module.addIncludePath(mir_dep.path("mir2c"));
     exe.root_module.addAnonymousImport("mir_abi", .{
         .root_source_file = mir_abi_file,
     });
@@ -101,16 +100,16 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/mir-example.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
-    mir_exe.linkLibrary(mir.mir_core);
-    mir_exe.linkLibrary(mir.c2mir);
-    mir_exe.linkLibrary(mir.mir2c);
-    mir_exe.linkLibC();
+    mir_exe.root_module.linkLibrary(mir.mir_core);
+    mir_exe.root_module.linkLibrary(mir.c2mir);
+    mir_exe.root_module.linkLibrary(mir.mir2c);
 
-    mir_exe.addIncludePath(mir_dep.path("."));
-    mir_exe.addIncludePath(mir_dep.path("c2mir"));
-    mir_exe.addIncludePath(mir_dep.path("mir2c"));
+    mir_exe.root_module.addIncludePath(mir_dep.path("."));
+    mir_exe.root_module.addIncludePath(mir_dep.path("c2mir"));
+    mir_exe.root_module.addIncludePath(mir_dep.path("mir2c"));
     mir_exe.root_module.addImport("mir", mir_mod);
     mir_exe.root_module.addAnonymousImport("mir_abi", .{
         .root_source_file = mir_abi_file,
@@ -249,13 +248,13 @@ fn addMirDeps(
         }),
     });
     mir_core.root_module.sanitize_c = .off;
-    mir_core.addIncludePath(mir_root);
+    mir_core.root_module.addIncludePath(mir_root);
 
-    mir_core.addCSourceFile(.{
+    mir_core.root_module.addCSourceFile(.{
         .file = b.path("src/c/mir_unity.c"),
         .flags = mir_c_flags,
     });
-    mir_core.addCSourceFile(.{
+    mir_core.root_module.addCSourceFile(.{
         .file = mir_dep.path("mir-gen.c"),
         .flags = mir_c_flags,
     });
@@ -271,8 +270,8 @@ fn addMirDeps(
         }),
     });
     c2mir.root_module.sanitize_c = .off;
-    c2mir.addIncludePath(mir_root);
-    c2mir.addIncludePath(mir_dep.path("c2mir"));
+    c2mir.root_module.addIncludePath(mir_root);
+    c2mir.root_module.addIncludePath(mir_dep.path("c2mir"));
 
     addCFilesFromDirExcluding(
         b,
@@ -293,8 +292,8 @@ fn addMirDeps(
         }),
     });
     mir2c.root_module.sanitize_c = .off;
-    mir2c.addIncludePath(mir_root);
-    mir2c.addIncludePath(mir_dep.path("mir2c"));
+    mir2c.root_module.addIncludePath(mir_root);
+    mir2c.root_module.addIncludePath(mir_dep.path("mir2c"));
 
     addCFilesFromDirExcluding(
         b,
@@ -318,17 +317,18 @@ fn addCFilesFromDirExcluding(
 ) void {
     // Build scripts run on the host, so we can walk the directory at build time.
     const arena = b.allocator;
+    const io = b.graph.io;
 
     const abs_dir = dir_path.getPath(b);
-    var dir = std.fs.openDirAbsolute(abs_dir, .{ .iterate = true }) catch |e| {
+    var dir = std.Io.Dir.openDirAbsolute(io, abs_dir, .{ .iterate = true }) catch |e| {
         std.debug.panic("openDirAbsolute({s}) failed: {any}", .{ abs_dir, e });
     };
-    defer dir.close();
+    defer dir.close(io);
 
     var it = dir.iterate();
-    var files: std.ArrayList([]const u8) = .{};
+    var files: std.ArrayList([]const u8) = .empty;
 
-    while (it.next() catch |e| {
+    while (it.next(io) catch |e| {
         std.debug.panic("iterate({s}) failed: {any}", .{ abs_dir, e });
     }) |ent| {
         if (ent.kind != .file) continue;
@@ -347,7 +347,7 @@ fn addCFilesFromDirExcluding(
         files.append(arena, arena.dupe(u8, ent.name) catch @panic("oom")) catch @panic("oom");
     }
 
-    lib.addCSourceFiles(.{
+    lib.root_module.addCSourceFiles(.{
         .root = dir_path,
         .files = files.items,
         .flags = c_flags,

@@ -139,7 +139,7 @@ pub const Context = struct {
     /// not sure of a better way to do it.  This is only relevant
     /// for debugging anyway so probably ok
     pub fn dumpAll(self: *Context) void {
-        const stderr = std.fs.File.stderr();
+        const stderr = std.Io.File.stderr();
         // FILE* is hidden inside libc; use fdopen
         const file: *c.FILE = @ptrCast(c.fdopen(stderr.handle, "w"));
         c.MIR_output(self.ctx, file);
