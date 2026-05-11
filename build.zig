@@ -1,12 +1,14 @@
 const std = @import("std");
 
-const mir_c_flags = &[_][]const u8{
-    "-std=c11",
-    "-D_GNU_SOURCE",
-    "-D_POSIX_C_SOURCE=200809L",
-    "-fno-sanitize=alignment",
-    "-fno-sanitize=undefined",
-};
+// const mir_c_flags = &[_][]const u8{
+//     "-std=c11",
+//     "-D_GNU_SOURCE",
+//     "-D_POSIX_C_SOURCE=200809L",
+//     "-fno-sanitize=alignment",
+//     "-fno-sanitize=undefined",
+// };
+
+var mir_c_flags: []const []const u8 = undefined;
 
 pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
@@ -22,6 +24,50 @@ pub fn build(b: *std.Build) !void {
 
     const mir_dep = b.dependency("mir", .{});
     const mir = addMirDeps(b, mir_dep, target, optimize);
+
+    var flags: std.ArrayList([]const u8) = .empty;
+    defer flags.deinit(b.allocator);
+    try flags.appendSlice(b.allocator, &.{
+        "-std=c11",
+        "-fno-sanitize=alignment",
+        "-fno-sanitize=undefined",
+    });
+
+    if (target.result.os.tag == .macos) {
+        // This opens up the Apple-specific extensions (pthread_jit, etc.)
+        // try flags.append(b.allocator, "-D_DARWIN_C_SOURCE");
+        // try flags.append(b.allocator, "-DMAP_ANONYMOUS=MAP_ANON");
+        try flags.appendSlice(b.allocator, &.{
+            "-D_DARWIN_C_SOURCE",
+            "-DMAP_ANONYMOUS=MAP_ANON",
+            "-DHAVE_ALLOCA_H=1",
+        });
+
+        // If you are on Apple Silicon, MIR specifically needs to know
+        // it's allowed to use the JIT write-protect toggles.
+        if (target.result.cpu.arch == .aarch64) {
+            try flags.append(b.allocator, "-DMIR_APPLE_S_SUPPORT");
+        }
+
+        // // 1. Enable Darwin-specific features (like MAP_JIT)
+        // exe.define_set.add("_DARWIN_C_SOURCE", null);
+
+        // // 2. Map MAP_ANONYMOUS to MAP_ANON (macOS naming)
+        // exe.define_set.add("MAP_ANONYMOUS", "MAP_ANON");
+
+        // // 3. Tell MIR we are on Apple Silicon to enable W^X toggling
+        // // This enables calls to pthread_jit_write_protect_np
+        // exe.define_set.add("MIR_APPLE_S_SUPPORT", null);
+
+        // // 4. Ensure alloca is visible (macOS puts it in alloca.h)
+        // exe.define_set.add("HAVE_ALLOCA_H", "1");
+    } else {
+        // Linux/POSIX defaults
+        try flags.append(b.allocator, "-D_GNU_SOURCE");
+        try flags.append(b.allocator, "-D_POSIX_C_SOURCE=200809L");
+    }
+
+    mir_c_flags = flags.items;
 
     // MIR probe + codegen
     // We need to do this because mir.h has bitfields
