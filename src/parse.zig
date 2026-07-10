@@ -224,7 +224,7 @@ pub const Parser = struct {
 
     const Self = @This();
 
-    const Error = error{
+    pub const Error = error{
         NullDenotationUnhandled,
         LeftDenotationUnhandled,
         UnhandledPrecedence,

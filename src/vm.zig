@@ -499,40 +499,16 @@ fn LoweringVM(comptime BackendType: type) type {
     };
 }
 
-const TestContext = struct {
-    ir: []const bytecode.Insn,
-    intern_pool: *intern.StringInternPool,
-};
-
-fn testSetup(code: []const u8, buffer: []u8) !TestContext {
-    var fba = std.heap.FixedBufferAllocator.init(buffer);
-    const allocator = fba.allocator();
-
-    var parser = Parser.init(allocator, code);
-    const ast = try parser.parse();
-
-    const intern_pool = try allocator.create(intern.StringInternPool);
-    intern_pool.* = intern.StringInternPool.init(allocator);
-
-    var irgen = bytecode.IrGen.init(allocator, intern_pool, ast);
-    const ir = try irgen.generate(allocator);
-    return .{ .ir = ir, .intern_pool = intern_pool };
-}
-
-fn testTeardown(ctx: *TestContext) void {
-    _ = ctx;
-}
-
 fn testExample(comptime example: test_utils.Example) !void {
-    var buffer: [std.heap.page_size_min * 8]u8 = undefined;
-    var ctx = try testSetup(example.source(), &buffer);
-    defer testTeardown(&ctx);
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+    const ir = try harness.doIRGen(example.source());
 
     var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
     defer stdout.deinit();
 
-    var vm = VM{ .intern_pool = ctx.intern_pool, .stdout = &stdout.writer };
-    try vm.eval(ctx.ir);
+    var vm = VM{ .intern_pool = &harness.intern_pool, .stdout = &stdout.writer };
+    try vm.eval(ir);
 
     testing.expectEqualStrings(example.stdout(), stdout.written()) catch |err| {
         std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
@@ -555,14 +531,14 @@ test "vm eval: example fixtures" {
 }
 
 test "LoweringVM: stack evaluation" {
-    var buffer: [std.heap.page_size_min * 8]u8 = undefined;
-    var ctx = try testSetup("print('hello world')", &buffer);
-    defer testTeardown(&ctx);
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+    const ir = try harness.doIRGen("print('hello world')");
 
     var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
     defer stdout.deinit();
 
     const backend: ValueBackend = .{};
     var vm: LoweringVM(ValueBackend) = .init(backend);
-    vm.eval(ctx.ir);
+    vm.eval(ir);
 }

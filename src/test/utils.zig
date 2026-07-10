@@ -2,6 +2,44 @@ const std = @import("std");
 const dis_examples = @import("disassembled_examples");
 const object = @import("../object.zig");
 
+const parse = @import("../parse.zig");
+const intern = @import("../bytecode/intern.zig");
+const bytecode = @import("../bytecode.zig");
+pub const CompilerHarness = struct {
+    arena: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
+    intern_pool: intern.StringInternPool,
+
+    const Self = @This();
+    const ParseError = parse.Parser.Error;
+    const ParseOrIRGenError = ParseError || bytecode.IrGen.Error;
+
+    pub fn create(base_allocator: std.mem.Allocator) !*Self {
+        var arena = std.heap.ArenaAllocator.init(base_allocator);
+        var ptr = try arena.allocator().create(Self);
+        ptr.arena = arena;
+        ptr.allocator = ptr.arena.allocator();
+        ptr.intern_pool = intern.StringInternPool.init(ptr.allocator);
+        return ptr;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.intern_pool.deinit();
+        self.arena.deinit();
+    }
+
+    pub fn doParse(self: *Self, code: []const u8) ParseError!*const parse.AstNode {
+        var parser = parse.Parser.init(self.allocator, code);
+        return parser.parse();
+    }
+
+    pub fn doIRGen(self: *Self, code: []const u8) ParseOrIRGenError![]bytecode.Insn {
+        const ast = try self.doParse(code);
+        var irgen = bytecode.IrGen.init(self.allocator, &self.intern_pool, ast);
+        return irgen.generate(self.allocator);
+    }
+};
+
 pub const Example = struct {
     name: []const u8,
     test_lex: bool = true,
