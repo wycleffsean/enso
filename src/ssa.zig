@@ -1,249 +1,543 @@
 const std = @import("std");
+const object = @import("object.zig");
+const bytecode = @import("bytecode.zig");
+const opcodes = @import("bytecode/opcodes.zig");
+const OpCode = opcodes.OpCode;
+const opEffect = opcodes.opEffect;
+
+// testing
 const testing = std.testing;
+const test_utils = @import("./test/utils.zig");
 
-// w (word) i32/u32, l (long) i64/u64, s (single) f32, and d (double) f64
-const Word = i32;
-const UWord = u32;
-const Long = i64;
-const ULong = u64;
-const Single = f32;
-const Double = f64;
-const Memory = *void;
-// b (byte) u8 and h (half word) u16
-const Byte = u8;
-const HalfWord = u16;
+const InsnIndex = u32;
+const BlockIndex = u32;
 
-// T stands for wlsd
-const Numeric = union(enum) {
-    integer: Integer,
-    float: Float,
+const BinaryOperation = struct {
+    op: bytecode.BinaryOperation,
+    lhs: InsnIndex,
+    rhs: InsnIndex,
 };
-// I stands for wl
-const Integer = union(enum) {
-    word: Word,
-    unsigned_word: UWord,
-    long: Long,
-    unsigned_long: ULong,
+
+// const SsaInsn = union(OpCode) {
+const SsaInsn = union(enum) {
+    // pop_top: void,
+    // push_null: void,
+    // end_for: void,
+    // end_send: void,
+    nop: void,
+    // unary_negative: void,
+    // unary_not: void,
+    // unary_invert: void,
+    // cleanup_throw: void,
+    // store_subscr: void,
+    // get_iter: void,
+    // get_yield_from_iter: void,
+    // load_build_class: void,
+    // return_generator: void,
+    // return_value: void,
+    // setup_annotations: void,
+    // store_name: object.Object,
+    // for_iter: void,
+    // swap: void,
+    load_const: object.Object,
+    // load_name: object.Object,
+    // build_tuple: void,
+    // build_list: void,
+    // build_set: void,
+    // build_map: void,
+    // load_attr: void,
+    // compare_op: void,
+    // import_name: void,
+    // import_from: void,
+    // pop_jump_if_false: void,
+    // pop_jump_if_true: void,
+    // load_global: object.Object,
+    // is_op: void,
+    // contains_op: void,
+    // reraise: void,
+    // copy: void,
+    // return_const: void,
+    binary_op: BinaryOperation,
+    // send: void,
+    // load_fast: object.Object,
+    // store_fast: object.Object,
+    // get_awaitable: void,
+    // make_function: void,
+    // jump_backward_no_interrupt: void,
+    // jump_backward: void,
+    // load_fast_and_clear: void,
+    // list_append: void,
+    // set_add: void,
+    // map_add: void,
+    // yield_value: void,
+    // @"resume": usize,
+    // build_const_key_map: void,
+    // list_extend: void,
+    // set_update: void,
+    // dict_update: void,
+    call: struct { receiver: InsnIndex, args: []InsnIndex },
+    // call_intrinsic_1: void,
 };
-// F stands for sd
-const Float = union(enum) {
-    single: Single,
-    double: Double,
+
+const SsaNode = struct {
+    insn: SsaInsn,
 };
-// m stands for the type of pointers on the target; on 64-bit architectures it is the same as l
-const Function = struct {
-    exported: bool,
-    return_type: Numeric,
-    name: []const u8,
-    instructions: std.AutoArrayHashMap([]const u8, Instruction),
+
+pub const SsaGraph = struct {
+    allocator: std.mem.Allocator,
+    nodes: std.MultiArrayList(SsaNode),
 
     const Self = @This();
 
-    fn init(
-        allocator: std.mem.Allocator,
-        name: []const u8,
-        exported: bool,
-        return_type: Numeric,
-    ) Self {
+    fn init(allocator: std.mem.Allocator) Self {
         return .{
-            .name = name,
-            .exported = exported,
-            .return_type = return_type,
-            .instructions = std.AutoArrayHashMap([]const u8, Instruction).init(allocator),
+            .allocator = allocator,
+            .nodes = .empty,
         };
+    }
+
+    fn deinit(self: *Self) void {
+        self.nodes.deinit(self.allocator);
+    }
+
+    fn addNode(self: *Self, node: SsaNode) !InsnIndex {
+        const idx: InsnIndex = @intCast(self.nodes.len);
+        try self.nodes.append(self.allocator, node);
+        return idx;
+    }
+
+    // pub fn format(self: Self, writer: *std.io.Writer) !void {}
+};
+
+const Value = SsaNode;
+
+const SsaBackend = struct {
+    ssa_graph: SsaGraph,
+
+    const Self = @This();
+    const StackValue = InsnIndex; // TODO: this is an artifact of this being a generic interface, delete later
+
+    fn init(allocator: std.mem.Allocator) Self {
+        return .{
+            // lifetime of ssa_graph exceeds build process so the caller deinits
+            .ssa_graph = .init(allocator),
+        };
+    }
+
+    fn emit(self: *Self, insn: SsaInsn) InsnIndex {
+        const node: SsaNode = .{ .insn = insn };
+        const idx = self.ssa_graph.addNode(node) catch unreachable;
+        return idx;
+    }
+
+    fn call(self: *Self, argc: usize) StackValue {
+        _ = argc;
+        return self.emit(.{ .nop = {} });
+    }
+    fn loadConst(self: *Self, consti: object.Object) StackValue {
+        return self.emit(.{ .load_const = consti });
+    }
+    fn loadName(self: *Self, namei: object.Object) StackValue {
+        _ = namei;
+        return self.emit(.{ .nop = {} });
+    }
+    fn popTop(self: *Self, value: StackValue) void {
+        _ = value;
+        _ = self;
+    }
+    fn @"resume"(self: *Self, context: usize) void {
+        _ = context;
+        _ = self;
+    }
+    fn returnConst(self: *Self) void {
+        _ = self;
+    }
+
+    fn pushNull(self: *Self) StackValue {
+        return self.emit(.{ .load_const = object.None });
+    }
+    fn endFor(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn endSend(self: *Self) void {
+        _ = self;
+    }
+    fn nop(self: *Self) void {
+        _ = self;
+    }
+    fn unaryNegative(self: *Self, value: StackValue) StackValue {
+        _ = value;
+        return self.emit(.{ .nop = {} });
+    }
+    fn unaryNot(self: *Self, value: StackValue) StackValue {
+        _ = value;
+        return self.emit(.{ .nop = {} });
+    }
+    fn unaryInvert(self: *Self, value: StackValue) StackValue {
+        _ = value;
+        return self.emit(.{ .nop = {} });
+    }
+    fn cleanupThrow(self: *Self) void {
+        _ = self;
+    }
+    fn storeSubscr(self: *Self, values: []StackValue) void {
+        _ = self;
+        _ = values;
+    }
+    fn getIter(self: *Self, value: StackValue) StackValue {
+        _ = value;
+        return self.emit(.{ .nop = {} });
+    }
+    fn getYieldFromIter(self: *Self, value: StackValue) StackValue {
+        _ = value;
+        return self.emit(.{ .nop = {} });
+    }
+    fn loadBuildClass(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn returnGenerator(self: *Self) void {
+        _ = self;
+    }
+    fn returnValue(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn setupAnnotations(self: *Self) void {
+        _ = self;
+    }
+    fn storeName(self: *Self, namei: object.Object, value: StackValue) void {
+        _ = namei;
+        _ = self;
+        _ = value;
+    }
+    fn forIter(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn swap(self: *Self) void {
+        _ = self;
+    }
+    fn buildTuple(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn buildList(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn buildSet(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn buildMap(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn loadAttr(self: *Self) void {
+        _ = self;
+    }
+    fn compareOp(self: *Self, left: StackValue, right: StackValue) StackValue {
+        _ = left;
+        _ = right;
+        return self.emit(.{ .nop = {} });
+    }
+    fn importName(self: *Self, left: StackValue, right: StackValue) StackValue {
+        _ = left;
+        _ = right;
+        return self.emit(.{ .nop = {} });
+    }
+    fn importFrom(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn popJumpIfFalse(self: *Self, delta: bytecode.RelativeJump, value: StackValue) void {
+        _ = delta;
+        _ = self;
+        _ = value;
+    }
+    fn popJumpIfTrue(self: *Self, delta: bytecode.RelativeJump, value: StackValue) void {
+        _ = delta;
+        _ = self;
+        _ = value;
+    }
+    fn loadGlobal(self: *Self, namei: object.Object) void {
+        _ = namei;
+        _ = self;
+    }
+    fn isOp(self: *Self, left: StackValue, right: StackValue) StackValue {
+        _ = left;
+        _ = right;
+        return self.emit(.{ .nop = {} });
+    }
+    fn containsOp(self: *Self, left: StackValue, right: StackValue) StackValue {
+        _ = left;
+        _ = right;
+        return self.emit(.{ .nop = {} });
+    }
+    fn reraise(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn copy(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn binaryOp(self: *Self, oparg: bytecode.BinaryOperation, left: StackValue, right: StackValue) StackValue {
+        return self.emit(.{ .binary_op = .{ .op = oparg, .lhs = left, .rhs = right } });
+    }
+    fn send(self: *Self) void {
+        _ = self;
+    }
+    fn loadFast(self: *Self, var_num: object.Object) StackValue {
+        _ = var_num;
+        return self.emit(.{ .nop = {} });
+    }
+    fn storeFast(self: *Self, var_num: object.Object, value: StackValue) void {
+        _ = var_num;
+        _ = self;
+        _ = value;
+    }
+    fn getAwaitable(self: *Self, value: StackValue) StackValue {
+        _ = value;
+        return self.emit(.{ .nop = {} });
+    }
+    fn makeFunction(self: *Self) void {
+        _ = self;
+    }
+    fn jumpBackwardNoInterrupt(self: *Self, delta: bytecode.RelativeJump) void {
+        _ = delta;
+        _ = self;
+    }
+    fn jumpBackward(self: *Self, delta: bytecode.RelativeJump) void {
+        _ = delta;
+        _ = self;
+    }
+    fn loadFastAndClear(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn listAppend(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn setAdd(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn mapAdd(self: *Self, left: StackValue, right: StackValue) void {
+        _ = self;
+        _ = left;
+        _ = right;
+    }
+    fn yieldValue(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn buildConstKeyMap(self: *Self) StackValue {
+        return self.emit(.{ .nop = {} });
+    }
+    fn listExtend(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn setUpdate(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn dictUpdate(self: *Self, value: StackValue) void {
+        _ = self;
+        _ = value;
+    }
+    fn callIntrinsic1(self: *Self, oparg: bytecode.CallIntrinsic1Kind, value: StackValue) StackValue {
+        _ = oparg;
+        _ = value;
+        return self.emit(.{ .nop = {} });
     }
 };
 
-const Data = struct { data: []const Byte };
+fn Stack(comptime T: type) type {
+    return struct {
+        buf: []T,
+        len: usize = 0,
 
-const Instruction = struct {};
-const Control = struct {};
-const Call = struct {};
-const Assignment = struct {};
+        const Self = @This();
 
-// Arithmetic and Bits
-// add, sub, div, mul -- T(T,T)
-fn add(comptime Type: type, a: Type, b: Type) Type {
-    // TODO: assert type is Numeric
-    return a + b;
-}
-fn sub(comptime Type: type, a: Type, b: Type) Type {
-    // TODO: assert type is Numeric
-    return a - b;
-}
-fn div(comptime Type: type, a: Type, b: Type) Type {
-    // TODO: assert type is Numeric
-    return @divTrunc(a, b);
-}
-fn mul(comptime Type: type, a: Type, b: Type) Type {
-    // TODO: assert type is Numeric
-    return a * b;
-}
+        fn push(self: *Self, v: T) void {
+            self.buf[self.len] = v;
+            self.len += 1;
+        }
 
-test "ssa: arithmetic" {
-    var aw: Word = 100;
-    var bw: Word = 33;
-    try testing.expectEqual(@as(Word, 133), add(Word, aw, bw));
-    try testing.expectEqual(@as(Word, 67), sub(Word, aw, bw));
-    try testing.expectEqual(@as(Word, 3), div(Word, aw, bw));
-    try testing.expectEqual(@as(Word, 3300), mul(Word, aw, bw));
+        fn pop(self: *Self) T {
+            self.len -= 1;
+            return self.buf[self.len];
+        }
 
-    var al: Long = 100;
-    var bl: Long = 33;
-    try testing.expectEqual(@as(Long, 133), add(Long, al, bl));
-    try testing.expectEqual(@as(Long, 67), sub(Long, al, bl));
-    try testing.expectEqual(@as(Long, 3), div(Long, al, bl));
-    try testing.expectEqual(@as(Long, 3300), mul(Long, al, bl));
-
-    var as: Single = 100;
-    var bs: Single = 33;
-    try testing.expectEqual(@as(Single, 133), add(Single, as, bs));
-    try testing.expectEqual(@as(Single, 67), sub(Single, as, bs));
-    try testing.expectEqual(@as(Single, 3), div(Single, as, bs));
-    try testing.expectEqual(@as(Single, 3300), mul(Single, as, bs));
-
-    var ad: Single = 100;
-    var bd: Single = 33;
-    try testing.expectEqual(@as(Single, 133), add(Single, ad, bd));
-    try testing.expectEqual(@as(Single, 67), sub(Single, ad, bd));
-    try testing.expectEqual(@as(Single, 3), div(Single, ad, bd));
-    try testing.expectEqual(@as(Single, 3300), mul(Single, ad, bd));
-}
-
-// neg -- T(T)
-fn neg(comptime Type: type, value: Type) Type {
-    // Should it be -%value instead?
-    return switch (Type) {
-        Word, Long => -%value,
-        Single, Double => -value,
-        else => @compileError("Numeric values only"),
+        fn popSlice(self: *Self, n: usize) []T {
+            std.debug.assert(self.len >= n);
+            const start = self.len - n;
+            self.len = start;
+            return self.buf[start .. start + n];
+        }
     };
 }
 
-test "ssa: neg" {
-    try testing.expectEqual(@as(Word, -100), neg(Word, @as(Word, 100)));
-    // try testing.expectEqual(@as(UWord, -100), neg(UWord, @as(UWord, 100)));
-    try testing.expectEqual(@as(Long, -100), neg(Long, @as(Long, 100)));
-    // try testing.expectEqual(@as(ULong, -100), neg(ULong, @as(ULong, 10Long0)));
-    try testing.expectEqual(@as(Single, -100), neg(Single, @as(Single, 100)));
-    try testing.expectEqual(@as(Double, -100), neg(Double, @as(Double, 100)));
-    // integers don't overflow
-    try testing.expectEqual(@as(i32, std.math.minInt(i32)), neg(Word, std.math.minInt(i32)));
-    try testing.expectEqual(@as(i64, std.math.minInt(i64)), neg(Long, std.math.minInt(i64)));
+const StackMachine = struct {
+    const StackMachineValue = InsnIndex;
+    const BackendType = SsaBackend; // TODO: artifact of this being a generic interface, delete if possible
+    backend: *BackendType,
+    stack_buf: [1024]StackMachineValue = undefined,
+    stack: Stack(StackMachineValue),
+
+    const Self = @This();
+
+    pub fn init(backend: *BackendType) Self {
+        var self: Self = undefined;
+        self.backend = backend;
+        self.stack = .{ .buf = &self.stack_buf };
+        return self;
+    }
+
+    pub fn eval(self: *Self, insns: []const bytecode.Insn) void {
+        for (insns) |insn| {
+            self.step(insn);
+        }
+    }
+
+    fn requireHandlerReturnVoid(comptime handler_name: []const u8, comptime tag: anytype) void {
+        const FnT = @TypeOf(@field(BackendType, handler_name));
+        const info = @typeInfo(FnT);
+        if (info != .@"fn") {
+            @compileError("handler '" ++ handler_name ++ "' for opcode " ++ @tagName(tag) ++ " is not a function");
+        }
+        const ret = info.@"fn".return_type orelse void;
+        if (ret != void) {
+            @compileError("opcode " ++ @tagName(tag) ++ " pushes 0, but handler '" ++ handler_name ++ "' returns " ++ @typeName(ret));
+        }
+    }
+
+    fn requireHandlerReturnValue(comptime handler_name: []const u8, comptime tag: anytype, comptime ValueType: type) void {
+        const FnT = @TypeOf(@field(BackendType, handler_name));
+        const info = @typeInfo(FnT);
+        if (info != .@"fn") {
+            @compileError("handler '" ++ handler_name ++ "' for opcode " ++ @tagName(tag) ++ " is not a function");
+        }
+        const ret = info.@"fn".return_type orelse void;
+        if (ret == void or ret != ValueType) {
+            @compileError("opcode " ++ @tagName(tag) ++ " pushes 1, but handler '" ++ handler_name ++ "' returns " ++ @typeName(ret) ++ " (expected " ++ @typeName(ValueType) ++ ")");
+        }
+    }
+
+    pub fn step(self: *Self, insn: bytecode.Insn) void {
+        switch (insn) {
+            .for_iter => {},
+            inline else => |oparg, tag| {
+                const effect = comptime opEffect(tag);
+                const op_fn = @field(BackendType, effect.handler);
+                const no_oparg = @TypeOf(oparg) == void;
+
+                comptime {
+                    if (effect.pushes == 0) requireHandlerReturnVoid(effect.handler, tag);
+                    if (effect.pushes == 1) requireHandlerReturnValue(effect.handler, tag, StackMachineValue);
+                    if (effect.pushes > 1) @compileError("opcode " ++ @tagName(tag) ++ " pushes > 1 not supported yet");
+                }
+
+                if (no_oparg and effect.pushes == 0) {
+                    _ = switch (effect.pops) {
+                        0 => op_fn(self.backend),
+                        1 => op_fn(self.backend, self.stack.pop()),
+                        2 => op_fn(self.backend, self.stack.pop(), self.stack.pop()),
+                        else => op_fn(self.backend, self.stack.popSlice(effect.pops)),
+                    };
+                } else if (no_oparg and effect.pushes > 0) {
+                    const result = switch (effect.pops) {
+                        0 => op_fn(self.backend),
+                        1 => op_fn(self.backend, self.stack.pop()),
+                        2 => op_fn(self.backend, self.stack.pop(), self.stack.pop()),
+                        else => op_fn(self.backend, self.stack.popSlice(effect.pops)),
+                    };
+                    self.stack.push(result);
+                } else if (effect.pushes == 0) {
+                    switch (effect.pops) {
+                        0 => op_fn(self.backend, oparg),
+                        1 => op_fn(self.backend, oparg, self.stack.pop()),
+                        2 => op_fn(self.backend, oparg, self.stack.pop(), self.stack.pop()),
+                        else => op_fn(self.backend, oparg, self.stack.popSlice(effect.pops)),
+                    }
+                } else if (effect.pushes > 0) {
+                    const result = switch (effect.pops) {
+                        0 => op_fn(self.backend, oparg),
+                        1 => op_fn(self.backend, oparg, self.stack.pop()),
+                        2 => blk: {
+                            // we "pop" backward because the items come out of the stack backward :P
+                            const rhs = self.stack.pop();
+                            const lhs = self.stack.pop();
+                            break :blk op_fn(self.backend, oparg, lhs, rhs);
+                        },
+                        else => op_fn(self.backend, oparg, self.stack.popSlice(effect.pops)),
+                    };
+                    self.stack.push(result);
+                }
+            },
+        }
+    }
+};
+
+pub const SsaBuilder = struct {
+    allocator: std.mem.Allocator,
+    backend: SsaBackend,
+    stack_machine: StackMachine,
+    const Self = @This();
+
+    pub fn generate(allocator: std.mem.Allocator, ir: []bytecode.Insn) !SsaGraph {
+        var self: Self = undefined;
+        self.init(allocator);
+
+        self.stack_machine.eval(ir);
+
+        return self.backend.ssa_graph;
+    }
+
+    fn init(self: *Self, allocator: std.mem.Allocator) void {
+        self.allocator = allocator;
+        self.backend = .init(self.allocator);
+        self.stack_machine = .init(&self.backend);
+        std.debug.assert(&self.backend == self.stack_machine.backend);
+    }
+};
+
+fn expectEqualSsa(expected: []const SsaInsn, actual: SsaGraph) !void {
+    const insns = actual.nodes.items(.insn);
+    testing.expectEqualSlices(SsaInsn, expected, insns) catch |e| {
+        return e;
+    };
 }
 
-// udiv, rem, urem -- I(I,I)
-fn udiv(a: Integer, b: @TypeOf(a)) @TypeOf(a) {
-    return a + b;
-}
-fn rem(comptime T: type, a: T, b: T) T {
-    return @rem(a, b);
-}
-fn urem(comptime T: type, a: T, b: T) T {
-    return @rem(a, b);
-}
+test "ssa: destackify bytecode" {
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
 
-// or, xor, and -- I(I,I)
-fn @"or"(a: Integer, b: @TypeOf(a)) @TypeOf(a) {
-    return a + b;
-}
-fn @"and"(a: Integer, b: @TypeOf(a)) @TypeOf(a) {
-    return a + b;
-}
-// sar, shr, shl -- I(I,ww)
-fn sar(a: Integer, b: Word) @TypeOf(a) {
-    return a + b;
-}
-fn shr(a: Integer, b: Word) @TypeOf(a) {
-    return a + b;
-}
-fn shl(a: Integer, b: Word) @TypeOf(a) {
-    return a + b;
-}
+    {
+        const ssa_graph = try harness.doSsa("1 + 2");
 
-//Memory
-// Store instructions.
-//     stored -- (d,m)
-fn stored(value: Double, address: Memory) void {
-    _ = value;
-    _ = address;
-}
-//     stores -- (s,m)
-fn stores(value: Single, address: Memory) void {
-    _ = value;
-    _ = address;
-}
-//     storel -- (l,m)
-fn storel(value: Long, address: Memory) void {
-    _ = value;
-    _ = address;
-}
-//     storew -- (w,m)
-fn storew(value: Word, address: Memory) void {
-    _ = value;
-    _ = address;
-}
-//     storeh -- (w,m)
-fn storeh(value: Word, address: Memory) void {
-    _ = value;
-    _ = address;
-}
-//     storeb -- (w,m)
-fn storeb(value: Word, address: Memory) void {
-    _ = value;
-    _ = address;
-}
-// Load instructions.
-//    loadd -- d(m)
-fn loadd(address: Memory) Double {
-    _ = address;
-}
-//    loads -- s(m)
-fn loads(address: Memory) Single {
-    _ = address;
-}
-//    loadl -- l(m)
-fn loadl(address: Memory) Long {
-    _ = address;
-}
-//    loadsw, loaduw -- I(mm)
-fn loadsw(address: Memory) Integer {
-    _ = address;
-}
-fn loaduw(address: Memory) Integer {
-    _ = address;
-}
-//    loadsh, loaduh -- I(mm)
-fn loadsh(address: Memory) Integer {
-    _ = address;
-}
-fn loaduh(address: Memory) Integer {
-    _ = address;
-}
-//    loadsb, loadub -- I(mm)
-fn loadsb(address: Memory) Integer {
-    _ = address;
-}
-fn loadub(address: Memory) Integer {
-    _ = address;
-}
-// Blits.
-//    blit -- (m,m,w)
-fn blit(source: Memory, destination: Memory, value: Word) void {
-    _ = source;
-    _ = destination;
-    _ = value;
-}
-// Stack allocation.
-//    alloc4 -- m(l)
-fn alloc4(size: Long) Memory {
-    _ = size;
-}
-//    alloc8 -- m(l)
-fn alloc8(size: Long) Memory {
-    _ = size;
-}
-//    alloc16 -- m(l)
-fn alloc16(size: Long) Memory {
-    _ = size;
+        try expectEqualSsa(
+            &[_]SsaInsn{
+                .{ .load_const = .{ .int = 1 } },
+                .{ .load_const = .{ .int = 2 } },
+                .{ .binary_op = .{ .op = .add, .lhs = 0, .rhs = 1 } },
+            },
+            ssa_graph,
+        );
+    }
+    // {
+    //     const ssa_graph = try harness.doSsa("print(1 + 2)");
+
+    //     const insns = ssa_graph.nodes.items(.insn);
+    //     var args = [_]InsnIndex{3};
+    //     try testing.expectEqualSlices(
+    //         SsaInsn,
+    //         &[_]SsaInsn{
+    //             .{ .load_const = .{ .none = {} } }, // 0: receiver
+    //             .{ .load_const = .{ .int = 1 } }, // 1
+    //             .{ .load_const = .{ .int = 2 } }, // 2
+    //             .{ .binary_op = .{ .op = .add, .lhs = 1, .rhs = 2 } },
+    //             .{ .call = .{ .receiver = 0, .args = &args } },
+    //         },
+
+    //         insns,
+    //     );
+    // }
 }

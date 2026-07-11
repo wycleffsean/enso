@@ -5,6 +5,7 @@ const object = @import("../object.zig");
 const parse = @import("../parse.zig");
 const intern = @import("../bytecode/intern.zig");
 const bytecode = @import("../bytecode.zig");
+const ssa = @import("../ssa.zig");
 pub const CompilerHarness = struct {
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
@@ -37,6 +38,11 @@ pub const CompilerHarness = struct {
         const ast = try self.doParse(code);
         var irgen = bytecode.IrGen.init(self.allocator, &self.intern_pool, ast);
         return irgen.generate(self.allocator);
+    }
+
+    pub fn doSsa(self: *Self, code: []const u8) ParseOrIRGenError!ssa.SsaGraph {
+        const ir = try self.doIRGen(code);
+        return ssa.SsaBuilder.generate(self.allocator, ir);
     }
 };
 

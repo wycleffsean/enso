@@ -8,6 +8,7 @@ const parse = @import("parse.zig");
 pub const bytecode = @import("bytecode.zig");
 pub const object = @import("object.zig");
 const vm = @import("vm.zig");
+const ssa = @import("ssa.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
 
@@ -84,6 +85,7 @@ test {
     _ = parse;
     _ = bytecode;
     _ = vm;
+    _ = ssa;
     _ = @import("lex/lexer_test.zig");
     _ = @import("parse/grammar_test.zig");
 }
