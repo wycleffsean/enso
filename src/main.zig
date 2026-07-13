@@ -1,5 +1,4 @@
 const std = @import("std");
-const clap = @import("clap");
 const intern = @import("bytecode/intern.zig");
 
 // for tests
@@ -12,39 +11,50 @@ const ssa = @import("ssa.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
 
+const help =
+    \\-h, --help Display this help and exit.
+    \\-c,--command <str> Specify the command to execute
+    \\<str> File to execute
+    \\dis disassemble file
+;
+
+fn eql(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
+const CliError = error{MissingArgument};
+
+// JUICY MAIN!!!
 pub fn main(init: std.process.Init) anyerror!void {
     var allocator = init.gpa;
-    // defer _ = gpa.deinit();
-    // var allocator = gpa.allocator();
 
-    const params = comptime clap.parseParamsComptime(
-        // tabs aren't cool in multiline literals: https://github.com/ziglang/zig-spec/issues/38
-        // so this formatting is a bit lame
-        \\-h, --help Display this help and exit.
-        \\-c,--command <str> Specify the command to execute
-        \\<str> File to execute
-        \\
-    );
+    var args = try init.minimal.args.iterateAllocator(allocator);
+    defer args.deinit();
+    _ = args.skip(); // we already know the program name :P
 
-    var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, clap.parsers.default, init.minimal.args, .{
-        .diagnostic = &diag,
-        .allocator = allocator,
-    }) catch |err| {
-        diag.reportToFile(init.io, .stderr(), err) catch {};
-        return err;
-    };
-    defer res.deinit();
-
-    if (res.args.help != 0)
-        return clap.helpToFile(init.io, .stderr(), clap.Help, &params, .{});
-    if (res.args.command) |cmd|
-        try interpret(allocator, init.io, cmd);
-    if (res.positionals[0]) |file_path| {
-        const file_bytes = try readFile(allocator, init.io, file_path);
-        defer allocator.free(file_bytes);
-        try interpret(allocator, init.io, file_bytes);
+    if (args.next()) |arg| {
+        if (eql("-h", arg)) {
+            // HELP!!!
+            return std.debug.print("{s}\n", .{help});
+        } else if (eql("-c", arg) or eql("--command", arg)) {
+            const command = args.next() orelse return CliError.MissingArgument;
+            // user gave us a string of literal code
+            return try interpret(allocator, init.io, command);
+        } else if (eql("dis", arg)) {
+            return try dis(allocator, init.io, &args);
+        } else {
+            // default argument - file we should run
+            const file_bytes = try readFile(allocator, init.io, arg);
+            defer allocator.free(file_bytes);
+            return try interpret(allocator, init.io, file_bytes);
+        }
     }
+    // default
+    return repl();
+}
+
+fn repl() void {
+    std.debug.print("REPL not yet implemented\n", .{});
 }
 
 fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
@@ -68,6 +78,93 @@ fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
 
     var virtual_machine = vm.VM{ .intern_pool = intern_pool, .stdout = &stdout_writer.interface };
     try virtual_machine.eval(ir);
+}
+
+const dis_help =
+    \\-h, --help Display this help and exit.
+    \\-c,--command <str> Specify the command to execute
+    \\<str> File to execute
+;
+
+fn dis(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
+    if (args.next()) |arg| {
+        if (eql("-h", arg)) {
+            // HELP!!!
+            return std.debug.print("{s}\n", .{dis_help});
+        } else if (eql("-c", arg) or eql("--command", arg)) {
+            const command = args.next() orelse return CliError.MissingArgument;
+            // user gave us a string of literal code
+            return try disassemble(allocator, command);
+        } else {
+            // default argument - file we should run
+            const file_bytes = try readFile(allocator, io, arg);
+            defer allocator.free(file_bytes);
+            return try disassemble(allocator, file_bytes);
+        }
+    }
+}
+
+const FormatInsn = struct {
+    insn: *const bytecode.Insn,
+    intern_pool: *intern.StringInternPool,
+    const Self = @This();
+
+    pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
+        var op_buffer: [80]u8 = undefined;
+        const insn = self.insn.*;
+        const op = std.ascii.upperString(&op_buffer, @tagName(insn));
+
+        try writer.print("{s}", .{op});
+        switch (insn) {
+            inline else => |payload| {
+                const payload_type = @TypeOf(payload);
+                if (payload_type == object.Object) {
+                    const obj = object.FormatObject{
+                        .obj = &payload,
+                        .intern_pool = self.intern_pool,
+                    };
+                    try writer.print("\t ({f})", .{obj});
+                } else if (payload_type != void) {
+                    try writer.print("\t{any}", .{payload});
+                }
+            },
+        }
+    }
+};
+
+fn disassemble(allocator: std.mem.Allocator, code: []const u8) !void {
+    var harness = try test_utils.CompilerHarness.create(allocator);
+    defer harness.deinit();
+    const ir = try harness.doIRGen(code);
+
+    for (ir) |insn| {
+        //format
+        //0    0 RESUME    0
+        //
+        //1    2 PUSH_NULL
+        //     4 LOAD_NAME     0 (print)
+        // line number \t bytecode offset \t oparg (human readable oparg)
+        // if we encounter a new line number we add a \n
+        // TODO: currently location data is lost by the time we get to bytecode
+        //   generation, so we don't print line numbers
+        const formatted_insn = FormatInsn{ .insn = &insn, .intern_pool = &harness.intern_pool };
+
+        const line_number = null;
+        const bytecode_offset = null;
+
+        if (line_number) |num| {
+            std.debug.print("{d}\t", .{num});
+        } else {
+            std.debug.print("\t", .{});
+        }
+        if (bytecode_offset) |num| {
+            std.debug.print("{d} ", .{num});
+        } else {
+            std.debug.print(" ", .{});
+        }
+
+        std.debug.print("{f}\n", .{formatted_insn});
+    }
 }
 
 fn readFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]const u8 {

@@ -18,8 +18,6 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     // dependencies
-    const clap = b.dependency("clap", .{});
-
     const mir_dep = b.dependency("mir", .{});
     const mir = addMirDeps(b, mir_dep, target, optimize);
 
@@ -66,7 +64,6 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(exe);
 
-    exe.root_module.addImport("clap", clap.module("clap"));
     exe.root_module.linkLibrary(mir.mir_core);
     exe.root_module.linkLibrary(mir.c2mir);
     exe.root_module.linkLibrary(mir.mir2c);

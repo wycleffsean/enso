@@ -95,6 +95,20 @@ pub const Insn = union(OpCode) {
 
     const Self = @This();
 
+    pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
+        var op_buffer: [80]u8 = undefined;
+        const op = std.ascii.upperString(&op_buffer, @tagName(self.*));
+
+        try writer.print("{s}", .{op});
+        switch (self.*) {
+            inline else => |payload| {
+                if (@TypeOf(payload) != void) {
+                    try writer.print("{any}", .{payload});
+                }
+            },
+        }
+    }
+
     // convenience function for tests
     fn init(comptime kind: OpCode, comptime value: object.Object, intern_pool: *intern.StringInternPool) !Self {
         // we always intern strings in the bytecode

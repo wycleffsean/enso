@@ -30,11 +30,23 @@ pub const Object = union(enum) {
             .int => |number| try writer.print("{d}", .{number}),
             .float => |number| try writer.print("{d}", .{number}),
             .complex => |cnum| try writer.print("({d}+{d}j)", .{ cnum.re, cnum.im }),
-            // TODO - we have no reference to the pool so we can't retrieve the string
-            .symbol => |sym| try writer.print("<<unprintable:{d}>>", .{sym}),
+            .symbol => |sym| try writer.print("<<unprintable, use FormatObject:{d}>>", .{sym}),
             .array => |arr| try writer.print("{any}", .{arr}),
             .tuple => |t| try writer.print("{any}", .{t}),
             .code => try writer.print("<code object>", .{}),
+        }
+    }
+};
+
+pub const FormatObject = struct {
+    obj: *const Object,
+    intern_pool: *intern.StringInternPool,
+    const Self = @This();
+
+    pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
+        switch (self.obj.*) {
+            .symbol => |idx| try writer.print("{s}", .{self.intern_pool.get(idx)}),
+            inline else => try writer.print("{f}", .{self.obj.*}),
         }
     }
 };
