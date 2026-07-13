@@ -94,12 +94,12 @@ fn dis(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterato
         } else if (eql("-c", arg) or eql("--command", arg)) {
             const command = args.next() orelse return CliError.MissingArgument;
             // user gave us a string of literal code
-            return try disassemble(allocator, command);
+            return try disassemble(allocator, io, command);
         } else {
             // default argument - file we should run
             const file_bytes = try readFile(allocator, io, arg);
             defer allocator.free(file_bytes);
-            return try disassemble(allocator, file_bytes);
+            return try disassemble(allocator, io, file_bytes);
         }
     }
 }
@@ -132,10 +132,13 @@ const FormatInsn = struct {
     }
 };
 
-fn disassemble(allocator: std.mem.Allocator, code: []const u8) !void {
+fn disassemble(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     var harness = try test_utils.CompilerHarness.create(allocator);
     defer harness.deinit();
     const ir = try harness.doIRGen(code);
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout = &stdout_file_writer.interface;
 
     for (ir) |insn| {
         //format
@@ -153,18 +156,19 @@ fn disassemble(allocator: std.mem.Allocator, code: []const u8) !void {
         const bytecode_offset = null;
 
         if (line_number) |num| {
-            std.debug.print("{d}\t", .{num});
+            try stdout.print("{d}\t", .{num});
         } else {
-            std.debug.print("\t", .{});
+            try stdout.print("\t", .{});
         }
         if (bytecode_offset) |num| {
-            std.debug.print("{d} ", .{num});
+            try stdout.print("{d} ", .{num});
         } else {
-            std.debug.print(" ", .{});
+            try stdout.print(" ", .{});
         }
 
-        std.debug.print("{f}\n", .{formatted_insn});
+        try stdout.print("{f}\n", .{formatted_insn});
     }
+    try stdout.flush();
 }
 
 fn readFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]const u8 {

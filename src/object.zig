@@ -26,11 +26,11 @@ pub const Object = union(enum) {
         switch (self) {
             .none => try writer.print("None", .{}),
             .bool => |b| try writer.print("{s}", .{if (b) "True" else "False"}),
-            .string => |str| try writer.print("'{s}'", .{str.string}),
+            .string => |str| try writer.print("\"{s}\"", .{str.string}),
             .int => |number| try writer.print("{d}", .{number}),
             .float => |number| try writer.print("{d}", .{number}),
             .complex => |cnum| try writer.print("({d}+{d}j)", .{ cnum.re, cnum.im }),
-            .symbol => |sym| try writer.print("<<unprintable, use FormatObject:{d}>>", .{sym}),
+            .symbol => |sym| try writer.print("<<unprintable - use FormatObject:{d}>>", .{sym}),
             .array => |arr| try writer.print("{any}", .{arr}),
             .tuple => |t| try writer.print("{any}", .{t}),
             .code => try writer.print("<code object>", .{}),
