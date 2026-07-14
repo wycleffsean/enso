@@ -2,6 +2,7 @@ const std = @import("std");
 const parse = @import("parse.zig");
 const intern = @import("bytecode/intern.zig");
 pub const OpCode = @import("bytecode/opcodes.zig").OpCode;
+const opEffect = @import("bytecode/opcodes.zig").opEffect;
 const object = @import("object.zig");
 const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
@@ -119,7 +120,7 @@ pub const Insn = union(OpCode) {
             .push_null => .{ .push_null = {} },
             .load_name => .{ .load_name = obj },
             .load_const => .{ .load_const = obj },
-            .return_const => .{ .return_value = {} },
+            .return_const => .{ .return_const = {} },
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
             .copy => .{ .copy = {} },
@@ -385,6 +386,28 @@ pub const IrGen = struct {
         }
     }
 
+    inline fn stackLength(ir: []Insn) u16 {
+        var length: u16 = 0;
+        for (ir) |insn| {
+            switch (insn) {
+                .call => |argc| {
+                    length -= 2;
+                    length -= @as(u16, @intCast(argc));
+                    length += 1;
+                },
+                inline else => |item, tag| {
+                    _ = item;
+                    const effect = opEffect(tag);
+                    // TODO: this could underflow iff we try to pop from an empty stack.  That's reasonable
+                    //   but we shouldn't leave dangling panic opportunities; better to assert closer to the cause
+                    length -= effect.pops;
+                    length += effect.pushes;
+                },
+            }
+        }
+        return length;
+    }
+
     pub fn generate(self: *Self, allocator: std.mem.Allocator) Error![]Insn {
         var insns = std.array_list.Managed(Insn).init(allocator);
         const root_block = Block{ .parent = null };
@@ -400,7 +423,14 @@ pub const IrGen = struct {
                     try insns.append(Insn{ .@"resume" = 0 });
                 },
                 .block_end => {
-                    try insns.append(Insn{ .return_value = {} });
+                    // TODO: this is pretty hacky - just an intermediate solution. follow compile.c approach
+                    const length = stackLength(insns.items);
+                    std.debug.assert(length < 2); // should never be more than one lingering item in the stack
+                    if (length == 0) {
+                        try insns.append(Insn{ .return_const = {} });
+                    } else {
+                        try insns.append(Insn{ .return_value = {} });
+                    }
                 },
                 .null => {
                     try insns.append(Insn{ .push_null = {} });

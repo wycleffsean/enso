@@ -40,7 +40,7 @@ const SsaInsn = union(enum) {
     // for_iter: void,
     // swap: void,
     load_const: object.Object,
-    // load_name: object.Object,
+    load_name: object.Object,
     // build_tuple: void,
     // build_list: void,
     // build_set: void,
@@ -75,7 +75,7 @@ const SsaInsn = union(enum) {
     // list_extend: void,
     // set_update: void,
     // dict_update: void,
-    call: struct { receiver: InsnIndex, args: []InsnIndex },
+    call: struct { name: InsnIndex, receiver: InsnIndex, args: []InsnIndex },
     // call_intrinsic_1: void,
 };
 
@@ -130,16 +130,18 @@ const SsaBackend = struct {
         return idx;
     }
 
-    fn call(self: *Self, argc: usize) StackValue {
-        _ = argc;
-        return self.emit(.{ .nop = {} });
+    fn call(self: *Self, name: InsnIndex, receiver: InsnIndex, args: []InsnIndex) StackValue {
+        return self.emit(.{ .call = .{
+            .name = name,
+            .receiver = receiver,
+            .args = args,
+        } });
     }
     fn loadConst(self: *Self, consti: object.Object) StackValue {
         return self.emit(.{ .load_const = consti });
     }
     fn loadName(self: *Self, namei: object.Object) StackValue {
-        _ = namei;
-        return self.emit(.{ .nop = {} });
+        return self.emit(.{ .load_name = namei });
     }
     fn popTop(self: *Self, value: StackValue) void {
         _ = value;
@@ -362,6 +364,7 @@ fn Stack(comptime T: type) type {
         }
 
         fn pop(self: *Self) T {
+            std.debug.assert(self.len > 0);
             self.len -= 1;
             return self.buf[self.len];
         }
@@ -424,6 +427,13 @@ const StackMachine = struct {
     pub fn step(self: *Self, insn: bytecode.Insn) void {
         switch (insn) {
             .for_iter => {},
+            .call => |argc| {
+                const args = self.stack.popSlice(argc);
+                const name = self.stack.pop();
+                const receiver = self.stack.pop();
+                const result = self.backend.call(name, receiver, args);
+                self.stack.push(result);
+            },
             inline else => |oparg, tag| {
                 const effect = comptime opEffect(tag);
                 const op_fn = @field(BackendType, effect.handler);
@@ -434,6 +444,8 @@ const StackMachine = struct {
                     if (effect.pushes == 1) requireHandlerReturnValue(effect.handler, tag, StackMachineValue);
                     if (effect.pushes > 1) @compileError("opcode " ++ @tagName(tag) ++ " pushes > 1 not supported yet");
                 }
+
+                // std.debug.print("tag: {any}\n", .{tag});
 
                 if (no_oparg and effect.pushes == 0) {
                     _ = switch (effect.pops) {
@@ -499,11 +511,31 @@ pub const SsaBuilder = struct {
     }
 };
 
+fn expectEqualSsaInsn(expected: SsaInsn, actual: SsaInsn) !void {
+    try testing.expectEqual(std.meta.activeTag(expected), std.meta.activeTag(actual));
+
+    switch (expected) {
+        .call => |e| {
+            const a = actual.call;
+            try testing.expectEqual(e.name, a.name);
+            try testing.expectEqual(e.receiver, a.receiver);
+            try testing.expectEqualSlices(InsnIndex, e.args, a.args);
+        },
+        inline else => |e, tag| {
+            try testing.expectEqual(e, @field(actual, @tagName(tag)));
+        },
+    }
+}
+
 fn expectEqualSsa(expected: []const SsaInsn, actual: SsaGraph) !void {
-    const insns = actual.nodes.items(.insn);
-    testing.expectEqualSlices(SsaInsn, expected, insns) catch |e| {
-        return e;
-    };
+    const actual_insns = actual.nodes.items(.insn);
+    for (expected, actual_insns, 0..) |e, a, i| {
+        expectEqualSsaInsn(e, a) catch |err| {
+            std.debug.print("SSA instruction mismatch at index {d}\n", .{i});
+            return err;
+        };
+    }
+    try testing.expectEqual(expected.len, actual_insns.len);
 }
 
 test "ssa: destackify bytecode" {
@@ -522,22 +554,20 @@ test "ssa: destackify bytecode" {
             ssa_graph,
         );
     }
-    // {
-    //     const ssa_graph = try harness.doSsa("print(1 + 2)");
+    {
+        const ssa_graph = try harness.doSsa("print(11 + 22)");
 
-    //     const insns = ssa_graph.nodes.items(.insn);
-    //     var args = [_]InsnIndex{3};
-    //     try testing.expectEqualSlices(
-    //         SsaInsn,
-    //         &[_]SsaInsn{
-    //             .{ .load_const = .{ .none = {} } }, // 0: receiver
-    //             .{ .load_const = .{ .int = 1 } }, // 1
-    //             .{ .load_const = .{ .int = 2 } }, // 2
-    //             .{ .binary_op = .{ .op = .add, .lhs = 1, .rhs = 2 } },
-    //             .{ .call = .{ .receiver = 0, .args = &args } },
-    //         },
-
-    //         insns,
-    //     );
-    // }
+        var args = [_]InsnIndex{4};
+        try expectEqualSsa(
+            &[_]SsaInsn{
+                .{ .load_const = .{ .none = {} } }, // 0: receiver
+                .{ .load_name = .{ .symbol = 0 } }, // 1
+                .{ .load_const = .{ .int = 11 } }, // 2
+                .{ .load_const = .{ .int = 22 } }, // 2
+                .{ .binary_op = .{ .op = .add, .lhs = 2, .rhs = 3 } }, // 4
+                .{ .call = .{ .name = 1, .receiver = 0, .args = &args } },
+            },
+            ssa_graph,
+        );
+    }
 }
