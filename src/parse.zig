@@ -279,107 +279,97 @@ pub const Parser = struct {
 
     const ParseFn = *const fn (*Self) Error!*AstNode;
     const InfixFn = *const fn (*Self, *AstNode) Error!*AstNode;
-    const TokenMapping = struct { lex.TokenTag, Precedence, ParseFn, InfixFn };
-    // Switching on enum is way more efficient, but the ergonomics of this are much better
-    // We could also make this a hashmap, but that still has a higher runtime cost
-    // than switch.  We'll get there...
-    const token_map = [_]TokenMapping{
-        .{ .eof, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .integer, .lowest, parseInteger, leftDenotationUnhandled },
-        .{ .float, .lowest, parseFloat, leftDenotationUnhandled },
-        .{ .imaginary, .lowest, parseImaginary, leftDenotationUnhandled },
-        .{ .plus, .sum, parseUnaryOp, parseBinaryOp },
-        .{ .asterisk, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .double_asterisk, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .solidus, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .double_solidus, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .rparen, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .name, .lowest, parseName, leftDenotationUnhandled },
-        .{ .assign, .equality, nullDenotationUnhandled, parseAssignment },
-        .{ .walrus, .equality, nullDenotationUnhandled, parseNamedExpression },
-        // TODO: kinda dumb we call it equality but doesn't align with the
-        //   'equality' precedence.  let's fix that
-        .{ .equality, .lessgreater, nullDenotationUnhandled, parseComparison },
-        .{ .lparen, .call, parseGroupOrGenerator, parseFunctionCall },
-        .{ .at, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .string, .lowest, parseStringLiteral, leftDenotationUnhandled },
-        .{ .dot, .call, nullDenotationUnhandled, parseFieldAccess },
-        .{ .colon, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .comma, .lowest, nullDenotationIllegal, leftDenotationUnhandled },
-        .{ .pipe, .lowest, nullDenotationUnhandled, parseBinaryOp },
-        .{ .minus, .prefix, parseUnaryOp, parseBinaryOp },
-        .{ .percent, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .labracket, .lessgreater, nullDenotationIllegal, parseComparison },
-        .{ .rabracket, .lessgreater, nullDenotationUnhandled, parseComparison },
-        .{ .leq, .lessgreater, nullDenotationUnhandled, parseComparison },
-        .{ .geq, .lessgreater, nullDenotationUnhandled, parseComparison },
-        .{ .neq, .lessgreater, nullDenotationUnhandled, parseComparison },
-        .{ .double_labracket, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .double_rabracket, .product, nullDenotationUnhandled, parseBinaryOp },
-        .{ .bang, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .ampersand, .lowest, nullDenotationUnhandled, parseBinaryOp },
-        .{ .caret, .lowest, nullDenotationUnhandled, parseBinaryOp },
-        .{ .tilde, .lowest, parseUnaryOp, leftDenotationUnhandled },
-        .{ .lsbracket, .lowest, parseList, leftDenotationUnhandled },
-        .{ .rsbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .lcbracket, .lowest, parseSetOrDictionary, leftDenotationUnhandled },
-        .{ .rcbracket, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .def_kw, .lowest, parseFunctionDefinition, leftDenotationUnhandled },
-        .{ .false_kw, .lowest, parseBool, leftDenotationUnhandled },
-        .{ .await_kw, .lowest, parseAwait, leftDenotationUnhandled },
-        .{ .else_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .import_kw, .lowest, parseImport, leftDenotationUnhandled },
-        .{ .pass_kw, .lowest, parsePass, leftDenotationUnhandled },
-        .{ .none_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .break_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .except_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .in_kw, .lessgreater, nullDenotationUnhandled, parseMembershipTest },
-        .{ .raise_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .true_kw, .lowest, parseBool, leftDenotationUnhandled },
-        .{ .class_kw, .lowest, parseClassDefinition, leftDenotationUnhandled },
-        .{ .finally_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .is_kw, .lessgreater, nullDenotationUnhandled, parseIdentityComparison },
-        .{ .return_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .and_kw, .sum, nullDenotationUnhandled, parseBoolOp },
-        .{ .continue_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .for_kw, .lowest, parseForStatement, leftDenotationUnhandled },
-        .{ .lambda_kw, .lowest, parseLambdaDefinition, leftDenotationUnhandled },
-        .{ .try_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .as_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .from_kw, .lowest, parseFromImport, leftDenotationUnhandled },
-        .{ .nonlocal_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .while_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .assert_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .del_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .global_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .not_kw, .lowest, parseUnaryOp, leftDenotationUnhandled },
-        .{ .with_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .async_kw, .lowest, parseAsyncFunctionDefinition, leftDenotationUnhandled },
-        .{ .elif_kw, .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-        .{ .if_kw, .sum, nullDenotationUnhandled, parseIfExpression },
-        .{ .or_kw, .sum, nullDenotationUnhandled, parseBoolOp },
-        .{ .yield_kw, .lowest, parseYield, leftDenotationUnhandled },
-    };
+    const TokenMapping = struct { Precedence, ParseFn, InfixFn };
+    fn tokenMap(tag: lex.TokenTag) TokenMapping {
+        return switch (tag) {
+            .eof => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .integer => .{ .lowest, parseInteger, leftDenotationUnhandled },
+            .float => .{ .lowest, parseFloat, leftDenotationUnhandled },
+            .imaginary => .{ .lowest, parseImaginary, leftDenotationUnhandled },
+            .plus => .{ .sum, parseUnaryOp, parseBinaryOp },
+            .asterisk => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .double_asterisk => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .solidus => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .double_solidus => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .rparen => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .name => .{ .lowest, parseName, leftDenotationUnhandled },
+            .assign => .{ .equality, nullDenotationUnhandled, parseAssignment },
+            .walrus => .{ .equality, nullDenotationUnhandled, parseNamedExpression },
+            // TODO: kinda dumb we call it equality but doesn't align with the
+            //   'equality' precedence.  let's fix that
+            .equality => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
+            .lparen => .{ .call, parseGroupOrGenerator, parseFunctionCall },
+            .at => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .string => .{ .lowest, parseStringLiteral, leftDenotationUnhandled },
+            .dot => .{ .call, nullDenotationUnhandled, parseFieldAccess },
+            .colon => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .comma => .{ .lowest, nullDenotationIllegal, leftDenotationUnhandled },
+            .pipe => .{ .lowest, nullDenotationUnhandled, parseBinaryOp },
+            .minus => .{ .prefix, parseUnaryOp, parseBinaryOp },
+            .percent => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .labracket => .{ .lessgreater, nullDenotationIllegal, parseComparison },
+            .rabracket => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
+            .leq => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
+            .geq => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
+            .neq => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
+            .double_labracket => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .double_rabracket => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .bang => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .ampersand => .{ .lowest, nullDenotationUnhandled, parseBinaryOp },
+            .caret => .{ .lowest, nullDenotationUnhandled, parseBinaryOp },
+            .tilde => .{ .lowest, parseUnaryOp, leftDenotationUnhandled },
+            .lsbracket => .{ .lowest, parseList, leftDenotationUnhandled },
+            .rsbracket => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .lcbracket => .{ .lowest, parseSetOrDictionary, leftDenotationUnhandled },
+            .rcbracket => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .def_kw => .{ .lowest, parseFunctionDefinition, leftDenotationUnhandled },
+            .false_kw => .{ .lowest, parseBool, leftDenotationUnhandled },
+            .await_kw => .{ .lowest, parseAwait, leftDenotationUnhandled },
+            .else_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .import_kw => .{ .lowest, parseImport, leftDenotationUnhandled },
+            .pass_kw => .{ .lowest, parsePass, leftDenotationUnhandled },
+            .none_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .break_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .except_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .in_kw => .{ .lessgreater, nullDenotationUnhandled, parseMembershipTest },
+            .raise_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .true_kw => .{ .lowest, parseBool, leftDenotationUnhandled },
+            .class_kw => .{ .lowest, parseClassDefinition, leftDenotationUnhandled },
+            .finally_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .is_kw => .{ .lessgreater, nullDenotationUnhandled, parseIdentityComparison },
+            .return_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .and_kw => .{ .sum, nullDenotationUnhandled, parseBoolOp },
+            .continue_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .for_kw => .{ .lowest, parseForStatement, leftDenotationUnhandled },
+            .lambda_kw => .{ .lowest, parseLambdaDefinition, leftDenotationUnhandled },
+            .try_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .as_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .from_kw => .{ .lowest, parseFromImport, leftDenotationUnhandled },
+            .nonlocal_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .while_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .assert_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .del_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .global_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .not_kw => .{ .lowest, parseUnaryOp, leftDenotationUnhandled },
+            .with_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .async_kw => .{ .lowest, parseAsyncFunctionDefinition, leftDenotationUnhandled },
+            .elif_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .if_kw => .{ .sum, nullDenotationUnhandled, parseIfExpression },
+            .or_kw => .{ .sum, nullDenotationUnhandled, parseBoolOp },
+            .yield_kw => .{ .lowest, parseYield, leftDenotationUnhandled },
+        };
+    }
 
     inline fn precedenceMap(token: Token) Error!Precedence {
-        inline for (token_map) |map| {
-            if (token == map[0]) return map[1];
-        }
-        return Error.UnhandledPrecedence;
+        return tokenMap(std.meta.activeTag(token))[0];
     }
 
     inline fn nullDenotation(token: Token) Error!ParseFn {
-        inline for (token_map) |map| {
-            if (token == map[0]) return map[2];
-        }
-        return Error.NullDenotationUnhandled;
+        return tokenMap(std.meta.activeTag(token))[1];
     }
 
     inline fn leftDenotation(token: Token) Error!InfixFn {
-        inline for (token_map) |map| {
-            if (token == map[0]) return map[3];
-        }
-        return Error.LeftDenotationUnhandled;
+        return tokenMap(std.meta.activeTag(token))[2];
     }
 
     fn peek(self: *Self) ?Token {
