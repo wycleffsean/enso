@@ -7,25 +7,9 @@ const lex = @import("lex.zig");
 const parse = @import("parse.zig");
 pub const bytecode = @import("bytecode.zig");
 pub const object = @import("object.zig");
-const eval = @import("eval.zig");
-const gen = @import("gen.zig");
 const vm = @import("vm.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
-
-const ReferenceCapabilities = enum {
-    isolated,
-    value,
-    reference,
-    box,
-    transition,
-    tag,
-};
-
-const Allocation = enum {
-    stack,
-    heap,
-};
 
 pub fn main(init: std.process.Init) anyerror!void {
     var allocator = init.gpa;
@@ -99,8 +83,6 @@ test {
     _ = lex;
     _ = parse;
     _ = bytecode;
-    _ = eval;
-    _ = gen;
     _ = vm;
     _ = @import("lex/lexer_test.zig");
     _ = @import("parse/grammar_test.zig");
