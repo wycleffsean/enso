@@ -1,6 +1,0 @@
-# Side Effects
-
-# methods with side effects are colored as such
-
-# do side effects within an enumeration suggest serialization i.e. we can't
-# do passive data parallelism?
