@@ -63,7 +63,10 @@ fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     var arena_allocator = arena.allocator();
 
     var parser = parse.Parser.init(arena_allocator, code);
-    const ast = try parser.parse();
+    const ast = parser.parse() catch |err| {
+        parse.highlightSource("<<unknown>>", code, parser.peeked);
+        return err;
+    };
 
     const intern_pool = try arena_allocator.create(intern.StringInternPool);
     defer arena_allocator.destroy(intern_pool);

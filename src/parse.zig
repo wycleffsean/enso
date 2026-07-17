@@ -1593,7 +1593,7 @@ test "parse: imports" {
 // TODO: move this formatting stuff somewhere else
 // also this is fragile and doesn't totally work right BUT leaving this broken starting
 // point because it's still useful
-fn highlightSource(filename: []const u8, source: []const u8, token: ?lex.Token) void {
+pub fn highlightSource(filename: []const u8, source: []const u8, token: ?lex.Token) void {
     //ansi escape codes
     const esc = "\x1B";
     const csi = esc ++ "[";
