@@ -1,6 +1,7 @@
 const std = @import("std");
 const parse = @import("parse.zig");
 const intern = @import("bytecode/intern.zig");
+pub const Cfg = @import("bytecode/cfg.zig");
 pub const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const opEffect = @import("bytecode/opcodes.zig").opEffect;
 const object = @import("object.zig");
@@ -444,6 +445,7 @@ pub const IrGen = struct {
 
 test {
     _ = intern;
+    _ = Cfg;
 }
 
 test "bytecode: example fixtures" {
