@@ -1,6 +1,7 @@
 const std = @import("std");
 const object = @import("object.zig");
 const bytecode = @import("bytecode.zig");
+const builder = @import("ssa/builder.zig");
 const opcodes = @import("bytecode/opcodes.zig");
 const OpCode = opcodes.OpCode;
 const opEffect = opcodes.opEffect;
@@ -536,6 +537,10 @@ fn expectEqualSsa(expected: []const SsaInsn, actual: SsaGraph) !void {
         };
     }
     try testing.expectEqual(expected.len, actual_insns.len);
+}
+
+test {
+    _ = builder;
 }
 
 test "ssa: destackify bytecode" {
