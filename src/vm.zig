@@ -451,6 +451,9 @@ fn LoweringVM(comptime BackendType: type) type {
         pub fn step(self: *Self, insn: bytecode.Insn) void {
             switch (insn) {
                 .for_iter => {},
+                .build_tuple => {
+                    unreachable; // TODO: this will all be deleted soon, so we just panic for now
+                },
                 inline else => |oparg, tag| {
                     const effect = comptime opEffect(tag);
                     const op_fn = @field(BackendType, effect.handler);

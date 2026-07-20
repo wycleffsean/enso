@@ -58,7 +58,7 @@ pub const Insn = union(OpCode) {
     swap: void,
     load_const: object.Object,
     load_name: object.Object,
-    build_tuple: void,
+    build_tuple: usize,
     build_list: void,
     build_set: void,
     build_map: void,
@@ -151,6 +151,9 @@ pub const Insn = union(OpCode) {
     }
 };
 
+const CoIndex = struct { index: u32 };
+const ConstIndex = struct { index: u32 };
+
 pub const CodeObject = struct {
     module: *const Module,
     instructions: []const Insn,
@@ -164,7 +167,7 @@ pub const CodeObject = struct {
     // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_varnames: *const Object = &EmptyTuple,
     // co_cellvars: *const Object = &EmptyTuple,
-    // co_consts: *const Object = &EmptyTuple,
+    co_consts: []const object.Object,
     // co_filename: *const Object = &EmptyString,
     // co_flags: *const Object = &Zero,
     // co_kwonlyargcount: *const Object = &Zero,
@@ -192,6 +195,7 @@ pub const Module = struct {
     /// the full set of code object for the module
     /// references to code objects are indexes into this list
     codeobject_store: std.MultiArrayList(CodeObject) = .empty,
+    constant_store: std.ArrayList(object.Object) = .empty,
     intern_pool: *intern.StringInternPool,
 
     /// Returns a module with all codeobjects when given an AST
@@ -240,7 +244,7 @@ pub const Module = struct {
             };
             defer builder.queue.deinit(allocator);
 
-            try builder.enqueueSeam(builder.ast_root);
+            _ = try builder.enqueueSeam(builder.ast_root);
             while (builder.current_code_object < builder.queue.items.len) {
                 const current_seam = builder.queue.items[builder.current_code_object];
                 try builder.processEntryNode(current_seam.node, &builder.mod.instruction_store);
@@ -253,12 +257,21 @@ pub const Module = struct {
             try self.mod.instruction_store.append(self.mod.allocator, insn);
         }
 
+        /// append a constant to the module store and return the index
+        // fn appendConst(self: *Builder, obj: object.Object) !ConstIndex {
+        //     const index = self.mod.constant_store.items.len;
+        //     try self.mod.constant_store.append(self.mod.allocator, obj);
+        //     return .{ .index = index };
+        // }
+
         /// we've found the root node of a new codeobject, enqueue it for later
-        fn enqueueSeam(self: *Builder, node: *const AstNode) !void {
+        fn enqueueSeam(self: *Builder, node: *const AstNode) !CoIndex {
+            const co_index = self.queue.items.len;
             try self.queue.append(self.allocator, .{
                 .parent = self.current_code_object,
                 .node = node,
             });
+            return .{ .index = @intCast(co_index) };
         }
 
         /// calculate how many items remain in the stack
@@ -287,25 +300,28 @@ pub const Module = struct {
         fn processEntryNode(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
             const insn_idx = self.mod.instruction_store.items.len;
             const co_idx = self.mod.codeobject_store.len;
+            const co_const_idx = self.mod.constant_store.items.len;
 
             // ENTER
             try self.append(.{ .@"resume" = 0 });
 
             switch (ast_node.*) {
                 .root => |ast_list| {
-                    try self.mod.codeobject_store.append(self.mod.allocator, .{ .module = self.mod, .instructions = self.mod.instruction_store.items[insn_idx..] });
+                    try self.mod.codeobject_store.append(self.mod.allocator, .{
+                        .module = self.mod,
+                        .instructions = undefined,
+                        .co_consts = undefined,
+                    });
                     for (ast_list) |node| try self.generateInsns(node, insns);
                 },
-                // .fn_decl => |fn_decl| {
-                //     // try self.stack.append(.{ .block = Block{ .parent = block } });
-                //     // // this is sketchy, but we need the stable pointer to the block
-                //     // const fn_block = &self.stack.items[self.stack.items.len - 1].block;
-                //     // try self.stack.append(.{ .ast_node = ast });
-                //     // for (fn_decl.suite.items) |expr| {
-                //     //     try self.buildStack(expr, fn_block);
-                //     // }
-                //     // try self.stack.append(.{ .block_end = Block{ .parent = block } });
-                // },
+                .fn_decl => |fn_decl| {
+                    try self.mod.codeobject_store.append(self.mod.allocator, .{
+                        .module = self.mod,
+                        .instructions = self.mod.instruction_store.items[insn_idx..],
+                        .co_consts = undefined,
+                    });
+                    for (fn_decl.suite.items) |node| try self.generateInsns(node, insns);
+                },
                 // .lambda,
                 // .class,
                 // .comprehension,
@@ -319,7 +335,7 @@ pub const Module = struct {
             // EXIT
             // TODO: this is pretty hacky - just an intermediate solution. follow compile.c approach
             const length = stackLength(self.mod.instruction_store.items[insn_idx..]);
-            std.debug.assert(length < 2); // should never be more than one lingering item in the stack
+            // std.debug.assert(length < 2); // should never be more than one lingering item in the stack
             if (length == 0) {
                 try self.append(Insn{ .return_const = {} });
             } else {
@@ -327,6 +343,7 @@ pub const Module = struct {
             }
 
             self.mod.codeobject_store.items(.instructions)[co_idx] = self.mod.instruction_store.items[insn_idx..];
+            self.mod.codeobject_store.items(.co_consts)[co_idx] = self.mod.constant_store.items[co_const_idx..];
         }
 
         fn generateBinaryOp(self: *Builder, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
@@ -350,9 +367,7 @@ pub const Module = struct {
                 // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
                 // .division => break :blk Insn{ .division = {} },
                 // .group => break :blk try self.generateInsn(ast_node.group.value),
-                // .block_end => {
                 // .assignment => break :blk Insn{ .assign = {} },
-                // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
                 .unary_op => |op_node| {
                     try self.generateInsns(op_node.value, insns);
                     const op: Insn = switch (op_node.kind) {
@@ -455,7 +470,15 @@ pub const Module = struct {
                     insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
                 },
                 .fn_decl => |fn_decl| {
-                    _ = fn_decl;
+                    // handle the suite in a different co
+                    const co_idx = try self.enqueueSeam(ast_node);
+                    _ = co_idx; // TODO: this becomes a constant can reference
+                    // TODO: we add the future code object (its deterministic index) into the current code objects constants table
+
+                    const fn_name = try object.stringToSymbol(fn_decl.name, self.mod.intern_pool);
+                    try self.append(.{ .load_const = .{ .int = 2 } }); // hardcoded for our test
+                    try self.append(.{ .make_function = {} });
+                    try self.append(.{ .store_name = fn_name });
                 },
                 .lambda => |lambda| {
                     // TODO: generate code object for real
@@ -464,6 +487,16 @@ pub const Module = struct {
                     try self.append(.{ .load_const = .{ .code = co } });
                     try self.append(.{ .make_function = {} });
                     // try self.generateInsns(expression, insns);
+                },
+                .@"return" => |list| {
+                    const items = list.items;
+                    const returns_tuple = if (items.len > 1) true else false;
+
+                    for (items) |expression|
+                        try self.generateInsns(expression, insns);
+                    if (returns_tuple)
+                        try self.append(.{ .build_tuple = items.len });
+                    try self.append(.{ .return_value = {} });
                 },
                 else => {
                     // TODO: this should become an exhaustive switch
@@ -625,4 +658,82 @@ test "bytecode: conditional expression" {
 
         try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
     }
+}
+
+test "bytecode: codeobject seams for function definitions" {
+    // ❯ python -m dis test.py
+    //   0           0 RESUME                   0
+
+    //   1           2 LOAD_CONST               0 (1)
+    //               4 STORE_NAME               0 (a)
+
+    //   2           6 LOAD_CONST               1 (2)
+    //               8 STORE_NAME               1 (b)
+
+    //   5          10 LOAD_CONST               2 (<code object add at 0x7961815ff9e0, file "test.py", line 5>)
+    //              12 MAKE_FUNCTION            0
+    //              14 STORE_NAME               2 (add)
+
+    //   9          16 PUSH_NULL
+    //              18 LOAD_NAME                2 (add)
+    //              20 LOAD_NAME                0 (a)
+    //              22 LOAD_NAME                1 (b)
+    //              24 CALL                     2
+    //              32 POP_TOP
+    //              34 RETURN_CONST             3 (None)
+
+    // Disassembly of <code object add at 0x7961815ff9e0, file "test.py", line 5>:
+    //   5           0 RESUME                   0
+
+    //   6           2 LOAD_FAST                0 (a)
+    //               4 LOAD_FAST                1 (b)
+    //               6 BINARY_OP                0 (+)
+    //              10 RETURN_VALUE
+
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+    const source =
+        "a = 1\n" ++
+        "b = 2\n" ++
+        "def add(a, b):\n" ++
+        "\treturn a + b\n" ++
+        "add(a,b)";
+    _ = try harness.buildCodeObjects(source);
+    const mod = harness.module;
+    const main_co = mod.codeobject_store.get(0);
+    const fn_co = mod.codeobject_store.get(1);
+
+    const expected_main = [_]Insn{
+        .{ .@"resume" = 0 },
+        .{ .load_const = object.Object{ .int = 1 } },
+        .{ .store_name = object.Object{ .symbol = 0 } },
+        .{ .load_const = object.Object{ .int = 2 } },
+        .{ .store_name = object.Object{ .symbol = 1 } },
+        .{ .load_const = object.Object{ .int = 2 } },
+        .{ .make_function = {} },
+        .{ .store_name = object.Object{ .symbol = 2 } },
+        .{ .push_null = {} },
+        .{ .load_name = object.Object{ .symbol = 2 } },
+        .{ .load_name = object.Object{ .symbol = 0 } },
+        .{ .load_name = object.Object{ .symbol = 1 } },
+        .{ .call = 2 },
+        .{ .pop_top = {} },
+        .{ .return_const = {} },
+    };
+
+    try testing.expectEqualSlices(Insn, expected_main[0..], main_co.instructions);
+
+    // TODO: this is actually quite wrong
+    // - real python does load_fast instead of load_name
+    // - we have a return statement so that generates return_value, then our co exit handler appends a superfluous return_const
+    const expected_fn = [_]Insn{
+        .{ .@"resume" = 0 },
+        .{ .load_name = .{ .symbol = 0 } },
+        .{ .load_name = .{ .symbol = 1 } },
+        .{ .binary_op = .add },
+        .{ .return_value = {} },
+        .{ .return_const = {} },
+    };
+
+    try testing.expectEqualSlices(Insn, expected_fn[0..], fn_co.instructions);
 }

@@ -55,6 +55,7 @@ const AstNodeTag = enum {
     class,
     import,
     yield,
+    @"return",
     await,
 };
 
@@ -208,6 +209,7 @@ pub const AstNode = union(AstNodeTag) {
     class: ClassDefinition,
     import: []ImportDefinition,
     yield: Yield,
+    @"return": List,
     await: *const AstNode,
 };
 
@@ -337,7 +339,7 @@ pub const Parser = struct {
             .class_kw => .{ .lowest, parseClassDefinition, leftDenotationUnhandled },
             .finally_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .is_kw => .{ .lessgreater, nullDenotationUnhandled, parseIdentityComparison },
-            .return_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .return_kw => .{ .lowest, parseReturn, leftDenotationUnhandled },
             .and_kw => .{ .sum, nullDenotationUnhandled, parseBoolOp },
             .continue_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .for_kw => .{ .lowest, parseForStatement, leftDenotationUnhandled },
@@ -977,6 +979,14 @@ pub const Parser = struct {
         return result;
     }
 
+    fn parseReturn(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.return_kw);
+        const expressions = try self.parseExpressionList();
+        const return_node = try self.allocator.create(AstNode);
+        return_node.* = .{ .@"return" = expressions };
+        return return_node;
+    }
+
     fn parseAwait(self: *Self) Error!*AstNode {
         // TODO: we don't have the concept of a "primary", but
         // technically we should not allow parsing arbitrary
@@ -1022,6 +1032,18 @@ pub const Parser = struct {
         }
 
         return parameters;
+    }
+
+    fn parseExpressionList(self: *Self) Error!List {
+        var expressions: List = .empty;
+
+        while (true) {
+            const expression = try self.parseExpression(.lowest);
+            try expressions.append(self.allocator, expression);
+            self.expectAndSkip(.comma) catch break;
+        }
+
+        return expressions;
     }
 
     // https://docs.python.org/3/reference/compound_stmts.html#grammar-token-python-grammar-parameter_list

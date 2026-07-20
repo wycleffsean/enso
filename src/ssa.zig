@@ -221,7 +221,8 @@ const SsaBackend = struct {
     fn swap(self: *Self) void {
         _ = self;
     }
-    fn buildTuple(self: *Self) StackValue {
+    fn buildTuple(self: *Self, size: usize) StackValue {
+        _ = size;
         return self.emit(.{ .nop = {} });
     }
     fn buildList(self: *Self) StackValue {
@@ -434,6 +435,10 @@ const StackMachine = struct {
                 const receiver = self.stack.pop();
                 const result = self.backend.call(name, receiver, args);
                 self.stack.push(result);
+            },
+            .build_tuple => |argc| {
+                _ = argc;
+                unreachable; // TODO: this is a shim, we don't care about lowering this right now - we'll probably delete this soon anyway
             },
             inline else => |oparg, tag| {
                 const effect = comptime opEffect(tag);

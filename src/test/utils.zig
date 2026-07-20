@@ -32,7 +32,10 @@ pub const CompilerHarness = struct {
 
     pub fn doParse(self: *Self, code: []const u8) ParseError!*const parse.AstNode {
         var parser = parse.Parser.init(self.allocator, code);
-        return parser.parse();
+        return parser.parse() catch |err| {
+            parse.highlightSource("<<test>>", code, parser.peeked);
+            return err;
+        };
     }
 
     pub fn buildCodeObjects(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.CodeObject {
