@@ -48,7 +48,7 @@ pub const VM = struct {
 
     pub fn eval(self: *Self, co: bytecode.CodeObject) !void {
         // TODO: does a labeled switch earn us anything here?  I would guess no, but let's experiment
-        for (co.instructions) |insn| {
+        for (co.getInstructions()) |insn| {
             switch (insn) {
                 .push_null => {
                     self.push(None);
@@ -419,7 +419,7 @@ fn LoweringVM(comptime BackendType: type) type {
         }
 
         pub fn eval(self: *Self, co: bytecode.CodeObject) void {
-            for (co.instructions) |insn| {
+            for (co.getInstructions()) |insn| {
                 self.step(insn);
             }
         }

@@ -40,11 +40,11 @@ pub const CompilerHarness = struct {
 
     pub fn buildCodeObjects(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.CodeObject {
         const ast = try self.doParse(code);
-        self.module = try bytecode.Module.build(
+        self.module = bytecode.Module.init(
             self.allocator,
             &self.intern_pool,
-            ast,
         );
+        try self.module.buildFromAst(ast);
         return self.module.codeobject_store.get(0);
     }
 

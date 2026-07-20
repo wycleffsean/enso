@@ -7,6 +7,7 @@ pub const Error = error{
 } || std.mem.Allocator.Error;
 
 /// basically a tightly packed slice
+/// TODO: delete and just bytecode.Span
 fn Span(comptime IndexType: type, comptime ItemType: type) type {
     return struct {
         start: IndexType,

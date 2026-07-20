@@ -13,6 +13,20 @@ const testing = std.testing;
 
 const comptimePrint = std.fmt.comptimePrint;
 
+/// basically a tightly packed slice
+fn Span(comptime T: type) type {
+    return struct {
+        start: u32,
+        len: u32,
+
+        inline fn slice(self: @This(), source: []const T) []const T {
+            return source[self.start..][0..self.len];
+        }
+
+        const empty = @This(){ .len = 0, .start = 0 };
+    };
+}
+
 // TODO: this is only public because it's a struct with a fieldname
 //   just make it an object.ObjectInt instead
 pub const RelativeJump = struct { delta: object.ObjectInt };
@@ -156,7 +170,7 @@ const ConstIndex = struct { index: u32 };
 
 pub const CodeObject = struct {
     module: *const Module,
-    instructions: []const Insn,
+    instructions: Span(Insn) = .empty,
     // co_argcount: *const Object = &Zero,
     // co_code: *const Object = &EmptyString,
     // co_exceptiontable: *const Object = &EmptyString,
@@ -167,7 +181,7 @@ pub const CodeObject = struct {
     // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_varnames: *const Object = &EmptyTuple,
     // co_cellvars: *const Object = &EmptyTuple,
-    co_consts: []const object.Object,
+    co_consts: Span(object.Object) = .empty,
     // co_filename: *const Object = &EmptyString,
     // co_flags: *const Object = &Zero,
     // co_kwonlyargcount: *const Object = &Zero,
@@ -185,6 +199,13 @@ pub const CodeObject = struct {
     // replace(,
     // co_positions(,
     // co_lines(,
+
+    pub fn getInstructions(self: *const CodeObject) []const Insn {
+        return self.module.instructions(self);
+    }
+    pub fn consts(self: *const CodeObject) []const object.Object {
+        return self.module.consts(self);
+    }
 };
 
 pub const Module = struct {
@@ -198,24 +219,43 @@ pub const Module = struct {
     constant_store: std.ArrayList(object.Object) = .empty,
     intern_pool: *intern.StringInternPool,
 
-    /// Returns a module with all codeobjects when given an AST
-    pub fn build(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool, ast: *const AstNode) Builder.Error!Module {
-        var result: Module = .{
+    pub fn init(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool) Module {
+        return .{
             .allocator = allocator,
             .intern_pool = intern_pool,
         };
+    }
+
+    /// Builds all codeobjects from an AST into this module.
+    pub fn buildFromAst(self: *Module, ast: *const AstNode) Builder.Error!void {
         try Builder.build(
-            allocator,
-            intern_pool,
+            self.allocator,
+            self.intern_pool,
             ast,
-            &result,
+            self,
         );
+    }
+
+    /// Returns a module with all codeobjects when given an AST.
+    /// Prefer buildFromAst when the CodeObject back-pointers need to survive a move.
+    pub fn build(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool, ast: *const AstNode) Builder.Error!Module {
+        var result = init(allocator, intern_pool);
+        try result.buildFromAst(ast);
         return result;
     }
 
     pub fn deinit(self: *Module) void {
         self.instruction_store.deinit(self.allocator);
         self.codeobject_store.deinit(self.allocator);
+        self.constant_store.deinit(self.allocator);
+    }
+
+    inline fn instructions(self: *const Module, co: *const CodeObject) []const Insn {
+        return co.instructions.slice(self.instruction_store.items);
+    }
+
+    inline fn consts(self: *const Module, co: *const CodeObject) []const object.Object {
+        return co.co_consts.slice(self.constant_store.items);
     }
 
     pub const Builder = struct {
@@ -309,16 +349,12 @@ pub const Module = struct {
                 .root => |ast_list| {
                     try self.mod.codeobject_store.append(self.mod.allocator, .{
                         .module = self.mod,
-                        .instructions = undefined,
-                        .co_consts = undefined,
                     });
                     for (ast_list) |node| try self.generateInsns(node, insns);
                 },
                 .fn_decl => |fn_decl| {
                     try self.mod.codeobject_store.append(self.mod.allocator, .{
                         .module = self.mod,
-                        .instructions = self.mod.instruction_store.items[insn_idx..],
-                        .co_consts = undefined,
                     });
                     for (fn_decl.suite.items) |node| try self.generateInsns(node, insns);
                 },
@@ -342,8 +378,15 @@ pub const Module = struct {
                 try self.append(Insn{ .return_value = {} });
             }
 
-            self.mod.codeobject_store.items(.instructions)[co_idx] = self.mod.instruction_store.items[insn_idx..];
-            self.mod.codeobject_store.items(.co_consts)[co_idx] = self.mod.constant_store.items[co_const_idx..];
+            // update spans before exit
+            self.mod.codeobject_store.items(.instructions)[co_idx] = .{
+                .start = @intCast(insn_idx),
+                .len = @intCast(self.mod.instruction_store.items[insn_idx..].len),
+            };
+            self.mod.codeobject_store.items(.co_consts)[co_idx] = .{
+                .start = @intCast(co_const_idx),
+                .len = @intCast(self.mod.constant_store.items[co_const_idx..].len),
+            };
         }
 
         fn generateBinaryOp(self: *Builder, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
@@ -524,7 +567,7 @@ test "bytecode: example fixtures" {
         var harness = try test_utils.CompilerHarness.create(testing.allocator);
         defer harness.deinit();
         const co = try harness.buildCodeObjects(example.source());
-        const ir = co.instructions;
+        const ir = co.getInstructions();
 
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -591,7 +634,7 @@ test "bytecode: binary ops" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
+        try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
     }
     {
         // or == JUMP_IF_TRUE
@@ -609,7 +652,7 @@ test "bytecode: binary ops" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
+        try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
     }
     {
         // chain
@@ -631,7 +674,7 @@ test "bytecode: binary ops" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
+        try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
     }
 }
 
@@ -656,7 +699,7 @@ test "bytecode: conditional expression" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
+        try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
     }
 }
 
@@ -721,7 +764,7 @@ test "bytecode: codeobject seams for function definitions" {
         .{ .return_const = {} },
     };
 
-    try testing.expectEqualSlices(Insn, expected_main[0..], main_co.instructions);
+    try testing.expectEqualSlices(Insn, expected_main[0..], main_co.getInstructions());
 
     // TODO: this is actually quite wrong
     // - real python does load_fast instead of load_name
@@ -735,5 +778,5 @@ test "bytecode: codeobject seams for function definitions" {
         .{ .return_const = {} },
     };
 
-    try testing.expectEqualSlices(Insn, expected_fn[0..], fn_co.instructions);
+    try testing.expectEqualSlices(Insn, expected_fn[0..], fn_co.getInstructions());
 }

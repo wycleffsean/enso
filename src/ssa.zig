@@ -397,7 +397,7 @@ const StackMachine = struct {
     }
 
     pub fn eval(self: *Self, co: bytecode.CodeObject) void {
-        for (co.instructions) |insn| {
+        for (co.getInstructions()) |insn| {
             self.step(insn);
         }
     }

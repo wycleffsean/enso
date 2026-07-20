@@ -73,7 +73,8 @@ fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     intern_pool.* = intern.StringInternPool.init(arena_allocator);
     defer intern_pool.deinit();
 
-    var module = try bytecode.Module.build(arena_allocator, intern_pool, ast);
+    var module = bytecode.Module.init(arena_allocator, intern_pool);
+    try module.buildFromAst(ast);
     defer module.deinit();
 
     var buffer: [1024]u8 = undefined;
@@ -143,7 +144,7 @@ fn disassemble(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void
     var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout = &stdout_file_writer.interface;
 
-    for (co.instructions) |insn| {
+    for (co.getInstructions()) |insn| {
         //format
         //0    0 RESUME    0
         //
