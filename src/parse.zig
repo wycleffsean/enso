@@ -192,7 +192,7 @@ pub const AstNode = union(AstNodeTag) {
     parameter: Parameter,
     parameters: Parameters,
     fn_decl: struct { name: []const u8, async: bool = false, parameters: Parameters, suite: Statement },
-    lambda: struct { parameters: Parameters, body: *const AstNode },
+    lambda: struct { parameters: Parameters, expression: *const AstNode },
     assignment: BinaryOp,
     named_expression: BinaryOp,
     call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
@@ -1083,7 +1083,7 @@ pub const Parser = struct {
         const node = try self.allocator.create(AstNode);
         node.* = .{ .lambda = .{
             .parameters = parameters,
-            .body = body,
+            .expression = body,
         } };
         return node;
     }

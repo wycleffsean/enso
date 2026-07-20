@@ -73,14 +73,14 @@ fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     intern_pool.* = intern.StringInternPool.init(arena_allocator);
     defer intern_pool.deinit();
 
-    var irgen = bytecode.IrGen.init(arena_allocator, intern_pool, ast);
-    const ir = try irgen.generate(arena_allocator);
+    var module = try bytecode.Module.build(arena_allocator, intern_pool, ast);
+    defer module.deinit();
 
     var buffer: [1024]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &buffer);
 
     var virtual_machine = vm.VM{ .intern_pool = intern_pool, .stdout = &stdout_writer.interface };
-    try virtual_machine.eval(ir);
+    try virtual_machine.eval(module.codeobject_store.get(0));
 }
 
 const dis_help =

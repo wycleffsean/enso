@@ -152,6 +152,7 @@ pub const Insn = union(OpCode) {
 };
 
 pub const CodeObject = struct {
+    module: *const Module,
     instructions: []const Insn,
     // co_argcount: *const Object = &Zero,
     // co_code: *const Object = &EmptyString,
@@ -183,296 +184,295 @@ pub const CodeObject = struct {
     // co_lines(,
 };
 
-const Block = struct {
-    parent: ?*const Block,
-};
-
-const StackItem = union(enum) {
-    ast_node: *const AstNode,
-    block: Block,
-    block_end: Block,
-    null: void,
-};
-
-pub const IrGen = struct {
-    ast: *const AstNode,
-    stack: std.array_list.Managed(StackItem),
+pub const Module = struct {
+    allocator: std.mem.Allocator,
+    /// the full set of instructions for the module
+    /// which all code objects slice from
+    instruction_store: std.ArrayList(Insn) = .empty,
+    /// the full set of code object for the module
+    /// references to code objects are indexes into this list
+    codeobject_store: std.MultiArrayList(CodeObject) = .empty,
     intern_pool: *intern.StringInternPool,
 
-    const Self = @This();
-
-    pub const Error = error{} || intern.StringInternPool.Error || std.mem.Allocator.Error;
-
-    // storing the arena on the struct leads to a segfault for some reason
-    pub fn init(
-        allocator: std.mem.Allocator,
-        intern_pool: *intern.StringInternPool,
-        ast: *const AstNode,
-    ) Self {
-        const stack = std.array_list.Managed(StackItem).init(allocator);
-        return .{
-            .ast = ast,
+    /// Returns a module with all codeobjects when given an AST
+    pub fn build(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool, ast: *const AstNode) Builder.Error!Module {
+        var result: Module = .{
+            .allocator = allocator,
             .intern_pool = intern_pool,
-            .stack = stack,
         };
+        try Builder.build(
+            allocator,
+            intern_pool,
+            ast,
+            &result,
+        );
+        return result;
     }
 
-    pub fn deinit(self: *Self) void {
-        self.stack.deinit();
+    pub fn deinit(self: *Module) void {
+        self.instruction_store.deinit(self.allocator);
+        self.codeobject_store.deinit(self.allocator);
     }
 
-    // This function iterates over the AST, flattens it out, and leaves markers for block/scope
-    fn buildStack(self: *Self, ast: *const AstNode, block: *const Block) Error!void {
-        switch (ast.*) {
-            .root => |ast_list| {
-                try self.stack.append(.{ .block = Block{ .parent = block } });
-                for (ast_list) |node| {
-                    try self.buildStack(node, block);
-                }
-                try self.stack.append(.{ .block_end = Block{ .parent = block } });
-            },
-            .add, .sub, .mult, .div, .floor_div, .mod, .pow, .lshift, .rshift, .bit_or, .bit_xor, .bit_and, .mat_mult, .assignment => {
-                // @call(.{ .always_tail }, buildStack, .{self, ast
-                // try self.buildStack(node.lhs, block);
-                // try self.buildStack(node.rhs, block);
-                try self.stack.append(.{ .ast_node = ast });
-            },
-            .pass => {
-                try self.stack.append(.{ .ast_node = ast });
-            },
-            .bool_op => {
-                try self.stack.append(.{ .ast_node = ast });
-            },
-            .conditional => {
-                try self.stack.append(.{ .ast_node = ast });
-            },
-            .named_expression => {
-                try self.stack.append(.{ .ast_node = ast });
-            },
-            .group => |group| {
-                try self.buildStack(group.value, block);
-            },
-            .integer, .float, .complex, .name, .var_decl, .string_literal, .for_in => {
-                try self.stack.append(.{ .ast_node = ast });
-            },
-            .fn_decl => |fn_decl| {
-                try self.stack.append(.{ .block = Block{ .parent = block } });
-                // this is sketchy, but we need the stable pointer to the block
-                const fn_block = &self.stack.items[self.stack.items.len - 1].block;
-                try self.stack.append(.{ .ast_node = ast });
-                for (fn_decl.suite.items) |expr| {
-                    try self.buildStack(expr, fn_block);
-                }
-                try self.stack.append(.{ .block_end = Block{ .parent = block } });
-            },
-            .call => {
-                try self.stack.append(.{ .ast_node = ast }); // i.e. push 'call'
-            },
-            else => {
-                // TODO: this should become an exhaustive switch
-                std.debug.print("\n###############\nbuildStack: AstNode.{s} is not handled\n###############\n", .{@tagName(ast.*)});
-                unreachable;
-            },
-        }
-    }
+    pub const Builder = struct {
+        allocator: std.mem.Allocator,
+        ast_root: *const AstNode,
+        intern_pool: *intern.StringInternPool,
+        queue: std.ArrayList(Seam) = .empty,
+        current_code_object: u32 = 0,
+        mod: *Module,
 
-    fn generateBinaryOp(self: *Self, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.array_list.Managed(Insn)) Error!void {
-        try self.generateInsns(binary_op.lhs, insns);
-        try self.generateInsns(binary_op.rhs, insns);
-        try insns.append(.{ .binary_op = kind });
-    }
+        const Seam = struct {
+            parent: u32,
+            node: *const AstNode,
+        };
 
-    fn generateInsns(self: *Self, ast_node: *const AstNode, insns: *std.array_list.Managed(Insn)) Error!void {
-        switch (ast_node.*) {
-            // .root => break :blk Insn{ .@"resume" = 0 },
-            // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
-            .name => |name| {
-                switch (name.context) {
-                    .Load => try insns.append(.{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) }),
-                    .Store => try insns.append(.{ .store_name = try object.stringToSymbol(name.value, self.intern_pool) }),
-                }
-            },
-            .string_literal => |string| try insns.append(.{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) }),
-            // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
-            // .division => break :blk Insn{ .division = {} },
-            // .group => break :blk try self.generateInsn(ast_node.group.value),
-            // .block_end => {
-            // .assignment => break :blk Insn{ .assign = {} },
-            // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
-            .unary_op => |op_node| {
-                try self.generateInsns(op_node.value, insns);
-                const op: Insn = switch (op_node.kind) {
-                    .positive => .{ .call_intrinsic_1 = .unary_positive },
-                    .negative => .{ .unary_negative = {} },
-                    .logical_not => .{ .unary_not = {} },
-                    .bitwise_not => .{ .unary_invert = {} },
-                };
-                try insns.append(op);
-            },
-            .bool_op => |op| {
-                const jump: Insn = switch (op.kind) {
-                    .@"and" => .{ .pop_jump_if_false = .{ .delta = 2 } },
-                    .@"or" => .{ .pop_jump_if_true = .{ .delta = 2 } },
-                };
-                try self.generateInsns(op.lhs, insns);
-                try insns.append(.{ .copy = {} });
-                try insns.append(jump);
-                try insns.append(.{ .pop_top = {} });
-                try self.generateInsns(op.rhs, insns);
-            },
-            .add => |*op| try self.generateBinaryOp(.add, op, insns),
-            .sub => |*op| try self.generateBinaryOp(.sub, op, insns),
-            .mult => |*op| try self.generateBinaryOp(.mult, op, insns),
-            .div => |*op| try self.generateBinaryOp(.div, op, insns),
-            .floor_div => |*op| try self.generateBinaryOp(.floor_div, op, insns),
-            .mod => |*op| try self.generateBinaryOp(.mod, op, insns),
-            .pow => |*op| try self.generateBinaryOp(.pow, op, insns),
-            .lshift => |*op| try self.generateBinaryOp(.lshift, op, insns),
-            .rshift => |*op| try self.generateBinaryOp(.rshift, op, insns),
-            .bit_or => |*op| try self.generateBinaryOp(.bit_or, op, insns),
-            .bit_xor => |*op| try self.generateBinaryOp(.bit_xor, op, insns),
-            .bit_and => |*op| try self.generateBinaryOp(.bit_and, op, insns),
-            .mat_mult => |*op| try self.generateBinaryOp(.mat_mult, op, insns),
-            .conditional => |*expr| {
-                try self.generateInsns(expr.predicate, insns);
-                try insns.append(.{ .pop_jump_if_false = .{ .delta = 2 } });
-                try self.generateInsns(expr.lhs, insns);
-                try insns.append(.{ .return_value = {} });
-                try self.generateInsns(expr.rhs, insns);
-                // try insns.append(.{ .return_value = {} }); // implied
-            },
-            .call => |call| {
-                const len = call.args.items.len;
-                try insns.append(.{ .push_null = {} }); // TODO: eventually we'll need to push receiver here
-                try self.generateInsns(call.ref, insns);
-                for (call.args.items) |node| {
-                    try self.generateInsns(node, insns);
-                }
-                try insns.append(.{ .call = len });
-                if (call.discard_return_value)
-                    try insns.append(.{ .pop_top = {} });
-            },
-            .integer => |int| try insns.append(.{ .load_const = .{ .int = int.value } }),
-            .bool => |b| try insns.append(.{ .load_const = .{ .bool = b } }),
-            .float => |float| try insns.append(.{ .load_const = .{ .float = float.value } }),
-            .complex => |cmp| try insns.append(.{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } }),
-            .list => |list| switch (list) {
-                .empty => try insns.append(.{ .load_const = object.EmptyArray }),
-                // TODO - make exhaustive
-                else => try insns.append(.{ .load_const = object.EmptyArray }),
-            },
-            .pass => {}, // surprisingly not a nop
-            .assignment => |assignment| {
-                try self.generateInsns(assignment.rhs, insns);
-                // we handle this bit with ExpressionContext which is smelly
-                try self.generateInsns(assignment.lhs, insns);
-            },
-            .named_expression => |named_expression| {
-                try self.generateInsns(named_expression.rhs, insns);
-                try insns.append(.{ .copy = {} });
-                try self.generateInsns(named_expression.lhs, insns);
-            },
-            .for_in => |for_in| {
-                // push the iterable onto the stack
-                try self.generateInsns(for_in.iterable, insns);
-                // pop iterable, push iterator
-                try insns.append(.{ .get_iter = {} });
-                try insns.append(.{ .for_iter = .{ .delta = 0 } });
-                const for_iter_mark = insns.items.len - 1;
-                // TODO: for non-trivial cases we'll need call back into this switch statement
-                //   but have a signal for load vs store
-                for (for_in.target_list.items) |target| {
-                    std.debug.assert(target.* == .name);
-                    try insns.append(.{ .store_name = try object.stringToSymbol(target.name.value, self.intern_pool) });
-                }
-                const suite_mark = insns.items.len;
-                for (for_in.suite.items) |expression|
-                    try self.generateInsns(expression, insns);
-                // try self.generateInsns(for_in.else_suite, insns); // TODO
+        pub const Error = error{
+            InvalidEntryNode,
+        } || intern.StringInternPool.Error || std.mem.Allocator.Error;
 
-                // clean up iterator, but only when the block actually did anything
-                if ((insns.items.len - suite_mark) > 0) try insns.append(.{ .pop_top = {} });
+        fn build(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool, ast: *const AstNode, mod: *Module) Error!void {
+            var builder = Builder{
+                .allocator = allocator,
+                .ast_root = ast,
+                .intern_pool = intern_pool,
+                .mod = mod,
+            };
+            defer builder.queue.deinit(allocator);
 
-                // We jump by incrementing/decrementing the program counter.  Cpython records deltas that represent
-                // a similar idea but are a length in bytes; we're not going to match
-                const jump_index = @as(i64, @intCast(for_iter_mark)) - @as(i64, @intCast(insns.items.len));
-                try insns.append(.{ .jump_backward = .{ .delta = jump_index } });
-                try insns.append(.{ .end_for = {} });
-                insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
-            },
-            .fn_decl => |fn_decl| {
-                _ = fn_decl;
-            },
-            .lambda => |lambda| {
-                // TODO: generate code object for real
-                _ = lambda;
-                const co = object.Code{};
-                try insns.append(.{ .load_const = .{ .code = co } });
-                try insns.append(.{ .make_function = {} });
-                // try self.generateInsns(expression, insns);
-            },
-            else => {
-                // TODO: this should become an exhaustive switch
-                std.debug.print("\n###############\ngenerateInsns: AstNode.{s} is not handled\n###############\n", .{@tagName(ast_node.*)});
-                unreachable;
-            },
-        }
-    }
-
-    inline fn stackLength(ir: []Insn) u16 {
-        var length: u16 = 0;
-        for (ir) |insn| {
-            switch (insn) {
-                .call => |argc| {
-                    length -= 2;
-                    length -= @as(u16, @intCast(argc));
-                    length += 1;
-                },
-                inline else => |item, tag| {
-                    _ = item;
-                    const effect = opEffect(tag);
-                    // TODO: this could underflow iff we try to pop from an empty stack.  That's reasonable
-                    //   but we shouldn't leave dangling panic opportunities; better to assert closer to the cause
-                    length -= effect.pops;
-                    length += effect.pushes;
-                },
+            try builder.enqueueSeam(builder.ast_root);
+            while (builder.current_code_object < builder.queue.items.len) {
+                const current_seam = builder.queue.items[builder.current_code_object];
+                try builder.processEntryNode(current_seam.node, &builder.mod.instruction_store);
+                builder.current_code_object += 1;
             }
         }
-        return length;
-    }
 
-    pub fn generate(self: *Self, allocator: std.mem.Allocator) Error!CodeObject {
-        var insns = std.array_list.Managed(Insn).init(allocator);
-        const root_block = Block{ .parent = null };
-        var current_block: *const Block = &root_block;
-        try self.buildStack(self.ast, current_block);
-        for (self.stack.items) |item| {
-            switch (item) {
-                .ast_node => |ast_node| {
-                    try self.generateInsns(ast_node, &insns);
+        /// append an instruction to the current code object
+        fn append(self: *Builder, insn: Insn) !void {
+            try self.mod.instruction_store.append(self.mod.allocator, insn);
+        }
+
+        /// we've found the root node of a new codeobject, enqueue it for later
+        fn enqueueSeam(self: *Builder, node: *const AstNode) !void {
+            try self.queue.append(self.allocator, .{
+                .parent = self.current_code_object,
+                .node = node,
+            });
+        }
+
+        /// calculate how many items remain in the stack
+        inline fn stackLength(ir: []Insn) u16 {
+            var length: u16 = 0;
+            for (ir) |insn| {
+                switch (insn) {
+                    .call => |argc| {
+                        length -= 2;
+                        length -= @as(u16, @intCast(argc));
+                        length += 1;
+                    },
+                    inline else => |item, tag| {
+                        _ = item;
+                        const effect = opEffect(tag);
+                        // TODO: this could underflow iff we try to pop from an empty stack.  That's reasonable
+                        //   but we shouldn't leave dangling panic opportunities; better to assert closer to the cause
+                        length -= effect.pops;
+                        length += effect.pushes;
+                    },
+                }
+            }
+            return length;
+        }
+
+        fn processEntryNode(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
+            const insn_idx = self.mod.instruction_store.items.len;
+            const co_idx = self.mod.codeobject_store.len;
+
+            // ENTER
+            try self.append(.{ .@"resume" = 0 });
+
+            switch (ast_node.*) {
+                .root => |ast_list| {
+                    try self.mod.codeobject_store.append(self.mod.allocator, .{ .module = self.mod, .instructions = self.mod.instruction_store.items[insn_idx..] });
+                    for (ast_list) |node| try self.generateInsns(node, insns);
                 },
-                .block => |*block| {
-                    current_block = block;
-                    try insns.append(Insn{ .@"resume" = 0 });
+                // .fn_decl => |fn_decl| {
+                //     // try self.stack.append(.{ .block = Block{ .parent = block } });
+                //     // // this is sketchy, but we need the stable pointer to the block
+                //     // const fn_block = &self.stack.items[self.stack.items.len - 1].block;
+                //     // try self.stack.append(.{ .ast_node = ast });
+                //     // for (fn_decl.suite.items) |expr| {
+                //     //     try self.buildStack(expr, fn_block);
+                //     // }
+                //     // try self.stack.append(.{ .block_end = Block{ .parent = block } });
+                // },
+                // .lambda,
+                // .class,
+                // .comprehension,
+                // => {},
+                else => {
+                    // we're trying to process a codeobject from an invalid seam in the AST
+                    return Error.InvalidEntryNode;
                 },
-                .block_end => {
-                    // TODO: this is pretty hacky - just an intermediate solution. follow compile.c approach
-                    const length = stackLength(insns.items);
-                    std.debug.assert(length < 2); // should never be more than one lingering item in the stack
-                    if (length == 0) {
-                        try insns.append(Insn{ .return_const = {} });
-                    } else {
-                        try insns.append(Insn{ .return_value = {} });
+            }
+
+            // EXIT
+            // TODO: this is pretty hacky - just an intermediate solution. follow compile.c approach
+            const length = stackLength(self.mod.instruction_store.items[insn_idx..]);
+            std.debug.assert(length < 2); // should never be more than one lingering item in the stack
+            if (length == 0) {
+                try self.append(Insn{ .return_const = {} });
+            } else {
+                try self.append(Insn{ .return_value = {} });
+            }
+
+            self.mod.codeobject_store.items(.instructions)[co_idx] = self.mod.instruction_store.items[insn_idx..];
+        }
+
+        fn generateBinaryOp(self: *Builder, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
+            try self.generateInsns(binary_op.lhs, insns);
+            try self.generateInsns(binary_op.rhs, insns);
+            try self.append(.{ .binary_op = kind });
+        }
+
+        fn generateInsns(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
+            switch (ast_node.*) {
+                // .root => break :blk Insn{ .@"resume" = 0 },
+                .root => {},
+                // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
+                .name => |name| {
+                    switch (name.context) {
+                        .Load => try self.append(.{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) }),
+                        .Store => try self.append(.{ .store_name = try object.stringToSymbol(name.value, self.intern_pool) }),
                     }
                 },
-                .null => {
-                    try insns.append(Insn{ .push_null = {} });
+                .string_literal => |string| try self.append(.{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) }),
+                // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
+                // .division => break :blk Insn{ .division = {} },
+                // .group => break :blk try self.generateInsn(ast_node.group.value),
+                // .block_end => {
+                // .assignment => break :blk Insn{ .assign = {} },
+                // .fn_decl => break :blk Insn{ .decl_fn = .{ .symbol = try self.intern_pool.put(ast_node.fn_decl.name) } },
+                .unary_op => |op_node| {
+                    try self.generateInsns(op_node.value, insns);
+                    const op: Insn = switch (op_node.kind) {
+                        .positive => .{ .call_intrinsic_1 = .unary_positive },
+                        .negative => .{ .unary_negative = {} },
+                        .logical_not => .{ .unary_not = {} },
+                        .bitwise_not => .{ .unary_invert = {} },
+                    };
+                    try self.append(op);
+                },
+                .bool_op => |op| {
+                    const jump: Insn = switch (op.kind) {
+                        .@"and" => .{ .pop_jump_if_false = .{ .delta = 2 } },
+                        .@"or" => .{ .pop_jump_if_true = .{ .delta = 2 } },
+                    };
+                    try self.generateInsns(op.lhs, insns);
+                    try self.append(.{ .copy = {} });
+                    try self.append(jump);
+                    try self.append(.{ .pop_top = {} });
+                    try self.generateInsns(op.rhs, insns);
+                },
+                .add => |*op| try self.generateBinaryOp(.add, op, insns),
+                .sub => |*op| try self.generateBinaryOp(.sub, op, insns),
+                .mult => |*op| try self.generateBinaryOp(.mult, op, insns),
+                .div => |*op| try self.generateBinaryOp(.div, op, insns),
+                .floor_div => |*op| try self.generateBinaryOp(.floor_div, op, insns),
+                .mod => |*op| try self.generateBinaryOp(.mod, op, insns),
+                .pow => |*op| try self.generateBinaryOp(.pow, op, insns),
+                .lshift => |*op| try self.generateBinaryOp(.lshift, op, insns),
+                .rshift => |*op| try self.generateBinaryOp(.rshift, op, insns),
+                .bit_or => |*op| try self.generateBinaryOp(.bit_or, op, insns),
+                .bit_xor => |*op| try self.generateBinaryOp(.bit_xor, op, insns),
+                .bit_and => |*op| try self.generateBinaryOp(.bit_and, op, insns),
+                .mat_mult => |*op| try self.generateBinaryOp(.mat_mult, op, insns),
+                .conditional => |*expr| {
+                    try self.generateInsns(expr.predicate, insns);
+                    try self.append(.{ .pop_jump_if_false = .{ .delta = 2 } });
+                    try self.generateInsns(expr.lhs, insns);
+                    try self.append(.{ .return_value = {} });
+                    try self.generateInsns(expr.rhs, insns);
+                    // try self.append( .{ .return_value = {} }); // implied
+                },
+                .call => |call| {
+                    const len = call.args.items.len;
+                    try self.append(.{ .push_null = {} }); // TODO: eventually we'll need to push receiver here
+                    try self.generateInsns(call.ref, insns);
+                    for (call.args.items) |node| {
+                        try self.generateInsns(node, insns);
+                    }
+                    try self.append(.{ .call = len });
+                    if (call.discard_return_value)
+                        try self.append(.{ .pop_top = {} });
+                },
+                .integer => |int| try self.append(.{ .load_const = .{ .int = int.value } }),
+                .bool => |b| try self.append(.{ .load_const = .{ .bool = b } }),
+                .float => |float| try self.append(.{ .load_const = .{ .float = float.value } }),
+                .complex => |cmp| try self.append(.{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } }),
+                .list => |list| switch (list) {
+                    .empty => try self.append(.{ .load_const = object.EmptyArray }),
+                    // TODO - make exhaustive
+                    else => try self.append(.{ .load_const = object.EmptyArray }),
+                },
+                .pass => {}, // surprisingly not a nop
+                .assignment => |assignment| {
+                    try self.generateInsns(assignment.rhs, insns);
+                    // we handle this bit with ExpressionContext which is smelly
+                    try self.generateInsns(assignment.lhs, insns);
+                },
+                .named_expression => |named_expression| {
+                    try self.generateInsns(named_expression.rhs, insns);
+                    try self.append(.{ .copy = {} });
+                    try self.generateInsns(named_expression.lhs, insns);
+                },
+                .for_in => |for_in| {
+                    // push the iterable onto the stack
+                    try self.generateInsns(for_in.iterable, insns);
+                    // pop iterable, push iterator
+                    try self.append(.{ .get_iter = {} });
+                    try self.append(.{ .for_iter = .{ .delta = 0 } });
+                    const for_iter_mark = insns.items.len - 1;
+                    // TODO: for non-trivial cases we'll need call back into this switch statement
+                    //   but have a signal for load vs store
+                    for (for_in.target_list.items) |target| {
+                        std.debug.assert(target.* == .name);
+                        try self.append(.{ .store_name = try object.stringToSymbol(target.name.value, self.intern_pool) });
+                    }
+                    const suite_mark = insns.items.len;
+                    for (for_in.suite.items) |expression|
+                        try self.generateInsns(expression, insns);
+                    // try self.generateInsns(for_in.else_suite, insns); // TODO
+
+                    // clean up iterator, but only when the block actually did anything
+                    if ((insns.items.len - suite_mark) > 0) try self.append(.{ .pop_top = {} });
+
+                    // We jump by incrementing/decrementing the program counter.  Cpython records deltas that represent
+                    // a similar idea but are a length in bytes; we're not going to match
+                    const jump_index = @as(i64, @intCast(for_iter_mark)) - @as(i64, @intCast(insns.items.len));
+                    try self.append(.{ .jump_backward = .{ .delta = jump_index } });
+                    try self.append(.{ .end_for = {} });
+                    insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
+                },
+                .fn_decl => |fn_decl| {
+                    _ = fn_decl;
+                },
+                .lambda => |lambda| {
+                    // TODO: generate code object for real
+                    _ = lambda;
+                    const co = object.Code{};
+                    try self.append(.{ .load_const = .{ .code = co } });
+                    try self.append(.{ .make_function = {} });
+                    // try self.generateInsns(expression, insns);
+                },
+                else => {
+                    // TODO: this should become an exhaustive switch
+                    std.debug.print("\n###############\ngenerateInsns: AstNode.{s} is not handled\n###############\n", .{@tagName(ast_node.*)});
+                    unreachable;
                 },
             }
         }
-        // try insns.append(Insn{ .yield = {} });
-        return .{ .instructions = try insns.toOwnedSlice() };
-    }
+    };
 };
 
 test {
@@ -537,8 +537,6 @@ test "bytecode: example fixtures" {
 }
 
 test "bytecode: binary ops" {
-    var harness = try test_utils.CompilerHarness.create(testing.allocator);
-    defer harness.deinit();
     // The python compiler peephole optimizes away simple expressions
     // like this, so we need to test by hand.  Very dis can be generated by
     // doing something like:
@@ -546,6 +544,8 @@ test "bytecode: binary ops" {
     //     return a or b
     {
         // and == JUMP_IF_FALSE
+        var harness = try test_utils.CompilerHarness.create(testing.allocator);
+        defer harness.deinit();
         const co = try harness.buildCodeObjects("True and False");
 
         const expected = [_]Insn{
@@ -562,6 +562,8 @@ test "bytecode: binary ops" {
     }
     {
         // or == JUMP_IF_TRUE
+        var harness = try test_utils.CompilerHarness.create(testing.allocator);
+        defer harness.deinit();
         const co = try harness.buildCodeObjects("True or False");
 
         const expected = [_]Insn{
@@ -578,6 +580,8 @@ test "bytecode: binary ops" {
     }
     {
         // chain
+        var harness = try test_utils.CompilerHarness.create(testing.allocator);
+        defer harness.deinit();
         const co = try harness.buildCodeObjects("True and False or True");
 
         const expected = [_]Insn{

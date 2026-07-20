@@ -544,10 +544,9 @@ test {
 }
 
 test "ssa: destackify bytecode" {
-    var harness = try test_utils.CompilerHarness.create(testing.allocator);
-    defer harness.deinit();
-
     {
+        var harness = try test_utils.CompilerHarness.create(testing.allocator);
+        defer harness.deinit();
         const ssa_graph = try harness.doSsa("1 + 2");
 
         try expectEqualSsa(
@@ -560,6 +559,8 @@ test "ssa: destackify bytecode" {
         );
     }
     {
+        var harness = try test_utils.CompilerHarness.create(testing.allocator);
+        defer harness.deinit();
         const ssa_graph = try harness.doSsa("print(11 + 22)");
 
         var args = [_]InsnIndex{4};

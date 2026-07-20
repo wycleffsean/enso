@@ -10,10 +10,11 @@ pub const CompilerHarness = struct {
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     intern_pool: intern.StringInternPool,
+    module: bytecode.Module,
 
     const Self = @This();
     const ParseError = parse.Parser.Error;
-    const ParseOrIRGenError = ParseError || bytecode.IrGen.Error;
+    const ParseOrIRGenError = ParseError || bytecode.Module.Builder.Error;
 
     pub fn create(base_allocator: std.mem.Allocator) !*Self {
         var arena = std.heap.ArenaAllocator.init(base_allocator);
@@ -36,8 +37,12 @@ pub const CompilerHarness = struct {
 
     pub fn buildCodeObjects(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.CodeObject {
         const ast = try self.doParse(code);
-        var irgen = bytecode.IrGen.init(self.allocator, &self.intern_pool, ast);
-        return irgen.generate(self.allocator);
+        self.module = try bytecode.Module.build(
+            self.allocator,
+            &self.intern_pool,
+            ast,
+        );
+        return self.module.codeobject_store.get(0);
     }
 
     pub fn doSsa(self: *Self, code: []const u8) ParseOrIRGenError!ssa.SsaGraph {
