@@ -138,12 +138,12 @@ const FormatInsn = struct {
 fn disassemble(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     var harness = try test_utils.CompilerHarness.create(allocator);
     defer harness.deinit();
-    const ir = try harness.doIRGen(code);
+    const co = try harness.buildCodeObjects(code);
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout = &stdout_file_writer.interface;
 
-    for (ir) |insn| {
+    for (co.instructions) |insn| {
         //format
         //0    0 RESUME    0
         //

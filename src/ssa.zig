@@ -395,8 +395,8 @@ const StackMachine = struct {
         return self;
     }
 
-    pub fn eval(self: *Self, insns: []const bytecode.Insn) void {
-        for (insns) |insn| {
+    pub fn eval(self: *Self, co: bytecode.CodeObject) void {
+        for (co.instructions) |insn| {
             self.step(insn);
         }
     }
@@ -495,11 +495,11 @@ pub const SsaBuilder = struct {
     stack_machine: StackMachine,
     const Self = @This();
 
-    pub fn generate(allocator: std.mem.Allocator, ir: []bytecode.Insn) !SsaGraph {
+    pub fn generate(allocator: std.mem.Allocator, co: bytecode.CodeObject) !SsaGraph {
         var self: Self = undefined;
         self.init(allocator);
 
-        self.stack_machine.eval(ir);
+        self.stack_machine.eval(co);
 
         return self.backend.ssa_graph;
     }

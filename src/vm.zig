@@ -46,9 +46,9 @@ pub const VM = struct {
         return self.stack[self.sp];
     }
 
-    pub fn eval(self: *Self, insns: []const bytecode.Insn) !void {
+    pub fn eval(self: *Self, co: bytecode.CodeObject) !void {
         // TODO: does a labeled switch earn us anything here?  I would guess no, but let's experiment
-        for (insns) |insn| {
+        for (co.instructions) |insn| {
             switch (insn) {
                 .push_null => {
                     self.push(None);
@@ -418,8 +418,8 @@ fn LoweringVM(comptime BackendType: type) type {
             return self;
         }
 
-        pub fn eval(self: *Self, insns: []const bytecode.Insn) void {
-            for (insns) |insn| {
+        pub fn eval(self: *Self, co: bytecode.CodeObject) void {
+            for (co.instructions) |insn| {
                 self.step(insn);
             }
         }
@@ -502,13 +502,13 @@ fn LoweringVM(comptime BackendType: type) type {
 fn testExample(comptime example: test_utils.Example) !void {
     var harness = try test_utils.CompilerHarness.create(testing.allocator);
     defer harness.deinit();
-    const ir = try harness.doIRGen(example.source());
+    const co = try harness.buildCodeObjects(example.source());
 
     var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
     defer stdout.deinit();
 
     var vm = VM{ .intern_pool = &harness.intern_pool, .stdout = &stdout.writer };
-    try vm.eval(ir);
+    try vm.eval(co);
 
     testing.expectEqualStrings(example.stdout(), stdout.written()) catch |err| {
         std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
@@ -533,7 +533,7 @@ test "vm eval: example fixtures" {
 test "LoweringVM: stack evaluation" {
     var harness = try test_utils.CompilerHarness.create(testing.allocator);
     defer harness.deinit();
-    const ir = try harness.doIRGen("print('hello world')");
+    const ir = try harness.buildCodeObjects("print('hello world')");
 
     var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
     defer stdout.deinit();

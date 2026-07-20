@@ -151,6 +151,38 @@ pub const Insn = union(OpCode) {
     }
 };
 
+pub const CodeObject = struct {
+    instructions: []const Insn,
+    // co_argcount: *const Object = &Zero,
+    // co_code: *const Object = &EmptyString,
+    // co_exceptiontable: *const Object = &EmptyString,
+    // co_firstlineno: *const Object = &One,
+    // co_freevars: *const Object = &EmptyTuple,
+    // co_lnotab: *const Object = &None, // Deprecated, use co_lines instead
+    // co_names: *const Object = &EmptyTuple,
+    // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
+    // co_varnames: *const Object = &EmptyTuple,
+    // co_cellvars: *const Object = &EmptyTuple,
+    // co_consts: *const Object = &EmptyTuple,
+    // co_filename: *const Object = &EmptyString,
+    // co_flags: *const Object = &Zero,
+    // co_kwonlyargcount: *const Object = &Zero,
+    // co_linetable: *const Object = &EmptyString,
+    // co_name: *const Object = &.{ .string = .{ .string = "<module>" } },
+    // co_nlocals: *const Object = &Zero,
+    // co_posonlyargcount: *const Object = &Zero,
+    // co_stacksize: *const Object = &One,
+
+    // // TODO: we're leaving the world of "python objects" here,
+    // //   at some point we'll need to reconcile that
+    // instructions: []const Instruction = &[_]Instruction{},
+
+    // methods...
+    // replace(,
+    // co_positions(,
+    // co_lines(,
+};
+
 const Block = struct {
     parent: ?*const Block,
 };
@@ -409,7 +441,7 @@ pub const IrGen = struct {
         return length;
     }
 
-    pub fn generate(self: *Self, allocator: std.mem.Allocator) Error![]Insn {
+    pub fn generate(self: *Self, allocator: std.mem.Allocator) Error!CodeObject {
         var insns = std.array_list.Managed(Insn).init(allocator);
         const root_block = Block{ .parent = null };
         var current_block: *const Block = &root_block;
@@ -439,7 +471,7 @@ pub const IrGen = struct {
             }
         }
         // try insns.append(Insn{ .yield = {} });
-        return insns.toOwnedSlice();
+        return .{ .instructions = try insns.toOwnedSlice() };
     }
 };
 
@@ -458,7 +490,8 @@ test "bytecode: example fixtures" {
 
         var harness = try test_utils.CompilerHarness.create(testing.allocator);
         defer harness.deinit();
-        const ir = try harness.doIRGen(example.source());
+        const co = try harness.buildCodeObjects(example.source());
+        const ir = co.instructions;
 
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -513,7 +546,7 @@ test "bytecode: binary ops" {
     //     return a or b
     {
         // and == JUMP_IF_FALSE
-        const ir = try harness.doIRGen("True and False");
+        const co = try harness.buildCodeObjects("True and False");
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
@@ -525,11 +558,11 @@ test "bytecode: binary ops" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], ir);
+        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
     }
     {
         // or == JUMP_IF_TRUE
-        const ir = try harness.doIRGen("True or False");
+        const co = try harness.buildCodeObjects("True or False");
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
@@ -541,11 +574,11 @@ test "bytecode: binary ops" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], ir);
+        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
     }
     {
         // chain
-        const ir = try harness.doIRGen("True and False or True");
+        const co = try harness.buildCodeObjects("True and False or True");
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
@@ -561,7 +594,7 @@ test "bytecode: binary ops" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], ir);
+        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
     }
 }
 
@@ -574,7 +607,7 @@ test "bytecode: conditional expression" {
     //   def foo(a):
     //     return 1 if a else 2
     {
-        const ir = try harness.doIRGen("1 if True else 2");
+        const co = try harness.buildCodeObjects("1 if True else 2");
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
@@ -586,6 +619,6 @@ test "bytecode: conditional expression" {
             .{ .return_value = {} },
         };
 
-        try testing.expectEqualSlices(Insn, expected[0..], ir);
+        try testing.expectEqualSlices(Insn, expected[0..], co.instructions);
     }
 }

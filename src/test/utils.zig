@@ -34,15 +34,15 @@ pub const CompilerHarness = struct {
         return parser.parse();
     }
 
-    pub fn doIRGen(self: *Self, code: []const u8) ParseOrIRGenError![]bytecode.Insn {
+    pub fn buildCodeObjects(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.CodeObject {
         const ast = try self.doParse(code);
         var irgen = bytecode.IrGen.init(self.allocator, &self.intern_pool, ast);
         return irgen.generate(self.allocator);
     }
 
     pub fn doSsa(self: *Self, code: []const u8) ParseOrIRGenError!ssa.SsaGraph {
-        const ir = try self.doIRGen(code);
-        return ssa.SsaBuilder.generate(self.allocator, ir);
+        const co = try self.buildCodeObjects(code);
+        return ssa.SsaBuilder.generate(self.allocator, co);
     }
 };
 
