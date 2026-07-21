@@ -398,7 +398,7 @@ const StackMachine = struct {
 
     pub fn eval(self: *Self, co: bytecode.CodeObject) void {
         for (co.getInstructions()) |insn| {
-            self.step(insn, co.consts());
+            self.step(insn, co.consts(), co.names());
         }
     }
 
@@ -426,11 +426,17 @@ const StackMachine = struct {
         }
     }
 
-    pub fn step(self: *Self, insn: bytecode.Insn, consts: []const object.Object) void {
+    pub fn step(self: *Self, insn: bytecode.Insn, consts: []const object.Object, names: []const object.Object) void {
         switch (insn) {
             .for_iter => {},
             .load_const => |consti| {
                 self.stack.push(self.backend.loadConst(consts[consti.index]));
+            },
+            .load_name => |namei| {
+                self.stack.push(self.backend.loadName(names[namei.index]));
+            },
+            .store_name => |namei| {
+                self.backend.storeName(names[namei.index], self.stack.pop());
             },
             .call => |argc| {
                 const args = self.stack.popSlice(argc);

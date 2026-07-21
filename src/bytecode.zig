@@ -29,7 +29,11 @@ fn Span(comptime T: type) type {
 
 const CoIndex = struct { index: u32 };
 pub const ConstIndex = struct { index: u32 };
+pub const NameIndex = struct { index: u32 };
 fn constant(i: u32) ConstIndex {
+    return .{ .index = i };
+}
+fn nameIndex(i: u32) NameIndex {
     return .{ .index = i };
 }
 
@@ -73,11 +77,11 @@ pub const Insn = union(OpCode) {
     return_generator: void,
     return_value: void,
     setup_annotations: void,
-    store_name: object.Object,
+    store_name: NameIndex,
     for_iter: RelativeJump,
     swap: void,
     load_const: ConstIndex,
-    load_name: object.Object,
+    load_name: NameIndex,
     build_tuple: usize,
     build_list: void,
     build_set: void,
@@ -139,14 +143,14 @@ pub const Insn = union(OpCode) {
             .nop => .{ .nop = {} },
             .@"resume" => .{ .@"resume" = obj.int },
             .push_null => .{ .push_null = {} },
-            .load_name => .{ .load_name = obj },
+            .load_name => .{ .load_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
             .load_const => .{ .load_const = constant(arg orelse return error.MissingOpcodeArgument) },
             .return_const => .{ .return_const = {} },
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
             .copy => .{ .copy = {} },
             .setup_annotations => .{ .setup_annotations = obj.void },
-            .store_name => .{ .store_name = obj },
+            .store_name => .{ .store_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
             // TODO...
             .build_tuple => .{ .build_tuple = {} },
             .build_list => .{ .build_list = {} },
@@ -180,7 +184,7 @@ pub const CodeObject = struct {
     // co_firstlineno: *const Object = &One,
     // co_freevars: *const Object = &EmptyTuple,
     // co_lnotab: *const Object = &None, // Deprecated, use co_lines instead
-    // co_names: *const Object = &EmptyTuple,
+    co_names: Span(object.Object) = .empty,
     // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_varnames: *const Object = &EmptyTuple,
     // co_cellvars: *const Object = &EmptyTuple,
@@ -209,6 +213,9 @@ pub const CodeObject = struct {
     pub fn consts(self: *const CodeObject) []const object.Object {
         return self.module.consts(self);
     }
+    pub fn names(self: *const CodeObject) []const object.Object {
+        return self.module.names(self);
+    }
 };
 
 pub const Module = struct {
@@ -220,6 +227,7 @@ pub const Module = struct {
     /// references to code objects are indexes into this list
     codeobject_store: std.MultiArrayList(CodeObject) = .empty,
     constant_store: std.ArrayList(object.Object) = .empty,
+    name_store: std.ArrayList(object.Object) = .empty,
     intern_pool: *intern.StringInternPool,
 
     pub fn init(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool) Module {
@@ -251,6 +259,7 @@ pub const Module = struct {
         self.instruction_store.deinit(self.allocator);
         self.codeobject_store.deinit(self.allocator);
         self.constant_store.deinit(self.allocator);
+        self.name_store.deinit(self.allocator);
     }
 
     inline fn instructions(self: *const Module, co: *const CodeObject) []const Insn {
@@ -261,13 +270,21 @@ pub const Module = struct {
         return co.co_consts.slice(self.constant_store.items);
     }
 
+    inline fn names(self: *const Module, co: *const CodeObject) []const object.Object {
+        return co.co_names.slice(self.name_store.items);
+    }
+
     pub const Builder = struct {
         allocator: std.mem.Allocator,
         ast_root: *const AstNode,
         intern_pool: *intern.StringInternPool,
         queue: std.ArrayList(Seam) = .empty,
+        /// Per-codeobject cache for deduping co_names entries.
+        /// intern_pool owns string identity; this only maps symbols to local NameIndex operands.
+        current_name_indexes: std.AutoHashMap(object.Symbol, NameIndex),
         current_code_object: u32 = 0,
         current_const_start: usize = 0,
+        current_name_start: usize = 0,
         mod: *Module,
 
         const Seam = struct {
@@ -284,9 +301,13 @@ pub const Module = struct {
                 .allocator = allocator,
                 .ast_root = ast,
                 .intern_pool = intern_pool,
+                .current_name_indexes = .init(allocator),
                 .mod = mod,
             };
-            defer builder.queue.deinit(allocator);
+            defer {
+                builder.current_name_indexes.deinit();
+                builder.queue.deinit(allocator);
+            }
 
             _ = try builder.enqueueSeam(builder.ast_root);
             while (builder.current_code_object < builder.queue.items.len) {
@@ -301,11 +322,29 @@ pub const Module = struct {
             try self.mod.instruction_store.append(self.mod.allocator, insn);
         }
 
-        /// append a constant to the module store and return the index
+        /// append a constant to the module store, and push the instruction
         fn appendConst(self: *Builder, obj: object.Object) !void {
             const index = self.mod.constant_store.items.len - self.current_const_start;
             try self.mod.constant_store.append(self.mod.allocator, obj);
             try self.append(.{ .load_const = .{ .index = @intCast(index) } });
+        }
+
+        fn nameIndexForSymbol(self: *Builder, sym: object.Symbol) !NameIndex {
+            const gop = try self.current_name_indexes.getOrPut(sym);
+            if (!gop.found_existing) {
+                const index = self.mod.name_store.items.len - self.current_name_start;
+                gop.value_ptr.* = .{ .index = @intCast(index) };
+                try self.mod.name_store.append(self.mod.allocator, .{ .symbol = sym });
+            }
+            return gop.value_ptr.*;
+        }
+
+        fn loadName(self: *Builder, sym: object.Symbol) !void {
+            try self.append(.{ .load_name = try self.nameIndexForSymbol(sym) });
+        }
+
+        fn storeName(self: *Builder, sym: object.Symbol) !void {
+            try self.append(.{ .store_name = try self.nameIndexForSymbol(sym) });
         }
 
         /// we've found the root node of a new codeobject, enqueue it for later
@@ -345,7 +384,10 @@ pub const Module = struct {
             const insn_idx = self.mod.instruction_store.items.len;
             const co_idx = self.mod.codeobject_store.len;
             const co_const_idx = self.mod.constant_store.items.len;
+            const co_name_idx = self.mod.name_store.items.len;
             self.current_const_start = co_const_idx;
+            self.current_name_start = co_name_idx;
+            self.current_name_indexes.clearRetainingCapacity();
 
             // ENTER
             try self.append(.{ .@"resume" = 0 });
@@ -392,6 +434,10 @@ pub const Module = struct {
                 .start = @intCast(co_const_idx),
                 .len = @intCast(self.mod.constant_store.items[co_const_idx..].len),
             };
+            self.mod.codeobject_store.items(.co_names)[co_idx] = .{
+                .start = @intCast(co_name_idx),
+                .len = @intCast(self.mod.name_store.items[co_name_idx..].len),
+            };
         }
 
         fn generateBinaryOp(self: *Builder, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
@@ -406,9 +452,10 @@ pub const Module = struct {
                 .root => {},
                 // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
                 .name => |name| {
+                    const sym = try self.intern_pool.put(name.value);
                     switch (name.context) {
-                        .Load => try self.append(.{ .load_name = try object.stringToSymbol(name.value, self.intern_pool) }),
-                        .Store => try self.append(.{ .store_name = try object.stringToSymbol(name.value, self.intern_pool) }),
+                        .Load => try self.loadName(sym),
+                        .Store => try self.storeName(sym),
                     }
                 },
                 .string_literal => |string| {
@@ -503,7 +550,7 @@ pub const Module = struct {
                     //   but have a signal for load vs store
                     for (for_in.target_list.items) |target| {
                         std.debug.assert(target.* == .name);
-                        try self.append(.{ .store_name = try object.stringToSymbol(target.name.value, self.intern_pool) });
+                        try self.storeName(try self.intern_pool.put(target.name.value));
                     }
                     const suite_mark = insns.items.len;
                     for (for_in.suite.items) |expression|
@@ -526,10 +573,10 @@ pub const Module = struct {
                     _ = co_idx; // TODO: this becomes a constant can reference
                     // TODO: we add the future code object (its deterministic index) into the current code objects constants table
 
-                    const fn_name = try object.stringToSymbol(fn_decl.name, self.mod.intern_pool);
+                    const fn_name = try self.mod.intern_pool.put(fn_decl.name);
                     try self.appendConst(.{ .int = 2 }); // hardcoded for our test
                     try self.append(.{ .make_function = {} });
-                    try self.append(.{ .store_name = fn_name });
+                    try self.storeName(fn_name);
                 },
                 .lambda => |lambda| {
                     // TODO: generate code object for real
@@ -753,16 +800,16 @@ test "bytecode: codeobject seams for function definitions" {
     const expected_main = [_]Insn{
         .{ .@"resume" = 0 },
         .{ .load_const = constant(0) },
-        .{ .store_name = object.Object{ .symbol = 0 } },
+        .{ .store_name = nameIndex(0) },
         .{ .load_const = constant(1) },
-        .{ .store_name = object.Object{ .symbol = 1 } },
+        .{ .store_name = nameIndex(1) },
         .{ .load_const = constant(2) },
         .{ .make_function = {} },
-        .{ .store_name = object.Object{ .symbol = 2 } },
+        .{ .store_name = nameIndex(2) },
         .{ .push_null = {} },
-        .{ .load_name = object.Object{ .symbol = 2 } },
-        .{ .load_name = object.Object{ .symbol = 0 } },
-        .{ .load_name = object.Object{ .symbol = 1 } },
+        .{ .load_name = nameIndex(2) },
+        .{ .load_name = nameIndex(0) },
+        .{ .load_name = nameIndex(1) },
         .{ .call = 2 },
         .{ .pop_top = {} },
         .{ .return_const = {} },
@@ -775,8 +822,8 @@ test "bytecode: codeobject seams for function definitions" {
     // - we have a return statement so that generates return_value, then our co exit handler appends a superfluous return_const
     const expected_fn = [_]Insn{
         .{ .@"resume" = 0 },
-        .{ .load_name = .{ .symbol = 0 } },
-        .{ .load_name = .{ .symbol = 1 } },
+        .{ .load_name = nameIndex(0) },
+        .{ .load_name = nameIndex(1) },
         .{ .binary_op = .add },
         .{ .return_value = {} },
         .{ .return_const = {} },
