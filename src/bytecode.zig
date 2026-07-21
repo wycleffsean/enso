@@ -37,6 +37,51 @@ fn nameIndex(i: u32) NameIndex {
     return .{ .index = i };
 }
 
+pub const StackEffectError = error{
+    StackUnderflow,
+};
+
+pub const StackLength = struct {
+    exit: u32,
+    max: u32,
+};
+
+pub fn stackLength(ir: []const Insn) StackEffectError!u32 {
+    return (try stackLengthFrom(ir, 0)).exit;
+}
+
+pub fn stackLengthFrom(ir: []const Insn, entry: u32) StackEffectError!StackLength {
+    var length: i64 = entry;
+    var max: i64 = entry;
+
+    for (ir) |insn| {
+        switch (insn) {
+            .call => |argc| {
+                length -= 2;
+                length -= @intCast(argc);
+                length += 1;
+            },
+            .build_tuple => |argc| {
+                length -= @intCast(argc);
+                length += 1;
+            },
+            inline else => |payload, tag| {
+                _ = payload;
+                const effect = comptime opEffect(tag);
+                length -= effect.pops;
+                length += effect.pushes;
+            },
+        }
+        if (length < 0) return StackEffectError.StackUnderflow;
+        max = @max(max, length);
+    }
+
+    return .{
+        .exit = @intCast(length),
+        .max = @intCast(max),
+    };
+}
+
 // TODO: this is only public because it's a struct with a fieldname
 //   just make it an object.ObjectInt instead
 pub const RelativeJump = struct { delta: object.ObjectInt };
@@ -196,7 +241,7 @@ pub const CodeObject = struct {
     // co_name: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_nlocals: *const Object = &Zero,
     // co_posonlyargcount: *const Object = &Zero,
-    // co_stacksize: *const Object = &One,
+    co_stacksize: u32 = 0,
 
     // // TODO: we're leaving the world of "python objects" here,
     // //   at some point we'll need to reconcile that
@@ -294,7 +339,7 @@ pub const Module = struct {
 
         pub const Error = error{
             InvalidEntryNode,
-        } || intern.StringInternPool.Error || std.mem.Allocator.Error;
+        } || StackEffectError || intern.StringInternPool.Error || std.mem.Allocator.Error;
 
         fn build(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool, ast: *const AstNode, mod: *Module) Error!void {
             var builder = Builder{
@@ -357,29 +402,6 @@ pub const Module = struct {
             return .{ .index = @intCast(co_index) };
         }
 
-        /// calculate how many items remain in the stack
-        inline fn stackLength(ir: []Insn) u16 {
-            var length: u16 = 0;
-            for (ir) |insn| {
-                switch (insn) {
-                    .call => |argc| {
-                        length -= 2;
-                        length -= @as(u16, @intCast(argc));
-                        length += 1;
-                    },
-                    inline else => |item, tag| {
-                        _ = item;
-                        const effect = opEffect(tag);
-                        // TODO: this could underflow iff we try to pop from an empty stack.  That's reasonable
-                        //   but we shouldn't leave dangling panic opportunities; better to assert closer to the cause
-                        length -= effect.pops;
-                        length += effect.pushes;
-                    },
-                }
-            }
-            return length;
-        }
-
         fn processEntryNode(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
             const insn_idx = self.mod.instruction_store.items.len;
             const co_idx = self.mod.codeobject_store.len;
@@ -417,7 +439,7 @@ pub const Module = struct {
 
             // EXIT
             // TODO: this is pretty hacky - just an intermediate solution. follow compile.c approach
-            const length = stackLength(self.mod.instruction_store.items[insn_idx..]);
+            const length = try stackLength(self.mod.instruction_store.items[insn_idx..]);
             // std.debug.assert(length < 2); // should never be more than one lingering item in the stack
             if (length == 0) {
                 try self.append(Insn{ .return_const = {} });

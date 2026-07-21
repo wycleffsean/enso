@@ -16,6 +16,7 @@ const help =
     \\-c,--command <str> Specify the command to execute
     \\<str> File to execute
     \\dis disassemble file
+    \\interpret execute through SSA/c2mir/MIR
 ;
 
 fn eql(a: []const u8, b: []const u8) bool {
@@ -42,6 +43,8 @@ pub fn main(init: std.process.Init) anyerror!void {
             return try interpret(allocator, init.io, command);
         } else if (eql("dis", arg)) {
             return try dis(allocator, init.io, &args);
+        } else if (eql("interpret", arg) or eql("run", arg)) {
+            return try runInterpret(allocator, init.io, &args);
         } else {
             // default argument - file we should run
             const file_bytes = try readFile(allocator, init.io, arg);
@@ -58,30 +61,10 @@ fn repl() void {
 }
 
 fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    var arena_allocator = arena.allocator();
-
-    var parser = parse.Parser.init(arena_allocator, code);
-    const ast = parser.parse() catch |err| {
-        parse.highlightSource("<<unknown>>", code, parser.peeked);
-        return err;
-    };
-
-    const intern_pool = try arena_allocator.create(intern.StringInternPool);
-    defer arena_allocator.destroy(intern_pool);
-    intern_pool.* = intern.StringInternPool.init(arena_allocator);
-    defer intern_pool.deinit();
-
-    var module = bytecode.Module.init(arena_allocator, intern_pool);
-    try module.buildFromAst(ast);
-    defer module.deinit();
-
-    var buffer: [1024]u8 = undefined;
-    var stdout_writer = std.Io.File.stdout().writer(io, &buffer);
-
-    var virtual_machine = vm.VM{ .intern_pool = intern_pool, .stdout = &stdout_writer.interface };
-    try virtual_machine.eval(module.codeobject_store.get(0));
+    _ = io;
+    _ = allocator;
+    _ = code;
+    std.debug.print("Not implemented\n", .{});
 }
 
 const dis_help =
@@ -104,6 +87,21 @@ fn dis(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterato
             const file_bytes = try readFile(allocator, io, arg);
             defer allocator.free(file_bytes);
             return try disassemble(allocator, io, file_bytes);
+        }
+    }
+}
+
+fn runInterpret(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
+    if (args.next()) |arg| {
+        if (eql("-h", arg)) {
+            return std.debug.print("{s}\n", .{help});
+        } else if (eql("-c", arg) or eql("--command", arg)) {
+            const command = args.next() orelse return CliError.MissingArgument;
+            return try interpret(allocator, io, command);
+        } else {
+            const file_bytes = try readFile(allocator, io, arg);
+            defer allocator.free(file_bytes);
+            return try interpret(allocator, io, file_bytes);
         }
     }
 }
@@ -172,6 +170,12 @@ fn disassemble(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void
 
         try stdout.print("{f}\n", .{formatted_insn});
     }
+    try stdout.flush();
+
+    var example = try ssa.build(allocator, co);
+    defer example.deinit();
+
+    try stdout.print("{f}", .{ssa.format.graph(&example)});
     try stdout.flush();
 }
 

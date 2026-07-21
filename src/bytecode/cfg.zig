@@ -4,7 +4,8 @@ const testing = std.testing;
 
 pub const Error = error{
     BadJumpTarget,
-} || std.mem.Allocator.Error;
+    StackHeightMismatch,
+} || bytecode.StackEffectError || std.mem.Allocator.Error;
 
 /// basically a tightly packed slice
 /// TODO: delete and just bytecode.Span
@@ -44,6 +45,8 @@ pub const BasicBlock = struct {
     instructions: InsnSpan,
     predecessors: LinkSpan,
     successors: LinkSpan,
+    entry_stack_height: ?u32 = null,
+    exit_stack_height: ?u32 = null,
 
     const empty: BasicBlock = .{
         .instructions = .empty,
@@ -84,6 +87,14 @@ pub fn blockPredecessors(self: *const Self, block: BlockIndex) []const Edge {
 
 pub fn blockSuccessors(self: *const Self, block: BlockIndex) []const Edge {
     return self.blocks.items(.successors)[block].slice(self.links.items);
+}
+
+pub fn blockEntryStackHeight(self: *const Self, block: BlockIndex) ?u32 {
+    return self.blocks.items(.entry_stack_height)[block];
+}
+
+pub fn blockExitStackHeight(self: *const Self, block: BlockIndex) ?u32 {
+    return self.blocks.items(.exit_stack_height)[block];
 }
 
 /// determines if we are at a terminal
@@ -185,6 +196,43 @@ pub fn build(allocator: std.mem.Allocator, instructions: []const bytecode.Insn) 
     }
 
     return self;
+}
+
+pub fn buildFromCodeObject(allocator: std.mem.Allocator, co: bytecode.CodeObject) Error!Self {
+    return build(allocator, co.getInstructions());
+}
+
+pub fn validateStackHeights(self: *Self) Error!u32 {
+    const entries = self.blocks.items(.entry_stack_height);
+    const exits = self.blocks.items(.exit_stack_height);
+    var max_stack_height: u32 = 0;
+
+    @memset(entries, null);
+    @memset(exits, null);
+    if (self.blocks.len == 0) return max_stack_height;
+
+    entries[0] = 0;
+    var changed = true;
+    while (changed) {
+        changed = false;
+        for (0..self.blocks.len) |block_usize| {
+            const block: BlockIndex = @intCast(block_usize);
+            const entry = entries[block] orelse continue;
+            const stack = try bytecode.stackLengthFrom(self.blockInsns(block), entry);
+            exits[block] = stack.exit;
+            max_stack_height = @max(max_stack_height, stack.max);
+
+            for (self.blockSuccessors(block)) |edge| {
+                if (entries[edge.to]) |known| {
+                    if (known != stack.exit) return Error.StackHeightMismatch;
+                } else {
+                    entries[edge.to] = stack.exit;
+                    changed = true;
+                }
+            }
+        }
+    }
+    return @max(max_stack_height, 1);
 }
 
 fn checkedJumpTarget(base: u32, delta: i64, instructions_len: usize) Error!InsnIndex {

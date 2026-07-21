@@ -15,6 +15,7 @@ pub const CompilerHarness = struct {
     const Self = @This();
     const ParseError = parse.Parser.Error;
     const ParseOrIRGenError = ParseError || bytecode.Module.Builder.Error;
+    const SsaError = ParseOrIRGenError || ssa.Error;
 
     pub fn create(base_allocator: std.mem.Allocator) !*Self {
         var arena = std.heap.ArenaAllocator.init(base_allocator);
@@ -48,7 +49,7 @@ pub const CompilerHarness = struct {
         return self.module.codeobject_store.get(0);
     }
 
-    pub fn doSsa(self: *Self, code: []const u8) ParseOrIRGenError!ssa.SsaGraph {
+    pub fn doSsa(self: *Self, code: []const u8) SsaError!ssa.SsaGraph {
         const co = try self.buildCodeObjects(code);
         return ssa.SsaBuilder.generate(self.allocator, co);
     }
