@@ -85,12 +85,15 @@ pub fn stackLengthFrom(ir: []const Insn, entry: u32) StackEffectError!StackLengt
 // TODO: this is only public because it's a struct with a fieldname
 //   just make it an object.ObjectInt instead
 pub const RelativeJump = struct { delta: object.ObjectInt };
-pub const BinaryOperation = enum {
-    add,
+/// BinaryOp oparg contains the value of this enum
+/// we order them the same as "operator_ty" in python and start at
+/// 1 to keep the values the same
+pub const BinaryOperation = enum(u4) {
+    add = 1,
     sub,
     mult,
+    mat_mult,
     div,
-    floor_div,
     mod,
     pow,
     lshift,
@@ -98,7 +101,7 @@ pub const BinaryOperation = enum {
     bit_or,
     bit_xor,
     bit_and,
-    mat_mult,
+    floor_div,
 };
 
 pub const CallIntrinsic1Kind = enum {
@@ -180,8 +183,11 @@ pub const Insn = union(OpCode) {
         }
     }
 
-    // convenience function for tests
-    fn init(comptime kind: OpCode, comptime arg: ?u8, comptime value: object.Object, intern_pool: *intern.StringInternPool) !Self {
+    /// convenience function for tests
+    fn normalize_for_test(comptime dis: object.Instruction, intern_pool: *intern.StringInternPool) !Self {
+        const kind = dis.opcode;
+        const arg = dis.arg;
+        const value = dis.argval;
         // we always intern strings in the bytecode
         const obj = if (value == .string) try value.string.symbolize(intern_pool) else value;
         return switch (kind) {
@@ -196,6 +202,7 @@ pub const Insn = union(OpCode) {
             .copy => .{ .copy = {} },
             .setup_annotations => .{ .setup_annotations = obj.void },
             .store_name => .{ .store_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
+            .binary_op => .{ .binary_op = @enumFromInt(arg.?) },
             // TODO...
             .build_tuple => .{ .build_tuple = {} },
             .build_list => .{ .build_list = {} },
@@ -522,6 +529,7 @@ pub const Module = struct {
                 .bit_xor => |*op| try self.generateBinaryOp(.bit_xor, op, insns),
                 .bit_and => |*op| try self.generateBinaryOp(.bit_and, op, insns),
                 .mat_mult => |*op| try self.generateBinaryOp(.mat_mult, op, insns),
+                .group => |group| try self.generateInsns(group.value, insns),
                 .conditional => |*expr| {
                     try self.generateInsns(expr.predicate, insns);
                     try self.append(.{ .pop_jump_if_false = .{ .delta = 2 } });
@@ -655,7 +663,7 @@ test "bytecode: example fixtures" {
         var expected: [len]Insn = undefined;
 
         inline for (comptime example.code().instructions, 0..) |dis, i| {
-            expected[i] = try Insn.init(dis.opcode, dis.arg, dis.argval, &intern_pool);
+            expected[i] = try Insn.normalize_for_test(dis, &intern_pool);
             // we cheat and rewrite the delta values since we calculate them
             // differently.  Of course this is a hack and will only update the
             // deltas if they appear on the same line which is good enough

@@ -96,6 +96,8 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_expressions",
+        // we now generate bytecode for this, but since python folds expressions
+        // before emitting bytecode we still don't match
         .test_bytecode = false,
         .test_vm = false,
     },
