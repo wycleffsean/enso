@@ -213,7 +213,7 @@ test "bytecode/cfg empty" {
 test "bytecode/cfg straight line bytecode has one block" {
     const instructions = [_]bytecode.Insn{
         .{ .@"resume" = 0 },
-        .{ .load_const = .{ .int = 1 } },
+        .{ .load_const = .{ .index = 0 } },
         .{ .return_value = {} },
     };
 

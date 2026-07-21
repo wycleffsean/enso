@@ -54,8 +54,8 @@ pub const VM = struct {
                     self.push(None);
                 },
                 .return_value => {},
-                .load_const => |obj| {
-                    self.push(obj);
+                .load_const => |consti| {
+                    self.push(co.consts()[consti.index]);
                 },
                 .load_name => |name| {
                     self.push(name);
@@ -420,7 +420,7 @@ fn LoweringVM(comptime BackendType: type) type {
 
         pub fn eval(self: *Self, co: bytecode.CodeObject) void {
             for (co.getInstructions()) |insn| {
-                self.step(insn);
+                self.step(insn, co.consts());
             }
         }
 
@@ -448,11 +448,15 @@ fn LoweringVM(comptime BackendType: type) type {
             }
         }
 
-        pub fn step(self: *Self, insn: bytecode.Insn) void {
+        pub fn step(self: *Self, insn: bytecode.Insn, consts: []const object.Object) void {
             switch (insn) {
                 .for_iter => {},
+                .load_const => |consti| {
+                    self.stack.push(.{ .static = consts[consti.index] });
+                },
+                // TODO: this will all be deleted soon, so we just panic for now
                 .build_tuple => {
-                    unreachable; // TODO: this will all be deleted soon, so we just panic for now
+                    unreachable;
                 },
                 inline else => |oparg, tag| {
                     const effect = comptime opEffect(tag);

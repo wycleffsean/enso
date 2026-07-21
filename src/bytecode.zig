@@ -27,6 +27,12 @@ fn Span(comptime T: type) type {
     };
 }
 
+const CoIndex = struct { index: u32 };
+pub const ConstIndex = struct { index: u32 };
+fn constant(i: u32) ConstIndex {
+    return .{ .index = i };
+}
+
 // TODO: this is only public because it's a struct with a fieldname
 //   just make it an object.ObjectInt instead
 pub const RelativeJump = struct { delta: object.ObjectInt };
@@ -70,7 +76,7 @@ pub const Insn = union(OpCode) {
     store_name: object.Object,
     for_iter: RelativeJump,
     swap: void,
-    load_const: object.Object,
+    load_const: ConstIndex,
     load_name: object.Object,
     build_tuple: usize,
     build_list: void,
@@ -126,7 +132,7 @@ pub const Insn = union(OpCode) {
     }
 
     // convenience function for tests
-    fn init(comptime kind: OpCode, comptime value: object.Object, intern_pool: *intern.StringInternPool) !Self {
+    fn init(comptime kind: OpCode, comptime arg: ?u8, comptime value: object.Object, intern_pool: *intern.StringInternPool) !Self {
         // we always intern strings in the bytecode
         const obj = if (value == .string) try value.string.symbolize(intern_pool) else value;
         return switch (kind) {
@@ -134,7 +140,7 @@ pub const Insn = union(OpCode) {
             .@"resume" => .{ .@"resume" = obj.int },
             .push_null => .{ .push_null = {} },
             .load_name => .{ .load_name = obj },
-            .load_const => .{ .load_const = obj },
+            .load_const => .{ .load_const = constant(arg orelse return error.MissingOpcodeArgument) },
             .return_const => .{ .return_const = {} },
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
@@ -164,9 +170,6 @@ pub const Insn = union(OpCode) {
         };
     }
 };
-
-const CoIndex = struct { index: u32 };
-const ConstIndex = struct { index: u32 };
 
 pub const CodeObject = struct {
     module: *const Module,
@@ -264,6 +267,7 @@ pub const Module = struct {
         intern_pool: *intern.StringInternPool,
         queue: std.ArrayList(Seam) = .empty,
         current_code_object: u32 = 0,
+        current_const_start: usize = 0,
         mod: *Module,
 
         const Seam = struct {
@@ -298,11 +302,11 @@ pub const Module = struct {
         }
 
         /// append a constant to the module store and return the index
-        // fn appendConst(self: *Builder, obj: object.Object) !ConstIndex {
-        //     const index = self.mod.constant_store.items.len;
-        //     try self.mod.constant_store.append(self.mod.allocator, obj);
-        //     return .{ .index = index };
-        // }
+        fn appendConst(self: *Builder, obj: object.Object) !void {
+            const index = self.mod.constant_store.items.len - self.current_const_start;
+            try self.mod.constant_store.append(self.mod.allocator, obj);
+            try self.append(.{ .load_const = .{ .index = @intCast(index) } });
+        }
 
         /// we've found the root node of a new codeobject, enqueue it for later
         fn enqueueSeam(self: *Builder, node: *const AstNode) !CoIndex {
@@ -341,6 +345,7 @@ pub const Module = struct {
             const insn_idx = self.mod.instruction_store.items.len;
             const co_idx = self.mod.codeobject_store.len;
             const co_const_idx = self.mod.constant_store.items.len;
+            self.current_const_start = co_const_idx;
 
             // ENTER
             try self.append(.{ .@"resume" = 0 });
@@ -406,7 +411,10 @@ pub const Module = struct {
                         .Store => try self.append(.{ .store_name = try object.stringToSymbol(name.value, self.intern_pool) }),
                     }
                 },
-                .string_literal => |string| try self.append(.{ .load_const = try object.stringToSymbol(string.value, self.intern_pool) }),
+                .string_literal => |string| {
+                    const interned = try object.stringToSymbol(string.value, self.intern_pool);
+                    try self.appendConst(interned);
+                },
                 // .var_decl => break :blk Insn{ .decl_var = .{ .symbol = try self.intern_pool.put(ast_node.var_decl.name) } },
                 // .division => break :blk Insn{ .division = {} },
                 // .group => break :blk try self.generateInsn(ast_node.group.value),
@@ -464,14 +472,14 @@ pub const Module = struct {
                     if (call.discard_return_value)
                         try self.append(.{ .pop_top = {} });
                 },
-                .integer => |int| try self.append(.{ .load_const = .{ .int = int.value } }),
-                .bool => |b| try self.append(.{ .load_const = .{ .bool = b } }),
-                .float => |float| try self.append(.{ .load_const = .{ .float = float.value } }),
-                .complex => |cmp| try self.append(.{ .load_const = .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } } }),
+                .integer => |int| try self.appendConst(.{ .int = int.value }),
+                .bool => |b| try self.appendConst(.{ .bool = b }),
+                .float => |float| try self.appendConst(.{ .float = float.value }),
+                .complex => |cmp| try self.appendConst(.{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } }),
                 .list => |list| switch (list) {
-                    .empty => try self.append(.{ .load_const = object.EmptyArray }),
+                    .empty => try self.appendConst(object.EmptyArray),
                     // TODO - make exhaustive
-                    else => try self.append(.{ .load_const = object.EmptyArray }),
+                    else => try self.appendConst(object.EmptyArray),
                 },
                 .pass => {}, // surprisingly not a nop
                 .assignment => |assignment| {
@@ -519,7 +527,7 @@ pub const Module = struct {
                     // TODO: we add the future code object (its deterministic index) into the current code objects constants table
 
                     const fn_name = try object.stringToSymbol(fn_decl.name, self.mod.intern_pool);
-                    try self.append(.{ .load_const = .{ .int = 2 } }); // hardcoded for our test
+                    try self.appendConst(.{ .int = 2 }); // hardcoded for our test
                     try self.append(.{ .make_function = {} });
                     try self.append(.{ .store_name = fn_name });
                 },
@@ -527,7 +535,7 @@ pub const Module = struct {
                     // TODO: generate code object for real
                     _ = lambda;
                     const co = object.Code{};
-                    try self.append(.{ .load_const = .{ .code = co } });
+                    try self.appendConst(.{ .code = co });
                     try self.append(.{ .make_function = {} });
                     // try self.generateInsns(expression, insns);
                 },
@@ -578,7 +586,7 @@ test "bytecode: example fixtures" {
         var expected: [len]Insn = undefined;
 
         inline for (comptime example.code().instructions, 0..) |dis, i| {
-            expected[i] = try Insn.init(dis.opcode, dis.argval, &intern_pool);
+            expected[i] = try Insn.init(dis.opcode, dis.arg, dis.argval, &intern_pool);
             // we cheat and rewrite the delta values since we calculate them
             // differently.  Of course this is a hack and will only update the
             // deltas if they appear on the same line which is good enough
@@ -589,10 +597,6 @@ test "bytecode: example fixtures" {
                     },
                     .jump_backward => {
                         if (ir[i] == .jump_backward) expected[i].jump_backward.delta = ir[i].jump_backward.delta;
-                    },
-                    // We also cheat with the code objects - an empty object is a match
-                    .load_const => {
-                        if (ir[i] == .load_const and ir[i].load_const == .code) expected[i].load_const.code = ir[i].load_const.code;
                     },
                     else => {},
                 }
@@ -626,11 +630,11 @@ test "bytecode: binary ops" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = object.Object{ .bool = true } },
+            .{ .load_const = constant(0) },
             .{ .copy = {} },
             .{ .pop_jump_if_false = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = object.Object{ .bool = false } },
+            .{ .load_const = constant(1) },
             .{ .return_value = {} },
         };
 
@@ -644,11 +648,11 @@ test "bytecode: binary ops" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = object.Object{ .bool = true } },
+            .{ .load_const = constant(0) },
             .{ .copy = {} },
             .{ .pop_jump_if_true = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = object.Object{ .bool = false } },
+            .{ .load_const = constant(1) },
             .{ .return_value = {} },
         };
 
@@ -662,15 +666,15 @@ test "bytecode: binary ops" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = object.Object{ .bool = true } },
+            .{ .load_const = constant(0) },
             .{ .copy = {} },
             .{ .pop_jump_if_false = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = object.Object{ .bool = false } },
+            .{ .load_const = constant(1) },
             .{ .copy = {} },
             .{ .pop_jump_if_true = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = object.Object{ .bool = true } },
+            .{ .load_const = constant(2) },
             .{ .return_value = {} },
         };
 
@@ -691,11 +695,11 @@ test "bytecode: conditional expression" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = object.Object{ .bool = true } },
+            .{ .load_const = constant(0) },
             .{ .pop_jump_if_false = .{ .delta = 2 } },
-            .{ .load_const = object.Object{ .int = 1 } },
+            .{ .load_const = constant(1) },
             .{ .return_value = {} },
-            .{ .load_const = object.Object{ .int = 2 } },
+            .{ .load_const = constant(2) },
             .{ .return_value = {} },
         };
 
@@ -748,11 +752,11 @@ test "bytecode: codeobject seams for function definitions" {
 
     const expected_main = [_]Insn{
         .{ .@"resume" = 0 },
-        .{ .load_const = object.Object{ .int = 1 } },
+        .{ .load_const = constant(0) },
         .{ .store_name = object.Object{ .symbol = 0 } },
-        .{ .load_const = object.Object{ .int = 2 } },
+        .{ .load_const = constant(1) },
         .{ .store_name = object.Object{ .symbol = 1 } },
-        .{ .load_const = object.Object{ .int = 2 } },
+        .{ .load_const = constant(2) },
         .{ .make_function = {} },
         .{ .store_name = object.Object{ .symbol = 2 } },
         .{ .push_null = {} },

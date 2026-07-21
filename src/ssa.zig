@@ -398,7 +398,7 @@ const StackMachine = struct {
 
     pub fn eval(self: *Self, co: bytecode.CodeObject) void {
         for (co.getInstructions()) |insn| {
-            self.step(insn);
+            self.step(insn, co.consts());
         }
     }
 
@@ -426,9 +426,12 @@ const StackMachine = struct {
         }
     }
 
-    pub fn step(self: *Self, insn: bytecode.Insn) void {
+    pub fn step(self: *Self, insn: bytecode.Insn, consts: []const object.Object) void {
         switch (insn) {
             .for_iter => {},
+            .load_const => |consti| {
+                self.stack.push(self.backend.loadConst(consts[consti.index]));
+            },
             .call => |argc| {
                 const args = self.stack.popSlice(argc);
                 const name = self.stack.pop();
@@ -436,10 +439,8 @@ const StackMachine = struct {
                 const result = self.backend.call(name, receiver, args);
                 self.stack.push(result);
             },
-            .build_tuple => |argc| {
-                _ = argc;
-                unreachable; // TODO: this is a shim, we don't care about lowering this right now - we'll probably delete this soon anyway
-            },
+            // TODO: these are shims, we don't care about lowering this right now - we'll probably delete this soon anyway
+            .build_tuple => unreachable,
             inline else => |oparg, tag| {
                 const effect = comptime opEffect(tag);
                 const op_fn = @field(BackendType, effect.handler);
