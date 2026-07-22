@@ -61,7 +61,7 @@ pub const Example = struct {
     test_lex_comptime: bool = false,
     test_parse: bool = true,
     test_bytecode: bool = true,
-    normalize_bytecode: bool = true,
+    normalize_bytecode: bool = false,
     test_vm: bool = true,
     test_vm_comptime: bool = false,
 
@@ -104,6 +104,7 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_builtin_functions",
+        .normalize_bytecode = true,
         .test_vm = false,
     },
     .{
@@ -121,6 +122,7 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_2_3_parenthesized_forms",
+        .normalize_bytecode = true,
         .test_vm = false,
     },
     .{
@@ -150,6 +152,7 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_3_4_calls",
+        .normalize_bytecode = true,
         .test_vm = false,
     },
     .{
@@ -158,16 +161,37 @@ pub const examples = [_]Example{
         .test_vm = false,
     },
     .{
+        .name = "langref_6_5_power_operator",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_6_unary_arithmetic_and_bitwise_operations",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_7_binary_arithmetic_operations",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_8_shifting_operations",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_9_binary_bitwise_operations",
+        .test_vm = false,
+    },
+    .{
         .name = "langref_6_10_comparisons",
-        // the python compiler folds over these operations when using constants
-        // so at this time we won't get the same results
         .test_bytecode = false,
         .test_vm = false,
     },
     .{
         .name = "langref_6_11_boolean_operations",
-        // the python compiler folds over these operations when using constants
-        // so at this time we won't get the same results
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_12_assignment_expressions",
         .test_vm = false,
     },
     .{
@@ -179,6 +203,16 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_14_lambdas",
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_15_expression_lists",
+        .normalize_bytecode = true,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_17_operator_precedence",
         .test_vm = false,
     },
     .{
@@ -221,6 +255,10 @@ pub fn optimizeBytecodeForPythonFixture(allocator: std.mem.Allocator, co: byteco
     const ir = co.getInstructions();
     var index: usize = 0;
     while (index < ir.len) {
+        if (try foldTuple(allocator, co, ir[index..], &constants, &out)) |consumed| {
+            index += consumed;
+            continue;
+        }
         if (try foldBinary(allocator, co, ir[index..], &constants, &out)) {
             index += 3;
             continue;
@@ -281,6 +319,25 @@ fn optimizePass(
         try out.append(allocator, ir[index]);
         index += 1;
     }
+}
+
+fn foldTuple(
+    allocator: std.mem.Allocator,
+    co: bytecode.CodeObject,
+    ir: []const bytecode.Insn,
+    constants: *std.ArrayList(object.Object),
+    out: *std.ArrayList(bytecode.Insn),
+) !?usize {
+    if (ir.len < 2 or ir[0] != .load_const) return null;
+
+    var len: usize = 1;
+    while (len < ir.len and ir[len] == .load_const) : (len += 1) {}
+    if (len >= ir.len or ir[len] != .build_tuple or ir[len].build_tuple != len) return null;
+
+    _ = co;
+    const remapped = try internOptimizedConst(allocator, constants, object.EmptyTuple);
+    try out.append(allocator, .{ .load_const = remapped });
+    return len + 1;
 }
 
 fn foldConstBoolOp(

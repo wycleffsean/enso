@@ -273,7 +273,7 @@ pub const Parser = struct {
                 const null_denotation = tokenMap(token)[1];
                 break :blk .{ .node = try null_denotation(self) };
             },
-            else => .{ .expr = try self.parseExpression(.lowest) },
+            else => .{ .expr = try self.parseExpressionOrTuple(.eof, false) },
         };
     }
 
@@ -281,6 +281,10 @@ pub const Parser = struct {
         lowest,
         equality,
         lessgreater,
+        bit_or,
+        bit_xor,
+        bit_and,
+        shift,
         sum,
         product,
         prefix,
@@ -314,7 +318,7 @@ pub const Parser = struct {
             .dot => .{ .call, nullDenotationUnhandled, parseFieldAccess },
             .colon => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .comma => .{ .lowest, nullDenotationIllegal, leftDenotationUnhandled },
-            .pipe => .{ .lowest, nullDenotationUnhandled, parseBinaryOp },
+            .pipe => .{ .bit_or, nullDenotationUnhandled, parseBinaryOp },
             .minus => .{ .prefix, parseUnaryOp, parseBinaryOp },
             .percent => .{ .product, nullDenotationUnhandled, parseBinaryOp },
             .labracket => .{ .lessgreater, nullDenotationIllegal, parseComparison },
@@ -322,11 +326,11 @@ pub const Parser = struct {
             .leq => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
             .geq => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
             .neq => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
-            .double_labracket => .{ .product, nullDenotationUnhandled, parseBinaryOp },
-            .double_rabracket => .{ .product, nullDenotationUnhandled, parseBinaryOp },
+            .double_labracket => .{ .shift, nullDenotationUnhandled, parseBinaryOp },
+            .double_rabracket => .{ .shift, nullDenotationUnhandled, parseBinaryOp },
             .bang => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-            .ampersand => .{ .lowest, nullDenotationUnhandled, parseBinaryOp },
-            .caret => .{ .lowest, nullDenotationUnhandled, parseBinaryOp },
+            .ampersand => .{ .bit_and, nullDenotationUnhandled, parseBinaryOp },
+            .caret => .{ .bit_xor, nullDenotationUnhandled, parseBinaryOp },
             .tilde => .{ .lowest, parseUnaryOp, leftDenotationUnhandled },
             .lsbracket => .{ .lowest, parseList, leftDenotationUnhandled },
             .rsbracket => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -465,6 +469,25 @@ pub const Parser = struct {
         return node;
     }
 
+    fn parseExpressionOrTuple(self: *Self, terminal_token: lex.TokenTag, allow_trailing: bool) Error!*AstNode {
+        const first = try self.parseExpression(.lowest);
+        if (!self.expectAndSkipOptional(.comma)) return first;
+
+        var list: List = .empty;
+        try list.append(self.allocator, first);
+        while (self.peek()) |next_token| {
+            if (next_token == terminal_token) break;
+            const item = try self.parseExpression(.lowest);
+            try list.append(self.allocator, item);
+            if (!self.expectAndSkipOptional(.comma)) break;
+            if (allow_trailing and self.expect(terminal_token)) break;
+        }
+
+        const tuple = try self.allocator.create(AstNode);
+        tuple.* = .{ .tuple = list };
+        return tuple;
+    }
+
     fn nullDenotationUnhandled(self: *Self) Error!*AstNode {
         log.err("oh no! we don't handle this null denotation: {any}", .{try self.take()});
         return Error.NullDenotationUnhandled;
@@ -559,81 +582,82 @@ pub const Parser = struct {
 
     fn parseBinaryOp(self: *Self, lhs: *AstNode) Error!*AstNode {
         const op_token = try self.take(); // skip sum token
+        const rhs_precedence = try precedenceMap(op_token);
         switch (op_token) {
             .plus => {
-                const rhs = try self.parseExpression(.sum);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .add = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .minus => {
-                const rhs = try self.parseExpression(.sum);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .sub = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .asterisk => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .mult = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .solidus => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .div = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .double_solidus => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .floor_div = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .percent => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .mod = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .double_asterisk => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .pow = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .double_labracket => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .lshift = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .double_rabracket => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .rshift = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .pipe => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .bit_or = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .caret => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .bit_xor = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .ampersand => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .bit_and = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
             },
             .at => {
-                const rhs = try self.parseExpression(.product);
+                const rhs = try self.parseExpression(rhs_precedence);
                 const node = try self.allocator.create(AstNode);
                 node.* = .{ .mat_mult = .{ .lhs = lhs, .rhs = rhs } };
                 return node;
@@ -718,7 +742,7 @@ pub const Parser = struct {
             // tuple
             // TODO: this is a copy of parseTargetList - refactor/DRY this up
             var list: List = .empty;
-            try list.append(self.allocator, result);
+            try list.append(self.allocator, expression);
             while (true) {
                 if (self.expect(.rparen)) break;
                 const target = try self.parseExpression(.lowest);
@@ -767,15 +791,14 @@ pub const Parser = struct {
         };
     }
 
-    // TODO: as we evolve and more formally attempt to match the grammar, this should probably be replaced
-    // with parseTargetList
-    fn parseCommaSeparatedList(self: *Self, list: *List, terminal_token: lex.TokenTag) Error!void {
+    fn parseExpressionItems(self: *Self, list: *List, terminal_token: lex.TokenTag, allow_trailing: bool) Error!void {
         while (self.peek()) |next_token| {
             if (next_token == terminal_token) break;
             try self.illegal(.comma);
             const item = try self.parseExpression(.lowest);
             try list.append(self.allocator, item);
-            self.expectAndSkip(.comma) catch break;
+            if (!self.expectAndSkipOptional(.comma)) break;
+            if (allow_trailing and self.expect(terminal_token)) break;
         }
     }
 
@@ -951,7 +974,7 @@ pub const Parser = struct {
         const assign_token = try self.take(); // skip assign token
         assert(assign_token == .assign);
         castExpressionContext(lhs, .Store);
-        const rhs = try self.parseExpression(.equality);
+        const rhs = try self.parseExpressionOrTuple(.eof, false);
         const assignment_node = try self.allocator.create(AstNode);
         assignment_node.* = .{ .assignment = .{ .lhs = lhs, .rhs = rhs } };
         return assignment_node;
@@ -1047,13 +1070,7 @@ pub const Parser = struct {
 
     fn parseExpressionList(self: *Self) Error!List {
         var expressions: List = .empty;
-
-        while (true) {
-            const expression = try self.parseExpression(.lowest);
-            try expressions.append(self.allocator, expression);
-            self.expectAndSkip(.comma) catch break;
-        }
-
+        try self.parseExpressionItems(&expressions, .eof, false);
         return expressions;
     }
 
@@ -1125,7 +1142,7 @@ pub const Parser = struct {
         self.expectAndSkip(.lparen) catch unreachable;
         var call_node = try self.allocator.create(AstNode);
         call_node.* = .{ .call = .{ .ref = lhs, .args = .empty } };
-        try self.parseCommaSeparatedList(&call_node.call.args, .rparen);
+        try self.parseExpressionItems(&call_node.call.args, .rparen, true);
         try self.expectAndSkip(.rparen);
         return call_node;
     }

@@ -85,27 +85,24 @@ pub fn stackLengthFrom(ir: []const Insn, entry: u32) StackEffectError!StackLengt
 // TODO: this is only public because it's a struct with a fieldname
 //   just make it an object.ObjectInt instead
 pub const RelativeJump = struct { delta: object.ObjectInt };
-/// BinaryOp oparg contains the value of this enum
-/// we order them the same as "operator_ty" in python and start at
-/// 1 to keep the values the same
 pub const BinaryOperation = enum(u4) {
-    add = 1,
-    sub,
-    mult,
-    mat_mult,
-    div,
-    mod,
-    pow,
-    lshift,
-    rshift,
-    bit_or,
-    bit_xor,
-    bit_and,
-    floor_div,
+    add = 0,
+    bit_and = 1,
+    floor_div = 2,
+    lshift = 3,
+    mat_mult = 4,
+    mult = 5,
+    mod = 6,
+    bit_or = 7,
+    pow = 8,
+    rshift = 9,
+    sub = 10,
+    div = 11,
+    bit_xor = 12,
 };
 
-pub const CallIntrinsic1Kind = enum {
-    unary_positive,
+pub const CallIntrinsic1Kind = enum(u8) {
+    unary_positive = 5,
 };
 
 pub const Insn = union(OpCode) {
@@ -213,6 +210,9 @@ pub const Insn = union(OpCode) {
             .pop_top => .{ .pop_top = {} },
             .jump_backward => .{ .jump_backward = .{ .delta = value.int } },
             .unary_not => .{ .unary_not = {} },
+            .unary_negative => .{ .unary_negative = {} },
+            .unary_invert => .{ .unary_invert = {} },
+            .call_intrinsic_1 => .{ .call_intrinsic_1 = @enumFromInt(arg orelse return error.MissingOpcodeArgument) },
             .pop_jump_if_true => .{ .pop_jump_if_true = {} },
             .end_for => .{ .end_for = {} },
             .make_function => .{ .make_function = {} },
@@ -589,7 +589,10 @@ pub const Module = struct {
                 .bool => |b| try self.appendConst(.{ .bool = b }),
                 .float => |float| try self.appendConst(.{ .float = float.value }),
                 .complex => |cmp| try self.appendConst(.{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } }),
-                .tuple => try self.appendConst(object.EmptyTuple),
+                .tuple => |items| {
+                    for (items.items) |item| try self.generateInsns(item, insns);
+                    try self.append(.{ .build_tuple = items.items.len });
+                },
                 .list => |list| switch (list) {
                     .empty => try self.appendConst(object.EmptyArray),
                     // TODO - make exhaustive
