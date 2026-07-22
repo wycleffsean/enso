@@ -679,6 +679,14 @@ pub const Module = struct {
                         try self.generateInsns(node, insns);
                         return Flow.terminates;
                     },
+                    .break_stmt => {
+                        try self.generateInsns(node, insns);
+                        return Flow.terminates;
+                    },
+                    .raise_stmt => {
+                        try self.generateInsns(node, insns);
+                        return Flow.terminates;
+                    },
                     else => {
                         try self.generateInsns(node, insns);
                         return Flow.continues;
@@ -691,6 +699,7 @@ pub const Module = struct {
             return switch (ast_node.*) {
                 .assignment => false,
                 .augmented_assignment => false,
+                .annotated_assignment => false,
                 .yield => false,
                 else => true,
             };
@@ -729,10 +738,10 @@ pub const Module = struct {
             try self.append(.{ .compare_op = op });
         }
 
-        fn generateMembership(self: *Builder, membership: parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateMembership(self: *Builder, membership: parse.BinaryOp, invert: bool, insns: *std.ArrayList(Insn)) Error!void {
             try self.generateInsns(membership.lhs, insns);
             try self.generateInsns(membership.rhs, insns);
-            try self.append(.{ .contains_op = false });
+            try self.append(.{ .contains_op = invert });
         }
 
         fn generateAssignment(self: *Builder, assignment: parse.BinaryOp, keep_value: bool, insns: *std.ArrayList(Insn)) Error!void {
@@ -1177,7 +1186,8 @@ pub const Module = struct {
                 .bit_and => |*op| try self.generateBinaryOp(.bit_and, op, insns),
                 .mat_mult => |*op| try self.generateBinaryOp(.mat_mult, op, insns),
                 .comparison => |comparison| try self.generateComparison(comparison, insns),
-                .membership => |membership| try self.generateMembership(membership, insns),
+                .membership => |membership| try self.generateMembership(membership, false, insns),
+                .not_membership => |membership| try self.generateMembership(membership, true, insns),
                 .group => |group| try self.generateInsns(group.value, insns),
                 .conditional => |*expr| {
                     try self.generateInsns(expr.predicate, insns);
@@ -1186,6 +1196,11 @@ pub const Module = struct {
                     try self.append(.{ .return_value = {} });
                     try self.generateInsns(expr.rhs, insns);
                     // try self.append( .{ .return_value = {} }); // implied
+                },
+                .field_access => |field_access| {
+                    _ = field_access.rhs;
+                    try self.generateInsns(field_access.lhs, insns);
+                    try self.append(.{ .load_attr = {} });
                 },
                 .call => |call| {
                     const len = call.args.items.len;
@@ -1200,6 +1215,7 @@ pub const Module = struct {
                 .bool => |b| try self.appendConst(.{ .bool = b }),
                 .float => |float| try self.appendConst(.{ .float = float.value }),
                 .complex => |cmp| try self.appendConst(.{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } }),
+                .ellipsis => try self.appendConst(object.None),
                 .tuple => |items| {
                     for (items.items) |item| try self.generateInsns(item, insns);
                     try self.append(.{ .build_tuple = items.items.len });
@@ -1208,6 +1224,12 @@ pub const Module = struct {
                 .set => |set| try self.generateSetDisplay(set, insns),
                 .dictionary => |dictionary| try self.generateDictionaryDisplay(dictionary, insns),
                 .comprehension => |comprehension| try self.generateGeneratorExpression(comprehension, insns),
+                .starred => |starred| try self.generateInsns(starred.value, insns),
+                .subscript => |subscript| {
+                    _ = subscript.rhs;
+                    try self.generateInsns(subscript.lhs, insns);
+                },
+                .slice => try self.appendConst(object.None),
                 .pass => {}, // surprisingly not a nop
                 .assignment => |assignment| {
                     try self.generateAssignment(assignment, false, insns);
@@ -1219,9 +1241,22 @@ pub const Module = struct {
                     try self.generateInsns(assignment.rhs, insns);
                     const op: BinaryOperation = switch (assignment.kind) {
                         .add => .inplace_add,
+                        .sub => .sub,
+                        .mult => .mult,
+                        .mat_mult => .mat_mult,
+                        .div => .div,
+                        .floor_div => .floor_div,
+                        .mod => .mod,
+                        .pow => .pow,
                     };
                     try self.append(.{ .binary_op = op });
                     try self.storeName(sym);
+                },
+                .annotated_assignment => |assignment| {
+                    if (assignment.value) |value| {
+                        try self.generateInsns(value, insns);
+                        try self.generateInsns(assignment.lhs, insns);
+                    }
                 },
                 .named_expression => |named_expression| {
                     try self.generateInsns(named_expression.rhs, insns);
@@ -1236,10 +1271,27 @@ pub const Module = struct {
                 .while_stmt => |while_stmt| {
                     _ = try self.generateWhileStatement(while_stmt, insns);
                 },
+                .try_stmt => |try_stmt| {
+                    _ = try self.generateStatements(try_stmt.suite.items, insns);
+                    for (try_stmt.except_handlers.items) |handler| {
+                        _ = try self.generateStatements(handler.suite.items, insns);
+                    }
+                    if (try_stmt.else_suite) |suite| _ = try self.generateStatements(suite.items, insns);
+                    if (try_stmt.finally_suite) |suite| _ = try self.generateStatements(suite.items, insns);
+                },
+                .with_stmt => |with_stmt| {
+                    _ = try self.generateStatements(with_stmt.suite.items, insns);
+                },
+                .del_stmt => {},
                 .continue_stmt => {
                     const target = self.loop_continue_targets.getLast();
                     try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, target) } });
                 },
+                .break_stmt => {},
+                .raise_stmt => {},
+                .assert_stmt => {},
+                .import => {},
+                .class => {},
                 .for_in => |for_in| {
                     // push the iterable onto the stack
                     try self.generateInsns(for_in.iterable, insns);

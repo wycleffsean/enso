@@ -33,10 +33,12 @@ pub const TokenTag = enum {
     rparen,
     name,
     at,
+    at_assign,
     integer,
     float,
     imaginary,
     string,
+    ellipsis,
     dot,
     colon,
     comma,
@@ -44,11 +46,17 @@ pub const TokenTag = enum {
     plus,
     plus_assign,
     minus,
+    minus_assign,
     asterisk,
     double_asterisk,
+    asterisk_assign,
+    double_asterisk_assign,
     solidus,
     double_solidus,
+    solidus_assign,
+    double_solidus_assign,
     percent,
+    percent_assign,
     assign,
     equality,
     walrus,
@@ -122,10 +130,12 @@ pub const Token = union(TokenTag) {
     rparen: Bare,
     name: Identifier,
     at: Identifier,
+    at_assign: Bare,
     integer: Identifier,
     float: Identifier,
     imaginary: Identifier,
     string: Identifier,
+    ellipsis: Bare,
     dot: Bare,
     colon: Bare,
     comma: Bare,
@@ -133,11 +143,17 @@ pub const Token = union(TokenTag) {
     plus: Bare,
     plus_assign: Bare,
     minus: Bare,
+    minus_assign: Bare,
     asterisk: Bare,
     double_asterisk: Bare,
+    asterisk_assign: Bare,
+    double_asterisk_assign: Bare,
     solidus: Bare,
     double_solidus: Bare,
+    solidus_assign: Bare,
+    double_solidus_assign: Bare,
     percent: Bare,
+    percent_assign: Bare,
     assign: Bare,
     equality: Bare,
     walrus: Bare,
@@ -306,11 +322,25 @@ pub const Lexer = struct {
         while (true) {
             const byte = self.peek() orelse return;
             switch (byte) {
-                '0'...'9' => {
+                '0'...'9', '_' => {
                     _ = try self.take();
                 },
                 else => return,
             }
+        }
+    }
+
+    fn readWhileBaseDigits(self: *Self, comptime base: u8) Error!void {
+        while (true) {
+            const byte = self.peek() orelse return;
+            const valid = switch (base) {
+                2 => byte == '0' or byte == '1' or byte == '_',
+                8 => (byte >= '0' and byte <= '7') or byte == '_',
+                16 => ascii.isHex(byte) or byte == '_',
+                else => unreachable,
+            };
+            if (!valid) return;
+            _ = try self.take();
         }
     }
 
@@ -341,12 +371,12 @@ pub const Lexer = struct {
         return false;
     }
 
-    // whitespace or colon!!
+    // whitespace or grammar punctuation that can immediately follow a keyword
     fn matchExactTerminatedByWhitspace(self: *Self, comptime needle: []const u8) bool {
         if (!self.matchExact(needle)) return false;
         if (self.peek()) |byte| {
             switch (byte) {
-                '\n', '\t', ' ', ':' => {},
+                '\n', '\t', ' ', ':', '*' => {},
                 else => return false,
             }
         }
@@ -406,10 +436,30 @@ pub const Lexer = struct {
         return null;
     }
 
+    fn readExponentIfPresent(self: *Self) Error!void {
+        const marker = self.peek() orelse return;
+        if (marker != 'e' and marker != 'E') return;
+        _ = try self.take();
+        if (self.peek()) |sign| {
+            if (sign == '+' or sign == '-') _ = try self.take();
+        }
+        try self.readWhileNumeric();
+    }
+
     inline fn readFloat(self: *Self, start: usize, loc: Location) Error!Token {
         const dot = try self.take();
         std.debug.assert(dot == '.');
         try self.readWhileNumeric();
+        try self.readExponentIfPresent();
+        if (self.peek()) |val| {
+            if (val == 'j') return self.readImaginary(start, loc);
+        }
+        return Token{ .float = .{ .value = self.buffer[start..self.index], .loc = loc } };
+    }
+
+    inline fn readFloatAfterConsumedDot(self: *Self, start: usize, loc: Location) Error!Token {
+        try self.readWhileNumeric();
+        try self.readExponentIfPresent();
         if (self.peek()) |val| {
             if (val == 'j') return self.readImaginary(start, loc);
         }
@@ -420,6 +470,26 @@ pub const Lexer = struct {
         const j = try self.take();
         std.debug.assert(j == 'j');
         return Token{ .imaginary = .{ .value = self.buffer[start..self.index], .loc = loc } };
+    }
+
+    fn isStringPrefix(byte: u8) bool {
+        return switch (byte) {
+            'r', 'R', 'u', 'U', 'b', 'B', 'f', 'F' => true,
+            else => false,
+        };
+    }
+
+    fn readStringAfterPrefix(self: *Self, quote: u8) Error!Token {
+        _ = try self.take();
+        if (quote == '"') {
+            const docstringSentinel = "\"\"\"";
+            if (self.matchExact(docstringSentinel)) return self.nextDocstring(docstringSentinel);
+            return self.nextString('"');
+        } else {
+            const docstringSentinel = "'''";
+            if (self.matchExact(docstringSentinel)) return self.nextDocstring(docstringSentinel);
+            return self.nextString('\'');
+        }
     }
 
     pub fn next(self: *Self) Error!Token {
@@ -440,7 +510,21 @@ pub const Lexer = struct {
             // brackets and operators
             '(' => return Token{ .lparen = self.bare() },
             ')' => return Token{ .rparen = self.bare() },
-            '.' => return Token{ .dot = self.bare() },
+            '.' => {
+                if (self.peek()) |second| {
+                    if (second == '.' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] == '.') {
+                        _ = try self.take();
+                        _ = try self.take();
+                        return Token{ .ellipsis = self.bare() };
+                    }
+                }
+                if (self.peek()) |val| {
+                    if (ascii.isDigit(val)) {
+                        return self.readFloatAfterConsumedDot(self.index - 1, self.location());
+                    }
+                }
+                return Token{ .dot = self.bare() };
+            },
             ':' => {
                 if (self.peek()) |val| {
                     if (val == '=') {
@@ -461,12 +545,30 @@ pub const Lexer = struct {
                 }
                 return Token{ .plus = self.bare() };
             },
-            '-' => return Token{ .minus = self.bare() },
+            '-' => {
+                if (self.peek()) |val| {
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .minus_assign = self.bare() };
+                    }
+                }
+                return Token{ .minus = self.bare() };
+            },
             '*' => {
                 if (self.peek()) |val| {
                     if (val == '*') {
                         _ = self.take() catch unreachable;
+                        if (self.peek()) |third| {
+                            if (third == '=') {
+                                _ = self.take() catch unreachable;
+                                return Token{ .double_asterisk_assign = self.bare() };
+                            }
+                        }
                         return Token{ .double_asterisk = self.bare() };
+                    }
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .asterisk_assign = self.bare() };
                     }
                 }
                 return Token{ .asterisk = self.bare() };
@@ -475,12 +577,30 @@ pub const Lexer = struct {
                 if (self.peek()) |val| {
                     if (val == '/') {
                         _ = self.take() catch unreachable;
+                        if (self.peek()) |third| {
+                            if (third == '=') {
+                                _ = self.take() catch unreachable;
+                                return Token{ .double_solidus_assign = self.bare() };
+                            }
+                        }
                         return Token{ .double_solidus = self.bare() };
+                    }
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .solidus_assign = self.bare() };
                     }
                 }
                 return Token{ .solidus = self.bare() };
             },
-            '%' => return Token{ .percent = self.bare() },
+            '%' => {
+                if (self.peek()) |val| {
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .percent_assign = self.bare() };
+                    }
+                }
+                return Token{ .percent = self.bare() };
+            },
             '=' => {
                 if (self.peek()) |val| {
                     if (val == '=') {
@@ -549,6 +669,11 @@ pub const Lexer = struct {
                 return self.nextString('\'');
             },
             'A'...'Z', 'a'...'z', '_' => {
+                if (isStringPrefix(byte)) {
+                    if (self.peek()) |quote| {
+                        if (quote == '"' or quote == '\'') return self.readStringAfterPrefix(quote);
+                    }
+                }
                 if (self.readKeyword()) |kw| {
                     return kw;
                 }
@@ -558,6 +683,12 @@ pub const Lexer = struct {
                 return Token{ .name = .{ .value = self.buffer[start..self.index], .loc = loc } };
             },
             '@' => {
+                if (self.peek()) |val| {
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .at_assign = self.bare() };
+                    }
+                }
                 const loc = self.location();
                 const start = self.index - 1;
                 try self.readWhileIdentifier();
@@ -566,10 +697,36 @@ pub const Lexer = struct {
             '0' => {
                 const loc = self.location();
                 const start = self.index - 1;
+                if (self.peek()) |prefix| {
+                    switch (prefix) {
+                        'b', 'B' => {
+                            _ = try self.take();
+                            try self.readWhileBaseDigits(2);
+                            return Token{ .integer = .{ .value = self.buffer[start..self.index], .loc = loc } };
+                        },
+                        'o', 'O' => {
+                            _ = try self.take();
+                            try self.readWhileBaseDigits(8);
+                            return Token{ .integer = .{ .value = self.buffer[start..self.index], .loc = loc } };
+                        },
+                        'x', 'X' => {
+                            _ = try self.take();
+                            try self.readWhileBaseDigits(16);
+                            return Token{ .integer = .{ .value = self.buffer[start..self.index], .loc = loc } };
+                        },
+                        else => {},
+                    }
+                }
                 try self.readWhileZero();
                 if (self.peek()) |val| {
                     if (val == '.') {
                         return self.readFloat(start, loc);
+                    } else if (val == 'e' or val == 'E') {
+                        try self.readExponentIfPresent();
+                        if (self.peek()) |suffix| {
+                            if (suffix == 'j') return self.readImaginary(start, loc);
+                        }
+                        return Token{ .float = .{ .value = self.buffer[start..self.index], .loc = loc } };
                     } else if (val == 'j') {
                         return self.readImaginary(start, loc);
                     } else if (ascii.isDigit(val)) {
@@ -586,6 +743,12 @@ pub const Lexer = struct {
                 if (self.peek()) |val| {
                     if (val == '.') {
                         return self.readFloat(start, loc);
+                    } else if (val == 'e' or val == 'E') {
+                        try self.readExponentIfPresent();
+                        if (self.peek()) |suffix| {
+                            if (suffix == 'j') return self.readImaginary(start, loc);
+                        }
+                        return Token{ .float = .{ .value = self.buffer[start..self.index], .loc = loc } };
                     } else if (val == 'j') {
                         return self.readImaginary(start, loc);
                     }
@@ -725,8 +888,7 @@ test "lex: operators" {
     try testing.expectEqual(Token{ .asterisk = .{ .loc = .{ .line = 1, .col = 5 } } }, lex.next());
     try testing.expectEqual(Token{ .labracket = .{ .loc = .{ .line = 1, .col = 6 } } }, lex.next());
     try testing.expectEqual(Token{ .rabracket = .{ .loc = .{ .line = 1, .col = 7 } } }, lex.next());
-    try testing.expectEqual(Token{ .solidus = .{ .loc = .{ .line = 1, .col = 8 } } }, lex.next());
-    try testing.expectEqual(Token{ .assign = .{ .loc = .{ .line = 1, .col = 9 } } }, lex.next());
+    try testing.expectEqual(Token{ .solidus_assign = .{ .loc = .{ .line = 1, .col = 9 } } }, lex.next());
     try testing.expectEqual(Token{ .bang = .{ .loc = .{ .line = 1, .col = 10 } } }, lex.next());
     try testing.expectEqual(Token{ .lsbracket = .{ .loc = .{ .line = 1, .col = 11 } } }, lex.next());
     try testing.expectEqual(Token{ .rsbracket = .{ .loc = .{ .line = 1, .col = 12 } } }, lex.next());
@@ -743,8 +905,8 @@ test "lex: operators" {
     try testing.expectEqual(Token{ .double_asterisk = .{ .loc = .{ .line = 1, .col = 23 } } }, lex.next());
     try testing.expectEqual(Token{ .double_labracket = .{ .loc = .{ .line = 1, .col = 25 } } }, lex.next());
     try testing.expectEqual(Token{ .double_rabracket = .{ .loc = .{ .line = 1, .col = 27 } } }, lex.next());
-    try testing.expectEqual(Token{ .double_solidus = .{ .loc = .{ .line = 1, .col = 29 } } }, lex.next());
-    try testing.expectEqual(Token{ .equality = .{ .loc = .{ .line = 1, .col = 31 } } }, lex.next());
+    try testing.expectEqual(Token{ .double_solidus_assign = .{ .loc = .{ .line = 1, .col = 30 } } }, lex.next());
+    try testing.expectEqual(Token{ .assign = .{ .loc = .{ .line = 1, .col = 31 } } }, lex.next());
     try testing.expectEqual(Token{ .leq = .{ .loc = .{ .line = 1, .col = 34 } } }, lex.next());
     try testing.expectEqual(Token{ .geq = .{ .loc = .{ .line = 1, .col = 37 } } }, lex.next());
     try testing.expectEqual(Token{ .neq = .{ .loc = .{ .line = 1, .col = 40 } } }, lex.next());
