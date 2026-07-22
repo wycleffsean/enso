@@ -219,20 +219,24 @@ fn Backend(comptime StackValue: type) type {
         fn swap(self: *Self) void {
             _ = self;
         }
-        fn buildTuple(self: *Self) StackValue {
+        fn buildTuple(self: *Self, argc: usize) StackValue {
             _ = self;
+            _ = argc;
             return .{ .static = object.None };
         }
-        fn buildList(self: *Self) StackValue {
+        fn buildList(self: *Self, argc: usize) StackValue {
             _ = self;
+            _ = argc;
             return .{ .static = object.None };
         }
-        fn buildSet(self: *Self) StackValue {
+        fn buildSet(self: *Self, argc: usize) StackValue {
             _ = self;
+            _ = argc;
             return .{ .static = object.None };
         }
-        fn buildMap(self: *Self) StackValue {
+        fn buildMap(self: *Self, argc: usize) StackValue {
             _ = self;
+            _ = argc;
             return .{ .static = object.None };
         }
         fn loadAttr(self: *Self) void {

@@ -937,10 +937,10 @@ pub const Parser = struct {
         }
 
         while (true) {
-            if (self.unwound == null and self.expect(.rcbracket)) break;
             try set.append(self.allocator, item);
             // trailing commas are grammatically allowed
             self.expectAndSkip(.comma) catch break;
+            if (self.expect(.rcbracket)) break;
             item = try self.parseListItem();
         }
         result.* = .{ .set = .{ .set = set } };

@@ -65,6 +65,18 @@ pub fn stackLengthFrom(ir: []const Insn, entry: u32) StackEffectError!StackLengt
                 length -= @intCast(argc);
                 length += 1;
             },
+            .build_list => |argc| {
+                length -= @intCast(argc);
+                length += 1;
+            },
+            .build_set => |argc| {
+                length -= @intCast(argc);
+                length += 1;
+            },
+            .build_map => |argc| {
+                length -= @intCast(argc * 2);
+                length += 1;
+            },
             inline else => |payload, tag| {
                 _ = payload;
                 const effect = comptime opEffect(tag);
@@ -140,9 +152,9 @@ pub const Insn = union(OpCode) {
     load_const: ConstIndex,
     load_name: NameIndex,
     build_tuple: usize,
-    build_list: void,
-    build_set: void,
-    build_map: void,
+    build_list: usize,
+    build_set: usize,
+    build_map: usize,
     load_attr: void,
     compare_op: CompareOperation,
     import_name: void,
@@ -215,9 +227,10 @@ pub const Insn = union(OpCode) {
             .compare_op => .{ .compare_op = try compareOperation(dis) },
             .contains_op => .{ .contains_op = (arg orelse return error.MissingOpcodeArgument) != 0 },
             // TODO...
-            .build_tuple => .{ .build_tuple = {} },
-            .build_list => .{ .build_list = {} },
-            .build_map => .{ .build_map = {} },
+            .build_tuple => .{ .build_tuple = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .build_list => .{ .build_list = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .build_set => .{ .build_set = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .build_map => .{ .build_map = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .list_extend => .{ .list_extend = {} },
             .get_iter => .{ .get_iter = {} },
             .for_iter => .{ .for_iter = .{ .delta = value.int } },
@@ -642,6 +655,48 @@ pub const Module = struct {
             try self.append(.{ .contains_op = false });
         }
 
+        fn generateListDisplay(self: *Builder, list: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            switch (list) {
+                .empty => try self.append(.{ .build_list = 0 }),
+                .list => |items| {
+                    for (items.items) |item| {
+                        if (item.unpack) return Error.InvalidEntryNode;
+                        try self.generateInsns(item.value, insns);
+                    }
+                    try self.append(.{ .build_list = items.items.len });
+                },
+                .comprehension => return Error.InvalidEntryNode,
+            }
+        }
+
+        fn generateSetDisplay(self: *Builder, set: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            switch (set) {
+                .set => |items| {
+                    for (items.items) |item| {
+                        if (item.unpack) return Error.InvalidEntryNode;
+                        try self.generateInsns(item.value, insns);
+                    }
+                    try self.append(.{ .build_set = items.items.len });
+                },
+                .comprehension => return Error.InvalidEntryNode,
+            }
+        }
+
+        fn generateDictionaryDisplay(self: *Builder, dictionary: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            switch (dictionary) {
+                .empty => try self.append(.{ .build_map = 0 }),
+                .dictionary => |items| {
+                    for (items.items) |item| {
+                        const key = item.key orelse return Error.InvalidEntryNode;
+                        try self.generateInsns(key, insns);
+                        try self.generateInsns(item.value, insns);
+                    }
+                    try self.append(.{ .build_map = items.items.len });
+                },
+                .comprehension => return Error.InvalidEntryNode,
+            }
+        }
+
         fn generateIfStatement(self: *Builder, if_stmt: anytype, insns: *std.ArrayList(Insn)) Error!Flow {
             try self.generateInsns(if_stmt.predicate, insns);
             try self.append(.{ .pop_jump_if_false = .{ .delta = 0 } });
@@ -772,11 +827,9 @@ pub const Module = struct {
                     for (items.items) |item| try self.generateInsns(item, insns);
                     try self.append(.{ .build_tuple = items.items.len });
                 },
-                .list => |list| switch (list) {
-                    .empty => try self.appendConst(object.EmptyArray),
-                    // TODO - make exhaustive
-                    else => try self.appendConst(object.EmptyArray),
-                },
+                .list => |list| try self.generateListDisplay(list, insns),
+                .set => |set| try self.generateSetDisplay(set, insns),
+                .dictionary => |dictionary| try self.generateDictionaryDisplay(dictionary, insns),
                 .pass => {}, // surprisingly not a nop
                 .assignment => |assignment| {
                     try self.generateInsns(assignment.rhs, insns);
