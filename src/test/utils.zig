@@ -107,8 +107,20 @@ pub const examples = [_]Example{
         .test_vm = false,
     },
     .{
+        .name = "langref_6_2_1_identifiers",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_2_2_literals",
+        .test_vm = false,
+    },
+    .{
         .name = "langref_6_2_2_1_string_literal_concatenation",
         .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_6_2_3_parenthesized_forms",
         .test_vm = false,
     },
     .{
@@ -167,6 +179,19 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_14_lambdas",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_7_1_expression_statements",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_7_2_assignment_statements",
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_7_4_pass_statement",
         .test_vm = false,
     },
     .{

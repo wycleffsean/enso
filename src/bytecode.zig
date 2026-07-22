@@ -589,6 +589,7 @@ pub const Module = struct {
                 .bool => |b| try self.appendConst(.{ .bool = b }),
                 .float => |float| try self.appendConst(.{ .float = float.value }),
                 .complex => |cmp| try self.appendConst(.{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } }),
+                .tuple => try self.appendConst(object.EmptyTuple),
                 .list => |list| switch (list) {
                     .empty => try self.appendConst(object.EmptyArray),
                     // TODO - make exhaustive
@@ -708,16 +709,16 @@ test "bytecode: example fixtures" {
             // we cheat and rewrite the delta values since we calculate them
             // differently.  Of course this is a hack and will only update the
             // deltas if they appear on the same line which is good enough
-                if (i <= actual.len) {
-                    switch (expected[i]) {
-                        .for_iter => {
-                            if (actual[i] == .for_iter) expected[i].for_iter.delta = actual[i].for_iter.delta;
-                        },
-                        .jump_backward => {
-                            if (actual[i] == .jump_backward) expected[i].jump_backward.delta = actual[i].jump_backward.delta;
-                        },
-                        else => {},
-                    }
+            if (i <= actual.len) {
+                switch (expected[i]) {
+                    .for_iter => {
+                        if (actual[i] == .for_iter) expected[i].for_iter.delta = actual[i].for_iter.delta;
+                    },
+                    .jump_backward => {
+                        if (actual[i] == .jump_backward) expected[i].jump_backward.delta = actual[i].jump_backward.delta;
+                    },
+                    else => {},
+                }
             }
         }
 

@@ -34,6 +34,7 @@ const AstNodeTag = enum {
     bit_and,
     floor_div,
     group,
+    tuple,
     name,
     var_decl,
     parameter,
@@ -193,6 +194,7 @@ pub const AstNode = union(AstNodeTag) {
     bit_and: BinaryOp,
     floor_div: BinaryOp,
     group: struct { value: *const AstNode },
+    tuple: List,
     name: struct { value: []const u8, context: ExpressionContext },
     var_decl: struct { name: []const u8 },
     parameter: Parameter,
@@ -712,6 +714,18 @@ pub const Parser = struct {
             // generator
             const comprehension = try self.parseComprehension(Comprehension, expression);
             result.* = .{ .comprehension = comprehension };
+        } else if (self.expectAndSkipOptional(.comma)) {
+            // tuple
+            // TODO: this is a copy of parseTargetList - refactor/DRY this up
+            var list: List = .empty;
+            try list.append(self.allocator, result);
+            while (true) {
+                if (self.expect(.rparen)) break;
+                const target = try self.parseExpression(.lowest);
+                try list.append(self.allocator, target);
+                self.expectAndSkip(.comma) catch break;
+            }
+            result.* = .{ .tuple = list };
         } else {
             // group
             result.* = .{ .group = .{ .value = expression } };
