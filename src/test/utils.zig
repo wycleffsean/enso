@@ -211,6 +211,10 @@ pub const examples = [_]Example{
         .test_vm = false,
     },
     .{
+        .name = "langref_6_16_evaluation_order",
+        .test_vm = false,
+    },
+    .{
         .name = "langref_6_17_operator_precedence",
         .test_vm = false,
     },
@@ -225,6 +229,10 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_7_4_pass_statement",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_7_6_return_statement",
         .test_vm = false,
     },
     .{
@@ -549,6 +557,7 @@ fn truthy(value: object.Object) bool {
         .array => |array| array.len != 0,
         .tuple => |tuple| tuple.len != 0,
         .code => true,
+        .codeobject => true,
     };
 }
 
@@ -565,6 +574,7 @@ fn objectEql(lhs: object.Object, rhs: object.Object) bool {
         .array => false,
         .tuple => false,
         .code => false,
+        .codeobject => |value| value == rhs.codeobject,
     };
 }
 

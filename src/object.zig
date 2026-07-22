@@ -19,6 +19,7 @@ pub const Object = union(enum) {
     symbol: Symbol, // symbols are just interned strings
     // callabe: Callable, // TODO: these are real objects that _have_ a callable
     code: Code,
+    codeobject: u32,
 
     const Self = @This();
 
@@ -34,6 +35,7 @@ pub const Object = union(enum) {
             .array => |arr| try writer.print("{any}", .{arr}),
             .tuple => |t| try writer.print("{any}", .{t}),
             .code => try writer.print("<code object>", .{}),
+            .codeobject => |index| try writer.print("<enso code object {d}>", .{index}),
         }
     }
 };
@@ -77,6 +79,7 @@ pub inline fn dStr(comptime VMType: type, vm: *VMType, receiver: *const Object) 
         .array => std.fmt.bufPrint(buffer[0..], "<<array>>", .{}) catch unreachable,
         .tuple => std.fmt.bufPrint(buffer[0..], "<<tuple>>", .{}) catch unreachable,
         .code => std.fmt.bufPrint(buffer[0..], "<<code>>", .{}) catch unreachable,
+        .codeobject => std.fmt.bufPrint(buffer[0..], "<<codeobject>>", .{}) catch unreachable,
     };
 }
 

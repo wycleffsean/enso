@@ -443,6 +443,7 @@ pub const Module = struct {
                 .array => false,
                 .tuple => false,
                 .code => false,
+                .codeobject => |l| rhs == .codeobject and l == rhs.codeobject,
             };
         }
 
@@ -835,11 +836,9 @@ pub const Module = struct {
                 .fn_decl => |fn_decl| {
                     // handle the suite in a different co
                     const co_idx = try self.enqueueSeam(ast_node);
-                    _ = co_idx; // TODO: this becomes a constant can reference
-                    // TODO: we add the future code object (its deterministic index) into the current code objects constants table
 
                     const fn_name = try self.mod.intern_pool.put(fn_decl.name);
-                    try self.appendFreshConst(.{ .int = 2 }); // hardcoded for our test
+                    try self.appendConst(.{ .codeobject = co_idx.index });
                     try self.append(.{ .make_function = {} });
                     try self.storeName(fn_name);
                 },
@@ -1097,6 +1096,7 @@ test "bytecode: codeobject seams for function definitions" {
     };
 
     try testing.expectEqualSlices(Insn, expected_main[0..], main_co.getInstructions());
+    try testing.expectEqual(object.Object{ .codeobject = 1 }, main_co.consts()[2]);
 
     // TODO: this is actually quite wrong
     // - real python does load_fast instead of load_name
