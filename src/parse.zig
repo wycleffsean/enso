@@ -1054,7 +1054,10 @@ pub const Parser = struct {
         // technically we should not allow parsing arbitrary
         // expressions if we want to align with the python grammar
         try self.expectAndSkip(.await_kw);
-        return self.parseExpression(.lowest);
+        const expression = try self.parseExpression(.lowest);
+        const node = try self.allocator.create(AstNode);
+        node.* = .{ .await = expression };
+        return node;
     }
 
     // a "suite" is the block following the colon in compound statements

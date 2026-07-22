@@ -151,12 +151,10 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_2_8_generator_expressions",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
         .name = "langref_6_2_9_yield_expressions",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -166,7 +164,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_4_await_expression",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -425,7 +422,9 @@ fn foldConstUnary(
         .unary_invert => evalUnaryInvert(value),
         .unary_not => object.Object{ .bool = !truthy(value) },
         .call_intrinsic_1 => |kind| switch (kind) {
+            .stopiteration_error => null,
             .unary_positive => evalUnaryPositive(value),
+            .list_to_tuple => null,
         },
         else => return false,
     } orelse return false;
@@ -468,7 +467,9 @@ fn foldUnary(
         .unary_invert => evalUnaryInvert(value),
         .unary_not => object.Object{ .bool = !truthy(value) },
         .call_intrinsic_1 => |kind| switch (kind) {
+            .stopiteration_error => null,
             .unary_positive => evalUnaryPositive(value),
+            .list_to_tuple => null,
         },
         else => return false,
     } orelse return false;

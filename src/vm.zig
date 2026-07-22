@@ -304,8 +304,9 @@ fn Backend(comptime StackValue: type) type {
             _ = right;
             return .{ .static = object.None };
         }
-        fn send(self: *Self) void {
+        fn send(self: *Self, jump: bytecode.RelativeJump) void {
             _ = self;
+            _ = jump;
         }
         fn loadFast(self: *Self, var_num: object.Object) StackValue {
             _ = var_num;
@@ -317,8 +318,9 @@ fn Backend(comptime StackValue: type) type {
             _ = self;
             _ = value;
         }
-        fn getAwaitable(self: *Self, value: StackValue) StackValue {
+        fn getAwaitable(self: *Self, oparg: usize, value: StackValue) StackValue {
             _ = self;
+            _ = oparg;
             _ = value;
             return .{ .static = object.None };
         }
@@ -354,8 +356,9 @@ fn Backend(comptime StackValue: type) type {
             _ = left;
             _ = right;
         }
-        fn yieldValue(self: *Self, value: StackValue) void {
+        fn yieldValue(self: *Self, oparg: usize, value: StackValue) void {
             _ = self;
+            _ = oparg;
             _ = value;
         }
         fn buildConstKeyMap(self: *Self, argc: usize) StackValue {

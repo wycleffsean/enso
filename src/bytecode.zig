@@ -130,7 +130,9 @@ pub const CompareOperation = enum(u8) {
 };
 
 pub const CallIntrinsic1Kind = enum(u8) {
+    stopiteration_error = 3,
     unary_positive = 5,
+    list_to_tuple = 6,
 };
 
 pub const Insn = union(OpCode) {
@@ -172,10 +174,10 @@ pub const Insn = union(OpCode) {
     copy: void,
     return_const: void,
     binary_op: BinaryOperation,
-    send: void,
+    send: RelativeJump,
     load_fast: object.Object,
     store_fast: object.Object,
-    get_awaitable: void,
+    get_awaitable: usize,
     make_function: void,
     jump_backward_no_interrupt: RelativeJump,
     jump_backward: RelativeJump,
@@ -183,7 +185,7 @@ pub const Insn = union(OpCode) {
     list_append: usize,
     set_add: usize,
     map_add: usize,
-    yield_value: void,
+    yield_value: usize,
     @"resume": usize,
     build_const_key_map: usize,
     list_extend: usize,
@@ -239,6 +241,8 @@ pub const Insn = union(OpCode) {
             .build_set => .{ .build_set = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .build_map => .{ .build_map = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .get_iter => .{ .get_iter = {} },
+            .get_yield_from_iter => .{ .get_yield_from_iter = {} },
+            .get_awaitable => .{ .get_awaitable = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .for_iter => .{ .for_iter = .{ .delta = value.int } },
             .pop_top => .{ .pop_top = {} },
             .jump_backward => .{ .jump_backward = .{ .delta = value.int } },
@@ -259,6 +263,11 @@ pub const Insn = union(OpCode) {
             .list_extend => .{ .list_extend = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .set_update => .{ .set_update = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .dict_update => .{ .dict_update = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .send => .{ .send = .{ .delta = value.int } },
+            .yield_value => .{ .yield_value = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .cleanup_throw => .{ .cleanup_throw = {} },
+            .end_send => .{ .end_send = {} },
+            .return_generator => .{ .return_generator = {} },
             .reraise => .{ .reraise = @intCast(arg orelse return error.MissingOpcodeArgument) },
             else => {
                 comptime {
@@ -595,9 +604,15 @@ pub const Module = struct {
                     });
                     break :blk try self.generateStatements(fn_decl.suite.items, insns);
                 },
+                .comprehension => |comprehension| blk: {
+                    try self.mod.codeobject_store.append(self.mod.allocator, .{
+                        .module = self.mod,
+                    });
+                    try self.generateGeneratorCodeObject(comprehension, insns);
+                    break :blk Flow.terminates;
+                },
                 // .lambda,
                 // .class,
-                // .comprehension,
                 // => {},
                 else => {
                     // we're trying to process a codeobject from an invalid seam in the AST
@@ -676,6 +691,7 @@ pub const Module = struct {
             return switch (ast_node.*) {
                 .assignment => false,
                 .augmented_assignment => false,
+                .yield => false,
                 else => true,
             };
         }
@@ -928,6 +944,126 @@ pub const Module = struct {
             try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
         }
 
+        fn generateGeneratorExpression(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            if (comprehension.for_expressions.items.len == 0) return Error.InvalidEntryNode;
+            const seam = try self.allocator.create(AstNode);
+            seam.* = .{ .comprehension = comprehension };
+            const co_idx = try self.enqueueSeam(seam);
+            try self.appendConst(.{ .codeobject = co_idx.index });
+            try self.append(.{ .make_function = {} });
+
+            const first_for = comprehension.for_expressions.items[0];
+            try self.generateInsns(first_for.iterator, insns);
+            try self.append(.{ .get_iter = {} });
+            try self.append(.{ .call = 0 });
+        }
+
+        fn generateYieldExpression(self: *Builder, yield: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            switch (yield) {
+                .expression => |expression| {
+                    try self.generateInsns(expression, insns);
+                    try self.append(.{ .get_yield_from_iter = {} });
+                    try self.appendConst(object.None);
+                    const send_index = insns.items.len;
+                    try self.append(.{ .send = .{ .delta = 3 } });
+                    try self.append(.{ .yield_value = 2 });
+                    try self.append(.{ .@"resume" = 2 });
+                    try self.append(.{ .jump_backward_no_interrupt = .{ .delta = self.backwardJumpDelta(insns.items.len, send_index) } });
+                    try self.append(.{ .end_send = {} });
+                    try self.append(.{ .pop_top = {} });
+                },
+                .list => |items| {
+                    if (items.items.len == 1 and !items.items[0].unpack) {
+                        try self.generateInsns(items.items[0].value, insns);
+                    } else {
+                        var built = false;
+                        var pending: usize = 0;
+                        for (items.items) |item| {
+                            if (item.unpack) {
+                                if (!built) {
+                                    try self.append(.{ .build_list = pending });
+                                    built = true;
+                                }
+                                try self.generateInsns(item.value, insns);
+                                try self.append(.{ .list_extend = 1 });
+                            } else if (built) {
+                                try self.generateInsns(item.value, insns);
+                                try self.append(.{ .list_append = 1 });
+                            } else {
+                                try self.generateInsns(item.value, insns);
+                                pending += 1;
+                            }
+                        }
+                        if (!built) try self.append(.{ .build_list = pending });
+                        try self.append(.{ .call_intrinsic_1 = .list_to_tuple });
+                    }
+                    try self.append(.{ .yield_value = 1 });
+                    try self.append(.{ .@"resume" = 1 });
+                    try self.append(.{ .pop_top = {} });
+                },
+            }
+        }
+
+        fn generateAwaitExpression(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
+            try self.generateInsns(ast_node, insns);
+            try self.append(.{ .get_awaitable = 0 });
+            try self.appendConst(object.None);
+            const send_index = insns.items.len;
+            try self.append(.{ .send = .{ .delta = 3 } });
+            try self.append(.{ .yield_value = 2 });
+            try self.append(.{ .@"resume" = 3 });
+            try self.append(.{ .jump_backward_no_interrupt = .{ .delta = self.backwardJumpDelta(insns.items.len, send_index) } });
+            try self.append(.{ .end_send = {} });
+        }
+
+        fn generateGeneratorCodeObject(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            if (comprehension.for_expressions.items.len == 0) return Error.InvalidEntryNode;
+            try self.append(.{ .return_generator = {} });
+            try self.append(.{ .pop_top = {} });
+
+            const dot_zero = try self.intern_pool.put(".0");
+            try self.current_fast_symbols.append(self.allocator, dot_zero);
+            try self.loadFast(dot_zero);
+
+            const first_for = comprehension.for_expressions.items[0];
+            if (first_for.target_list.items.len != 1) return Error.InvalidEntryNode;
+            const first_target = first_for.target_list.items[0];
+            if (first_target.* != .name) return Error.InvalidEntryNode;
+            const first_sym = try self.intern_pool.put(first_target.name.value);
+
+            try self.append(.{ .for_iter = .{ .delta = 0 } });
+            const first_for_iter = insns.items.len - 1;
+            try self.current_fast_symbols.append(self.allocator, first_sym);
+            try self.storeFast(first_sym);
+
+            if (comprehension.for_expressions.items.len != 2) return Error.InvalidEntryNode;
+            const second_for = comprehension.for_expressions.items[1];
+            if (second_for.target_list.items.len != 1) return Error.InvalidEntryNode;
+            const second_target = second_for.target_list.items[0];
+            if (second_target.* != .name) return Error.InvalidEntryNode;
+            const second_sym = try self.intern_pool.put(second_target.name.value);
+
+            try self.generateInsns(second_for.iterator, insns);
+            try self.append(.{ .get_iter = {} });
+            try self.append(.{ .for_iter = .{ .delta = 0 } });
+            const second_for_iter = insns.items.len - 1;
+            try self.current_fast_symbols.append(self.allocator, second_sym);
+            try self.storeFast(second_sym);
+            try self.generateInsns(comprehension.expression, insns);
+            try self.append(.{ .yield_value = 1 });
+            try self.append(.{ .@"resume" = 1 });
+            try self.append(.{ .pop_top = {} });
+            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, second_for_iter) } });
+            try self.append(.{ .end_for = {} });
+            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, first_for_iter) } });
+            try self.append(.{ .end_for = {} });
+            try self.append(.{ .return_const = {} });
+            insns.items[first_for_iter].for_iter.delta = @intCast(insns.items.len - first_for_iter);
+            insns.items[second_for_iter].for_iter.delta = @intCast((second_for_iter + 1 + 0) - second_for_iter);
+            try self.append(.{ .call_intrinsic_1 = .stopiteration_error });
+            try self.append(.{ .reraise = 1 });
+        }
+
         fn generateIfStatement(self: *Builder, if_stmt: anytype, insns: *std.ArrayList(Insn)) Error!Flow {
             try self.generateInsns(if_stmt.predicate, insns);
             try self.append(.{ .pop_jump_if_false = .{ .delta = 0 } });
@@ -1061,6 +1197,7 @@ pub const Module = struct {
                 .list => |list| try self.generateListDisplay(list, insns),
                 .set => |set| try self.generateSetDisplay(set, insns),
                 .dictionary => |dictionary| try self.generateDictionaryDisplay(dictionary, insns),
+                .comprehension => |comprehension| try self.generateGeneratorExpression(comprehension, insns),
                 .pass => {}, // surprisingly not a nop
                 .assignment => |assignment| {
                     try self.generateInsns(assignment.rhs, insns);
@@ -1083,6 +1220,8 @@ pub const Module = struct {
                     try self.append(.{ .copy = {} });
                     try self.generateInsns(named_expression.lhs, insns);
                 },
+                .yield => |yield| try self.generateYieldExpression(yield, insns),
+                .await => |await| try self.generateAwaitExpression(await, insns),
                 .if_stmt => |if_stmt| {
                     _ = try self.generateIfStatement(if_stmt, insns);
                 },
