@@ -61,6 +61,7 @@ pub const Example = struct {
     test_lex_comptime: bool = false,
     test_parse: bool = true,
     test_bytecode: bool = true,
+    normalize_bytecode: bool = true,
     test_vm: bool = true,
     test_vm_comptime: bool = false,
 
@@ -93,7 +94,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_hello_world",
-        .test_bytecode = false,
     },
     .{
         .name = "examples_expressions",
@@ -104,7 +104,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_builtin_functions",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -139,7 +138,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_3_4_calls",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -158,7 +156,6 @@ pub const examples = [_]Example{
         .name = "langref_6_11_boolean_operations",
         // the python compiler folds over these operations when using constants
         // so at this time we won't get the same results
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -188,6 +185,326 @@ pub const examples = [_]Example{
     //     .test_vm = false,
     // },
 };
+
+pub fn optimizeBytecodeForPythonFixture(allocator: std.mem.Allocator, co: bytecode.CodeObject) ![]bytecode.Insn {
+    var out: std.ArrayList(bytecode.Insn) = .empty;
+    errdefer out.deinit(allocator);
+
+    var constants: std.ArrayList(object.Object) = .empty;
+    defer constants.deinit(allocator);
+
+    const ir = co.getInstructions();
+    var index: usize = 0;
+    while (index < ir.len) {
+        if (try foldBinary(allocator, co, ir[index..], &constants, &out)) {
+            index += 3;
+            continue;
+        }
+        if (try foldUnary(allocator, co, ir[index..], &constants, &out)) {
+            index += 2;
+            continue;
+        }
+
+        switch (ir[index]) {
+            .load_const => |consti| {
+                const remapped = try internOptimizedConst(allocator, &constants, co.consts()[consti.index]);
+                try out.append(allocator, .{ .load_const = remapped });
+            },
+            else => try out.append(allocator, ir[index]),
+        }
+        index += 1;
+    }
+
+    var changed = true;
+    while (changed) {
+        changed = false;
+        var pass: std.ArrayList(bytecode.Insn) = .empty;
+        errdefer pass.deinit(allocator);
+        try optimizePass(allocator, &constants, out.items, &pass, &changed);
+        out.clearRetainingCapacity();
+        try out.appendSlice(allocator, pass.items);
+        pass.deinit(allocator);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn optimizePass(
+    allocator: std.mem.Allocator,
+    constants: *std.ArrayList(object.Object),
+    ir: []const bytecode.Insn,
+    out: *std.ArrayList(bytecode.Insn),
+    changed: *bool,
+) !void {
+    var index: usize = 0;
+    while (index < ir.len) {
+        if (try foldConstBoolOp(allocator, constants, ir[index..], out)) {
+            changed.* = true;
+            index += 5;
+            continue;
+        }
+        if (try foldConstBinary(allocator, constants, ir[index..], out)) {
+            changed.* = true;
+            index += 3;
+            continue;
+        }
+        if (try foldConstUnary(allocator, constants, ir[index..], out)) {
+            changed.* = true;
+            index += 2;
+            continue;
+        }
+        try out.append(allocator, ir[index]);
+        index += 1;
+    }
+}
+
+fn foldConstBoolOp(
+    allocator: std.mem.Allocator,
+    constants: *std.ArrayList(object.Object),
+    ir: []const bytecode.Insn,
+    out: *std.ArrayList(bytecode.Insn),
+) !bool {
+    if (ir.len < 5) return false;
+    if (ir[0] != .load_const or ir[1] != .copy or ir[3] != .pop_top or ir[4] != .load_const) return false;
+
+    const lhs = constants.items[ir[0].load_const.index];
+    const rhs = constants.items[ir[4].load_const.index];
+    const folded = switch (ir[2]) {
+        .pop_jump_if_false => if (truthy(lhs)) rhs else lhs,
+        .pop_jump_if_true => if (truthy(lhs)) lhs else rhs,
+        else => return false,
+    };
+    const remapped = try internOptimizedConst(allocator, constants, folded);
+    try out.append(allocator, .{ .load_const = remapped });
+    return true;
+}
+
+fn foldConstBinary(
+    allocator: std.mem.Allocator,
+    constants: *std.ArrayList(object.Object),
+    ir: []const bytecode.Insn,
+    out: *std.ArrayList(bytecode.Insn),
+) !bool {
+    if (ir.len < 3) return false;
+    if (ir[0] != .load_const or ir[1] != .load_const or ir[2] != .binary_op) return false;
+
+    const lhs = constants.items[ir[0].load_const.index];
+    const rhs = constants.items[ir[1].load_const.index];
+    const folded = evalBinary(lhs, rhs, ir[2].binary_op) orelse return false;
+    const remapped = try internOptimizedConst(allocator, constants, folded);
+    try out.append(allocator, .{ .load_const = remapped });
+    return true;
+}
+
+fn foldConstUnary(
+    allocator: std.mem.Allocator,
+    constants: *std.ArrayList(object.Object),
+    ir: []const bytecode.Insn,
+    out: *std.ArrayList(bytecode.Insn),
+) !bool {
+    if (ir.len < 2 or ir[0] != .load_const) return false;
+
+    const value = constants.items[ir[0].load_const.index];
+    const folded = switch (ir[1]) {
+        .unary_negative => evalUnaryNegative(value),
+        .unary_invert => evalUnaryInvert(value),
+        .unary_not => object.Object{ .bool = !truthy(value) },
+        .call_intrinsic_1 => |kind| switch (kind) {
+            .unary_positive => evalUnaryPositive(value),
+        },
+        else => return false,
+    } orelse return false;
+
+    const remapped = try internOptimizedConst(allocator, constants, folded);
+    try out.append(allocator, .{ .load_const = remapped });
+    return true;
+}
+
+fn foldBinary(
+    allocator: std.mem.Allocator,
+    co: bytecode.CodeObject,
+    ir: []const bytecode.Insn,
+    constants: *std.ArrayList(object.Object),
+    out: *std.ArrayList(bytecode.Insn),
+) !bool {
+    if (ir.len < 3) return false;
+    if (ir[0] != .load_const or ir[1] != .load_const or ir[2] != .binary_op) return false;
+
+    const lhs = co.consts()[ir[0].load_const.index];
+    const rhs = co.consts()[ir[1].load_const.index];
+    const folded = evalBinary(lhs, rhs, ir[2].binary_op) orelse return false;
+    const remapped = try internOptimizedConst(allocator, constants, folded);
+    try out.append(allocator, .{ .load_const = remapped });
+    return true;
+}
+
+fn foldUnary(
+    allocator: std.mem.Allocator,
+    co: bytecode.CodeObject,
+    ir: []const bytecode.Insn,
+    constants: *std.ArrayList(object.Object),
+    out: *std.ArrayList(bytecode.Insn),
+) !bool {
+    if (ir.len < 2 or ir[0] != .load_const) return false;
+
+    const value = co.consts()[ir[0].load_const.index];
+    const folded = switch (ir[1]) {
+        .unary_negative => evalUnaryNegative(value),
+        .unary_invert => evalUnaryInvert(value),
+        .unary_not => object.Object{ .bool = !truthy(value) },
+        .call_intrinsic_1 => |kind| switch (kind) {
+            .unary_positive => evalUnaryPositive(value),
+        },
+        else => return false,
+    } orelse return false;
+
+    const remapped = try internOptimizedConst(allocator, constants, folded);
+    try out.append(allocator, .{ .load_const = remapped });
+    return true;
+}
+
+fn internOptimizedConst(
+    allocator: std.mem.Allocator,
+    constants: *std.ArrayList(object.Object),
+    value: object.Object,
+) !bytecode.ConstIndex {
+    for (constants.items, 0..) |existing, index| {
+        if (objectEql(existing, value)) return .{ .index = @intCast(index) };
+    }
+    const index = constants.items.len;
+    try constants.append(allocator, value);
+    return .{ .index = @intCast(index) };
+}
+
+fn evalBinary(lhs: object.Object, rhs: object.Object, op: bytecode.BinaryOperation) ?object.Object {
+    switch (lhs) {
+        .int => |l| switch (rhs) {
+            .int => |r| return evalIntBinary(l, r, op),
+            else => {},
+        },
+        else => {},
+    }
+    return null;
+}
+
+fn evalIntBinary(lhs: object.ObjectInt, rhs: object.ObjectInt, op: bytecode.BinaryOperation) ?object.Object {
+    return switch (op) {
+        .add => .{ .int = lhs + rhs },
+        .sub => .{ .int = lhs - rhs },
+        .mult => .{ .int = lhs * rhs },
+        .div => if (rhs == 0) null else .{ .float = @as(object.ObjectFloat, @floatFromInt(lhs)) / @as(object.ObjectFloat, @floatFromInt(rhs)) },
+        .floor_div => if (rhs == 0) null else .{ .int = @divFloor(lhs, rhs) },
+        .mod => if (rhs == 0) null else .{ .int = @mod(lhs, rhs) },
+        .pow => evalIntPow(lhs, rhs),
+        .lshift => if (rhs < 0 or rhs >= 63) null else .{ .int = lhs << @intCast(rhs) },
+        .rshift => if (rhs < 0 or rhs >= 63) null else .{ .int = lhs >> @intCast(rhs) },
+        .bit_or => .{ .int = lhs | rhs },
+        .bit_xor => .{ .int = lhs ^ rhs },
+        .bit_and => .{ .int = lhs & rhs },
+        .mat_mult => null,
+    };
+}
+
+fn evalIntPow(lhs: object.ObjectInt, rhs: object.ObjectInt) ?object.Object {
+    if (rhs < 0) return null;
+    var result: object.ObjectInt = 1;
+    var remaining: object.ObjectInt = rhs;
+    while (remaining > 0) : (remaining -= 1) result *= lhs;
+    return .{ .int = result };
+}
+
+fn evalUnaryNegative(value: object.Object) ?object.Object {
+    return switch (value) {
+        .bool => |b| .{ .int = -@as(object.ObjectInt, @intFromBool(b)) },
+        .int => |int| .{ .int = -int },
+        .float => |float| .{ .float = -float },
+        else => null,
+    };
+}
+
+fn evalUnaryPositive(value: object.Object) ?object.Object {
+    return switch (value) {
+        .bool => |b| .{ .int = @intFromBool(b) },
+        .int, .float => value,
+        else => null,
+    };
+}
+
+fn evalUnaryInvert(value: object.Object) ?object.Object {
+    return switch (value) {
+        .bool => |b| .{ .int = ~@as(object.ObjectInt, @intFromBool(b)) },
+        .int => |int| .{ .int = ~int },
+        else => null,
+    };
+}
+
+fn truthy(value: object.Object) bool {
+    return switch (value) {
+        .none => false,
+        .bool => |b| b,
+        .int => |int| int != 0,
+        .float => |float| float != 0,
+        .complex => |complex| complex.re != 0 or complex.im != 0,
+        .string => |string| string.string.len != 0,
+        .symbol => true,
+        .array => |array| array.len != 0,
+        .tuple => |tuple| tuple.len != 0,
+        .code => true,
+    };
+}
+
+fn objectEql(lhs: object.Object, rhs: object.Object) bool {
+    if (std.meta.activeTag(lhs) != std.meta.activeTag(rhs)) return false;
+    return switch (lhs) {
+        .none => true,
+        .bool => |value| value == rhs.bool,
+        .int => |value| value == rhs.int,
+        .float => |value| value == rhs.float,
+        .complex => |value| value.re == rhs.complex.re and value.im == rhs.complex.im,
+        .string => |value| std.mem.eql(u8, value.string, rhs.string.string),
+        .symbol => |value| value == rhs.symbol,
+        .array => false,
+        .tuple => false,
+        .code => false,
+    };
+}
+
+test "test utils: optimize bytecode constants for python fixture comparison" {
+    {
+        var harness = try CompilerHarness.create(std.testing.allocator);
+        defer harness.deinit();
+        const co = try harness.buildCodeObjects("1 + 2");
+        const optimized = try optimizeBytecodeForPythonFixture(std.testing.allocator, co);
+        defer std.testing.allocator.free(optimized);
+
+        const expected = [_]bytecode.Insn{
+            .{ .@"resume" = 0 },
+            .{ .load_const = .{ .index = 0 } },
+            .{ .pop_top = {} },
+            .{ .return_const = {} },
+        };
+        try std.testing.expectEqualSlices(bytecode.Insn, expected[0..], optimized);
+    }
+    {
+        var harness = try CompilerHarness.create(std.testing.allocator);
+        defer harness.deinit();
+        const co = try harness.buildCodeObjects("negative = -1\nlogical_not = not 0\nbitwise_invert = ~16");
+        const optimized = try optimizeBytecodeForPythonFixture(std.testing.allocator, co);
+        defer std.testing.allocator.free(optimized);
+
+        const expected = [_]bytecode.Insn{
+            .{ .@"resume" = 0 },
+            .{ .load_const = .{ .index = 0 } },
+            .{ .store_name = .{ .index = 0 } },
+            .{ .load_const = .{ .index = 1 } },
+            .{ .store_name = .{ .index = 1 } },
+            .{ .load_const = .{ .index = 2 } },
+            .{ .store_name = .{ .index = 2 } },
+            .{ .return_const = {} },
+        };
+        try std.testing.expectEqualSlices(bytecode.Insn, expected[0..], optimized);
+    }
+}
 
 test "lexing examples" {
     inline for (examples) |example| {

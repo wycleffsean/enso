@@ -689,6 +689,11 @@ test "bytecode: example fixtures" {
         defer harness.deinit();
         const co = try harness.buildCodeObjects(example.source());
         const ir = co.getInstructions();
+        const actual = if (example.normalize_bytecode)
+            try test_utils.optimizeBytecodeForPythonFixture(testing.allocator, co)
+        else
+            ir;
+        defer if (example.normalize_bytecode) testing.allocator.free(actual);
 
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -703,20 +708,20 @@ test "bytecode: example fixtures" {
             // we cheat and rewrite the delta values since we calculate them
             // differently.  Of course this is a hack and will only update the
             // deltas if they appear on the same line which is good enough
-            if (i <= ir.len) {
-                switch (expected[i]) {
-                    .for_iter => {
-                        if (ir[i] == .for_iter) expected[i].for_iter.delta = ir[i].for_iter.delta;
-                    },
-                    .jump_backward => {
-                        if (ir[i] == .jump_backward) expected[i].jump_backward.delta = ir[i].jump_backward.delta;
-                    },
-                    else => {},
-                }
+                if (i <= actual.len) {
+                    switch (expected[i]) {
+                        .for_iter => {
+                            if (actual[i] == .for_iter) expected[i].for_iter.delta = actual[i].for_iter.delta;
+                        },
+                        .jump_backward => {
+                            if (actual[i] == .jump_backward) expected[i].jump_backward.delta = actual[i].jump_backward.delta;
+                        },
+                        else => {},
+                    }
             }
         }
 
-        testing.expectEqualSlices(Insn, expected[0..], ir) catch |err| {
+        testing.expectEqualSlices(Insn, expected[0..], actual) catch |err| {
             std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
             return err;
         };
