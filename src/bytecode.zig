@@ -77,6 +77,10 @@ pub fn stackLengthFrom(ir: []const Insn, entry: u32) StackEffectError!StackLengt
                 length -= @intCast(argc * 2);
                 length += 1;
             },
+            .build_const_key_map => |argc| {
+                length -= @intCast(argc + 1);
+                length += 1;
+            },
             inline else => |payload, tag| {
                 _ = payload;
                 const effect = comptime opEffect(tag);
@@ -148,7 +152,7 @@ pub const Insn = union(OpCode) {
     setup_annotations: void,
     store_name: NameIndex,
     for_iter: RelativeJump,
-    swap: void,
+    swap: usize,
     load_const: ConstIndex,
     load_name: NameIndex,
     build_tuple: usize,
@@ -164,7 +168,7 @@ pub const Insn = union(OpCode) {
     load_global: object.Object,
     is_op: bool,
     contains_op: bool,
-    reraise: void,
+    reraise: usize,
     copy: void,
     return_const: void,
     binary_op: BinaryOperation,
@@ -175,16 +179,16 @@ pub const Insn = union(OpCode) {
     make_function: void,
     jump_backward_no_interrupt: RelativeJump,
     jump_backward: RelativeJump,
-    load_fast_and_clear: void,
-    list_append: void,
-    set_add: void,
-    map_add: void,
+    load_fast_and_clear: object.Object,
+    list_append: usize,
+    set_add: usize,
+    map_add: usize,
     yield_value: void,
     @"resume": usize,
-    build_const_key_map: void,
-    list_extend: void,
-    set_update: void,
-    dict_update: void,
+    build_const_key_map: usize,
+    list_extend: usize,
+    set_update: usize,
+    dict_update: usize,
     call: usize,
     call_intrinsic_1: CallIntrinsic1Kind,
 
@@ -221,6 +225,9 @@ pub const Insn = union(OpCode) {
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
             .copy => .{ .copy = {} },
+            .load_fast => .{ .load_fast = .{ .int = arg orelse return error.MissingOpcodeArgument } },
+            .store_fast => .{ .store_fast = .{ .int = arg orelse return error.MissingOpcodeArgument } },
+            .load_fast_and_clear => .{ .load_fast_and_clear = .{ .int = arg orelse return error.MissingOpcodeArgument } },
             .setup_annotations => .{ .setup_annotations = obj.void },
             .store_name => .{ .store_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
             .binary_op => .{ .binary_op = @enumFromInt(arg.?) },
@@ -231,7 +238,6 @@ pub const Insn = union(OpCode) {
             .build_list => .{ .build_list = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .build_set => .{ .build_set = @intCast(arg orelse return error.MissingOpcodeArgument) },
             .build_map => .{ .build_map = @intCast(arg orelse return error.MissingOpcodeArgument) },
-            .list_extend => .{ .list_extend = {} },
             .get_iter => .{ .get_iter = {} },
             .for_iter => .{ .for_iter = .{ .delta = value.int } },
             .pop_top => .{ .pop_top = {} },
@@ -245,8 +251,15 @@ pub const Insn = union(OpCode) {
             .is_op => .{ .is_op = (arg orelse return error.MissingOpcodeArgument) != 0 },
             .end_for => .{ .end_for = {} },
             .make_function => .{ .make_function = {} },
-            .build_const_key_map => .{ .build_const_key_map = {} },
-            .dict_update => .{ .dict_update = {} },
+            .swap => .{ .swap = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .list_append => .{ .list_append = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .set_add => .{ .set_add = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .map_add => .{ .map_add = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .build_const_key_map => .{ .build_const_key_map = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .list_extend => .{ .list_extend = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .set_update => .{ .set_update = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .dict_update => .{ .dict_update = @intCast(arg orelse return error.MissingOpcodeArgument) },
+            .reraise => .{ .reraise = @intCast(arg orelse return error.MissingOpcodeArgument) },
             else => {
                 comptime {
                     @compileError(comptimePrint("uh-oh - we don't handle this opcode yet! - {s} ({})", .{ @tagName(kind), @intFromEnum(kind) }));
@@ -387,6 +400,8 @@ pub const Module = struct {
         current_const_start: usize = 0,
         current_name_start: usize = 0,
         loop_continue_targets: std.ArrayList(usize) = .empty,
+        current_fast_symbols: std.ArrayList(object.Symbol) = .empty,
+        deferred_fast_cleanups: std.ArrayList(object.Symbol) = .empty,
         mod: *Module,
 
         const Seam = struct {
@@ -407,6 +422,8 @@ pub const Module = struct {
                 .mod = mod,
             };
             defer {
+                builder.deferred_fast_cleanups.deinit(allocator);
+                builder.current_fast_symbols.deinit(allocator);
                 builder.loop_continue_targets.deinit(allocator);
                 builder.current_name_indexes.deinit();
                 builder.queue.deinit(allocator);
@@ -478,6 +495,50 @@ pub const Module = struct {
             try self.append(.{ .store_name = try self.nameIndexForSymbol(sym) });
         }
 
+        fn isFastSymbol(self: *const Builder, sym: object.Symbol) bool {
+            for (self.current_fast_symbols.items) |fast| {
+                if (fast == sym) return true;
+            }
+            return false;
+        }
+
+        fn loadFast(self: *Builder, sym: object.Symbol) !void {
+            _ = sym;
+            try self.append(.{ .load_fast = .{ .int = 0 } });
+        }
+
+        fn storeFast(self: *Builder, sym: object.Symbol) !void {
+            _ = sym;
+            try self.append(.{ .store_fast = .{ .int = 0 } });
+        }
+
+        fn appendTupleConst(self: *Builder, values: []const object.Object) !void {
+            const owned = try self.allocator.alloc(object.Object, values.len);
+            @memcpy(owned, values);
+            try self.appendConst(.{ .tuple = owned });
+        }
+
+        fn constObjectFromAst(self: *Builder, ast_node: *const AstNode) !?object.Object {
+            return switch (ast_node.*) {
+                .integer => |int| .{ .int = int.value },
+                .bool => |b| .{ .bool = b },
+                .float => |float| .{ .float = float.value },
+                .complex => |cmp| .{ .complex = .{ .re = cmp.real, .im = cmp.imaginary } },
+                .string_literal => |string| try object.stringToSymbol(string.value, self.intern_pool),
+                else => null,
+            };
+        }
+
+        fn appendDeferredFastCleanups(self: *Builder) !void {
+            for (self.deferred_fast_cleanups.items) |sym| {
+                try self.append(.{ .swap = 2 });
+                try self.append(.{ .pop_top = {} });
+                try self.append(.{ .swap = 2 });
+                try self.storeFast(sym);
+                try self.append(.{ .reraise = 0 });
+            }
+        }
+
         fn forwardJumpDelta(self: *const Builder, jump_index: usize, target_index: usize) object.ObjectInt {
             _ = self;
             return @as(object.ObjectInt, @intCast(target_index)) - @as(object.ObjectInt, @intCast(jump_index + 1));
@@ -515,6 +576,8 @@ pub const Module = struct {
             self.current_const_start = co_const_idx;
             self.current_name_start = co_name_idx;
             self.current_name_indexes.clearRetainingCapacity();
+            self.current_fast_symbols.clearRetainingCapacity();
+            self.deferred_fast_cleanups.clearRetainingCapacity();
 
             // ENTER
             try self.append(.{ .@"resume" = 0 });
@@ -546,6 +609,7 @@ pub const Module = struct {
             if (flow.falls_through) {
                 try self.append(Insn{ .return_const = {} });
             }
+            try self.appendDeferredFastCleanups();
 
             // update spans before exit
             self.mod.codeobject_store.items(.instructions)[co_idx] = .{
@@ -659,26 +723,60 @@ pub const Module = struct {
             switch (list) {
                 .empty => try self.append(.{ .build_list = 0 }),
                 .list => |items| {
+                    if (try self.generateConstListExtend(items.items, insns)) return;
+
+                    var built = false;
+                    var pending: usize = 0;
                     for (items.items) |item| {
-                        if (item.unpack) return Error.InvalidEntryNode;
-                        try self.generateInsns(item.value, insns);
+                        if (item.unpack) {
+                            if (!built) {
+                                try self.append(.{ .build_list = pending });
+                                built = true;
+                            }
+                            try self.generateInsns(item.value, insns);
+                            try self.append(.{ .list_extend = 1 });
+                        } else {
+                            if (built) {
+                                try self.generateInsns(item.value, insns);
+                                try self.append(.{ .list_append = 1 });
+                            } else {
+                                try self.generateInsns(item.value, insns);
+                                pending += 1;
+                            }
+                        }
                     }
-                    try self.append(.{ .build_list = items.items.len });
+                    if (!built) try self.append(.{ .build_list = pending });
                 },
-                .comprehension => return Error.InvalidEntryNode,
+                .comprehension => |comprehension| try self.generateListComprehension(comprehension, insns),
             }
         }
 
         fn generateSetDisplay(self: *Builder, set: anytype, insns: *std.ArrayList(Insn)) Error!void {
             switch (set) {
                 .set => |items| {
+                    var built = false;
+                    var pending: usize = 0;
                     for (items.items) |item| {
-                        if (item.unpack) return Error.InvalidEntryNode;
-                        try self.generateInsns(item.value, insns);
+                        if (item.unpack) {
+                            if (!built) {
+                                try self.append(.{ .build_set = pending });
+                                built = true;
+                            }
+                            try self.generateInsns(item.value, insns);
+                            try self.append(.{ .set_update = 1 });
+                        } else {
+                            if (built) {
+                                try self.generateInsns(item.value, insns);
+                                try self.append(.{ .set_add = 1 });
+                            } else {
+                                try self.generateInsns(item.value, insns);
+                                pending += 1;
+                            }
+                        }
                     }
-                    try self.append(.{ .build_set = items.items.len });
+                    if (!built) try self.append(.{ .build_set = pending });
                 },
-                .comprehension => return Error.InvalidEntryNode,
+                .comprehension => |comprehension| try self.generateSetComprehension(comprehension, insns),
             }
         }
 
@@ -686,15 +784,148 @@ pub const Module = struct {
             switch (dictionary) {
                 .empty => try self.append(.{ .build_map = 0 }),
                 .dictionary => |items| {
-                    for (items.items) |item| {
-                        const key = item.key orelse return Error.InvalidEntryNode;
-                        try self.generateInsns(key, insns);
-                        try self.generateInsns(item.value, insns);
+                    var built = false;
+                    var index: usize = 0;
+                    while (index < items.items.len) {
+                        if (items.items[index].key == null) {
+                            if (!built) {
+                                try self.append(.{ .build_map = 0 });
+                                built = true;
+                            }
+                            try self.generateInsns(items.items[index].value, insns);
+                            try self.append(.{ .dict_update = 1 });
+                            index += 1;
+                            continue;
+                        }
+
+                        const start = index;
+                        while (index < items.items.len and items.items[index].key != null) : (index += 1) {}
+                        const len = index - start;
+
+                        if (!built and try self.canBuildConstKeyMap(items.items[start..index])) {
+                            var keys = try std.ArrayList(object.Object).initCapacity(self.allocator, len);
+                            defer keys.deinit(self.allocator);
+                            for (items.items[start..index]) |item| {
+                                keys.appendAssumeCapacity((try self.constObjectFromAst(item.key.?)).?);
+                                try self.generateInsns(item.value, insns);
+                            }
+                            try self.appendTupleConst(keys.items);
+                            try self.append(.{ .build_const_key_map = len });
+                            built = true;
+                        } else if (!built) {
+                            for (items.items[start..index]) |item| {
+                                try self.generateInsns(item.key.?, insns);
+                                try self.generateInsns(item.value, insns);
+                            }
+                            try self.append(.{ .build_map = len });
+                            built = true;
+                        } else {
+                            for (items.items[start..index]) |item| {
+                                try self.generateInsns(item.key.?, insns);
+                                try self.generateInsns(item.value, insns);
+                                try self.append(.{ .map_add = 1 });
+                            }
+                        }
                     }
-                    try self.append(.{ .build_map = items.items.len });
+                    if (!built) try self.append(.{ .build_map = 0 });
                 },
-                .comprehension => return Error.InvalidEntryNode,
+                .comprehension => |comprehension| try self.generateDictionaryComprehension(comprehension, insns),
             }
+        }
+
+        fn canBuildConstKeyMap(self: *Builder, items: anytype) !bool {
+            if (items.len < 2) return false;
+            for (items) |item| {
+                const key = try self.constObjectFromAst(item.key.?);
+                if (key == null) return false;
+            }
+            return true;
+        }
+
+        fn generateConstListExtend(self: *Builder, items: anytype, insns: *std.ArrayList(Insn)) Error!bool {
+            if (items.len < 3) return false;
+            var constants = try std.ArrayList(object.Object).initCapacity(self.allocator, items.len);
+            defer constants.deinit(self.allocator);
+            for (items) |item| {
+                if (item.unpack) return false;
+                const value = try self.constObjectFromAst(item.value) orelse return false;
+                constants.appendAssumeCapacity(value);
+            }
+            _ = insns;
+            try self.append(.{ .build_list = 0 });
+            try self.appendTupleConst(constants.items);
+            try self.append(.{ .list_extend = 1 });
+            return true;
+        }
+
+        fn generateComprehensionHeader(self: *Builder, comprehension: anytype, comptime build_tag: OpCode, insns: *std.ArrayList(Insn)) Error!object.Symbol {
+            if (comprehension.for_expressions.items.len != 1) return Error.InvalidEntryNode;
+            const comp_for = comprehension.for_expressions.items[0];
+            if (comp_for.predicate_expression != null) return Error.InvalidEntryNode;
+            if (comp_for.target_list.items.len != 1) return Error.InvalidEntryNode;
+            const target = comp_for.target_list.items[0];
+            if (target.* != .name) return Error.InvalidEntryNode;
+            const sym = try self.intern_pool.put(target.name.value);
+
+            try self.generateInsns(comp_for.iterator, insns);
+            try self.append(.{ .get_iter = {} });
+            try self.append(.{ .load_fast_and_clear = .{ .int = 0 } });
+            try self.append(.{ .swap = 2 });
+            try self.append(switch (build_tag) {
+                .build_list => .{ .build_list = 0 },
+                .build_set => .{ .build_set = 0 },
+                .build_map => .{ .build_map = 0 },
+                else => unreachable,
+            });
+            try self.append(.{ .swap = 2 });
+            return sym;
+        }
+
+        fn beginComprehensionLoop(self: *Builder, sym: object.Symbol, insns: *std.ArrayList(Insn)) !usize {
+            try self.append(.{ .for_iter = .{ .delta = 0 } });
+            const for_iter_mark = insns.items.len - 1;
+            try self.storeFast(sym);
+            try self.current_fast_symbols.append(self.allocator, sym);
+            return for_iter_mark;
+        }
+
+        fn finishComprehensionLoop(self: *Builder, sym: object.Symbol, for_iter_mark: usize, body_index: usize, insns: *std.ArrayList(Insn)) !void {
+            _ = self.current_fast_symbols.pop();
+            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, for_iter_mark) } });
+            try self.append(.{ .end_for = {} });
+            insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
+            try self.append(.{ .swap = 2 });
+            try self.storeFast(sym);
+            try self.deferred_fast_cleanups.append(self.allocator, sym);
+            _ = body_index;
+        }
+
+        fn generateListComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            const sym = try self.generateComprehensionHeader(comprehension, .build_list, insns);
+            const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
+            const body_index = insns.items.len;
+            try self.generateInsns(comprehension.expression, insns);
+            try self.append(.{ .list_append = 2 });
+            try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
+        }
+
+        fn generateSetComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            const sym = try self.generateComprehensionHeader(comprehension, .build_set, insns);
+            const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
+            const body_index = insns.items.len;
+            try self.generateInsns(comprehension.expression, insns);
+            try self.append(.{ .set_add = 2 });
+            try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
+        }
+
+        fn generateDictionaryComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+            const sym = try self.generateComprehensionHeader(comprehension, .build_map, insns);
+            const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
+            const body_index = insns.items.len;
+            try self.generateInsns(comprehension.expression.key orelse return Error.InvalidEntryNode, insns);
+            try self.generateInsns(comprehension.expression.value, insns);
+            try self.append(.{ .map_add = 2 });
+            try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
         }
 
         fn generateIfStatement(self: *Builder, if_stmt: anytype, insns: *std.ArrayList(Insn)) Error!Flow {
@@ -753,8 +984,8 @@ pub const Module = struct {
                 .name => |name| {
                     const sym = try self.intern_pool.put(name.value);
                     switch (name.context) {
-                        .Load => try self.loadName(sym),
-                        .Store => try self.storeName(sym),
+                        .Load => if (self.isFastSymbol(sym)) try self.loadFast(sym) else try self.loadName(sym),
+                        .Store => if (self.isFastSymbol(sym)) try self.storeFast(sym) else try self.storeName(sym),
                     }
                 },
                 .string_literal => |string| {

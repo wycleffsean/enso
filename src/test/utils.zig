@@ -131,7 +131,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_2_5_list_displays",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -140,7 +139,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_2_6_set_displays",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -149,7 +147,6 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_2_7_dictionary_displays",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{

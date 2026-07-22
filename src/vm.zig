@@ -216,8 +216,9 @@ fn Backend(comptime StackValue: type) type {
             _ = self;
             _ = value;
         }
-        fn swap(self: *Self) void {
+        fn swap(self: *Self, index: usize) void {
             _ = self;
+            _ = index;
         }
         fn buildTuple(self: *Self, argc: usize) StackValue {
             _ = self;
@@ -287,8 +288,9 @@ fn Backend(comptime StackValue: type) type {
             _ = right;
             return .{ .static = object.None };
         }
-        fn reraise(self: *Self, value: StackValue) void {
+        fn reraise(self: *Self, oparg: usize, value: StackValue) void {
             _ = self;
+            _ = oparg;
             _ = value;
         }
         fn copy(self: *Self) StackValue {
@@ -331,20 +333,24 @@ fn Backend(comptime StackValue: type) type {
             _ = delta;
             _ = self;
         }
-        fn loadFastAndClear(self: *Self) StackValue {
+        fn loadFastAndClear(self: *Self, var_num: object.Object) StackValue {
             _ = self;
+            _ = var_num;
             return .{ .static = object.None };
         }
-        fn listAppend(self: *Self, value: StackValue) void {
+        fn listAppend(self: *Self, index: usize, value: StackValue) void {
             _ = self;
+            _ = index;
             _ = value;
         }
-        fn setAdd(self: *Self, value: StackValue) void {
+        fn setAdd(self: *Self, index: usize, value: StackValue) void {
             _ = self;
+            _ = index;
             _ = value;
         }
-        fn mapAdd(self: *Self, left: StackValue, right: StackValue) void {
+        fn mapAdd(self: *Self, index: usize, left: StackValue, right: StackValue) void {
             _ = self;
+            _ = index;
             _ = left;
             _ = right;
         }
@@ -352,20 +358,24 @@ fn Backend(comptime StackValue: type) type {
             _ = self;
             _ = value;
         }
-        fn buildConstKeyMap(self: *Self) StackValue {
+        fn buildConstKeyMap(self: *Self, argc: usize) StackValue {
             _ = self;
+            _ = argc;
             return .{ .static = object.None };
         }
-        fn listExtend(self: *Self, value: StackValue) void {
+        fn listExtend(self: *Self, index: usize, value: StackValue) void {
             _ = self;
+            _ = index;
             _ = value;
         }
-        fn setUpdate(self: *Self, value: StackValue) void {
+        fn setUpdate(self: *Self, index: usize, value: StackValue) void {
             _ = self;
+            _ = index;
             _ = value;
         }
-        fn dictUpdate(self: *Self, value: StackValue) void {
+        fn dictUpdate(self: *Self, index: usize, value: StackValue) void {
             _ = self;
+            _ = index;
             _ = value;
         }
         fn callIntrinsic1(self: *Self, oparg: bytecode.CallIntrinsic1Kind, value: StackValue) StackValue {
