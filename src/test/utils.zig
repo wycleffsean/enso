@@ -229,12 +229,35 @@ pub const examples = [_]Example{
         .test_vm = false,
     },
     .{
-        .name = "langref_8_7_function_definitions",
+        .name = "langref_7_10_continue_statement",
+        .test_parse = false,
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_8_1_if_statement",
+        .test_parse = false,
+        .test_bytecode = false,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_8_2_while_statement",
+        .test_parse = false,
         .test_bytecode = false,
         .test_vm = false,
     },
     .{
         .name = "langref_8_3_for_statement",
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_8_3_for_statement_minimal",
+        .normalize_bytecode = true,
+        .test_vm = false,
+    },
+    .{
+        .name = "langref_8_7_function_definitions",
+        .test_bytecode = false,
         .test_vm = false,
     },
     // .{

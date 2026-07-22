@@ -257,9 +257,24 @@ pub const Lexer = struct {
 
     fn takeIndents(self: *Self) Error!void {
         self.indent = 0;
-        while ((self.peek() orelse 0) == '\t') {
-            self.indent += 1;
-            _ = try self.take();
+        var spaces: u32 = 0;
+        while (true) {
+            switch (self.peek() orelse return) {
+                '\t' => {
+                    self.indent += 1;
+                    spaces = 0;
+                    _ = try self.take();
+                },
+                ' ' => {
+                    spaces += 1;
+                    _ = try self.take();
+                    if (spaces == 4) {
+                        self.indent += 1;
+                        spaces = 0;
+                    }
+                },
+                else => return,
+            }
         }
     }
 
@@ -668,7 +683,6 @@ test "lex: take" {
     try testing.expectEqual(lex.col, 1);
 }
 
-// TODO: we really need to be able to consider spaces as indents too
 test "lex: indents" {
     // taken from py lexer, with comment -> # TODO: a bit wrong :/
     var lex = Lexer{ .buffer = "\t+\n\t\t+\n\t\t\t+\n" };
@@ -676,6 +690,14 @@ test "lex: indents" {
     try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 2, .line = 2, .col = 2 } } });
     try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 3, .line = 3, .col = 3 } } });
     try testing.expectEqual(lex.next(), Token{ .eof = .{ .loc = .{ .indent = 0, .line = 3, .col = 4 } } });
+}
+
+test "lex: space indents" {
+    var lex = Lexer{ .buffer = "+\n    +\n        +\n" };
+    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 0, .line = 1, .col = 1 } } });
+    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 1, .line = 2, .col = 4 } } });
+    try testing.expectEqual(lex.next(), Token{ .plus = .{ .loc = .{ .indent = 2, .line = 3, .col = 8 } } });
+    try testing.expectEqual(lex.next(), Token{ .eof = .{ .loc = .{ .indent = 0, .line = 3, .col = 9 } } });
 }
 
 test "lex: parens" {

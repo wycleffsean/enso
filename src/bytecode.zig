@@ -622,13 +622,9 @@ pub const Module = struct {
                         std.debug.assert(target.* == .name);
                         try self.storeName(try self.intern_pool.put(target.name.value));
                     }
-                    const suite_mark = insns.items.len;
                     // TODO: there is a flow state we need to consider here
                     _ = try self.generateStatements(for_in.suite.items, insns);
                     // try self.generateInsns(for_in.else_suite, insns); // TODO
-
-                    // clean up iterator, but only when the block actually did anything
-                    if ((insns.items.len - suite_mark) > 0) try self.append(.{ .pop_top = {} });
 
                     // We jump by incrementing/decrementing the program counter.  Cpython records deltas that represent
                     // a similar idea but are a length in bytes; we're not going to match
