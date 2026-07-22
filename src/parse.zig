@@ -115,7 +115,12 @@ const DictionaryDisplay = union(enum) {
     comprehension: DictComprehension,
     empty: void,
 };
-const Statement = List;
+pub const StatementNode = union(enum) {
+    expr: *const AstNode,
+    node: *const AstNode,
+};
+const Statement = std.ArrayList(StatementNode);
+
 const ClassDefinition = struct {
     name: []const u8,
     baseclass: ?[]const u8,
@@ -163,7 +168,7 @@ const Yield = union(enum) {
 };
 
 pub const AstNode = union(AstNodeTag) {
-    root: []*const AstNode,
+    root: []StatementNode,
     pass: void,
     bool: bool,
     integer: struct { value: ObjectInt },
@@ -196,7 +201,7 @@ pub const AstNode = union(AstNodeTag) {
     lambda: struct { parameters: Parameters, expression: *const AstNode },
     assignment: BinaryOp,
     named_expression: BinaryOp,
-    call: struct { ref: *const AstNode, args: List, discard_return_value: bool = false },
+    call: struct { ref: *const AstNode, args: List },
     field_access: BinaryOp,
     list: ListDisplay,
     set: SetDisplay,
@@ -241,13 +246,12 @@ pub const Parser = struct {
 
     pub fn parse(self: *Self) Error!*const AstNode {
         const root = try self.allocator.create(AstNode);
-        // const statement = try self.parseStatement();
-        var statement: std.ArrayList(*const AstNode) = .empty;
+        var statements: std.ArrayList(StatementNode) = .empty;
         while (self.peek()) |token| {
             _ = token;
-            try statement.append(self.allocator, try self.parseExpression(.lowest));
+            try statements.append(self.allocator, try self.parseStatement());
         }
-        root.* = AstNode{ .root = try statement.toOwnedSlice(self.allocator) };
+        root.* = .{ .root = try statements.toOwnedSlice(self.allocator) };
         return root;
     }
 
@@ -255,19 +259,21 @@ pub const Parser = struct {
         var statement: Statement = .empty;
         while (self.peek()) |next_token| {
             if (next_token.getLocation().indent <= owner_indent) break;
-            try statement.append(self.allocator, try self.parseExpression(.lowest));
+            try statement.append(self.allocator, try self.parseStatement());
         }
         return statement;
     }
 
-    // fn parseStatement(self: *Self) Error!*Statement {
-    //     var statement = Statement.init(self.allocator);
-    //     while (self.peek()) |token| {
-    //         _ = token;
-    //         try statement.append(try self.parseExpression(.lowest));
-    //     }
-    //     return &statement;
-    // }
+    fn parseStatement(self: *Self) Error!StatementNode {
+        const token = self.peek() orelse return Error.UnexpectedEndOfStream;
+        return switch (token) {
+            .return_kw, .pass_kw, .def_kw, .async_kw, .class_kw, .for_kw, .import_kw, .from_kw => blk: {
+                const null_denotation = tokenMap(token)[1];
+                break :blk .{ .node = try null_denotation(self) };
+            },
+            else => .{ .expr = try self.parseExpression(.lowest) },
+        };
+    }
 
     const Precedence = enum {
         lowest,
@@ -446,15 +452,6 @@ pub const Parser = struct {
             token = self.peek() orelse unreachable;
             const infixFn = try leftDenotation(token);
             lhs = try infixFn(self, lhs);
-        }
-
-        // this check is a little bit gross, but if the outermost bit of the expression
-        // is a function call then it means the return value of the call is discarded.
-        // This impacts bytecode generation and this is far easier than scanning or
-        // some other stateful solution
-        switch (lhs.*) {
-            .call => |*call| call.discard_return_value = true,
-            else => {},
         }
 
         return lhs;
@@ -1421,9 +1418,9 @@ test "parse: declare function" {
     // Statement
     try testing.expectEqual(@as(usize, 2), result.fn_decl.suite.items.len);
     const expr1 = result.fn_decl.suite.items[0];
-    try testing.expect(expr1.* == AstNode.assignment);
+    try testing.expect(expr1.expr.* == AstNode.assignment);
     const expr2 = result.fn_decl.suite.items[1];
-    try testing.expect(expr2.* == AstNode.mult);
+    try testing.expect(expr2.expr.* == AstNode.mult);
 }
 
 test "parse: call function" {
@@ -1475,9 +1472,9 @@ test "parse: class definition" {
 
         const class = "class Foo:\n\tpass";
         var parser = Parser.init(allocator, class);
-        const result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0].node;
 
-        try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
+        try testing.expectEqual(AstNode.class, std.meta.activeTag(result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expect(result.class.baseclass == null);
         try testing.expectEqual(@as(usize, 1), result.class.suite.items.len);
@@ -1489,7 +1486,7 @@ test "parse: class definition" {
 
         const class = "class Foo():\n\tpass";
         var parser = Parser.init(allocator, class);
-        const result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0].node;
 
         try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
@@ -1503,7 +1500,7 @@ test "parse: class definition" {
 
         const class = "class Foo(Bar):\n\tpass";
         var parser = Parser.init(allocator, class);
-        const result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0].node;
         try testing.expectEqual(AstNode.class, @as(AstNodeTag, result.*));
         try testing.expectEqualStrings("Foo", result.class.name);
         try testing.expectEqualStrings("Bar", result.class.baseclass.?);
@@ -1536,7 +1533,7 @@ test "parse: imports" {
     // from test.support import import_helper
     { // trivial class
         var parser = Parser.init(allocator, "import sys");
-        const result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0].node;
 
         try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
         // count of import expressions i.e. import (foo, bar) == 2
@@ -1551,7 +1548,7 @@ test "parse: imports" {
     }
     { // import multiple
         var parser = Parser.init(allocator, "import time as yo, sys as dude");
-        const result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0].node;
 
         try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
         // count of import expressions i.e. import (foo, bar) == 2
@@ -1573,7 +1570,7 @@ test "parse: imports" {
     }
     { // import multiple
         var parser = Parser.init(allocator, "from foo.bar import time as yo, sys as dude");
-        const result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0].node;
 
         try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
 
@@ -1597,7 +1594,7 @@ test "parse: imports" {
     { // import star
         // TODO: write assertion that star cannot be aliased
         var parser = Parser.init(allocator, "from foo.bar import *");
-        const result = (try parser.parse()).root[0];
+        const result = (try parser.parse()).root[0].node;
 
         try testing.expectEqual(AstNode.import, @as(AstNodeTag, result.*));
 

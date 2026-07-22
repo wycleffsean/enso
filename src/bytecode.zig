@@ -46,9 +46,9 @@ pub const StackLength = struct {
     max: u32,
 };
 
-pub fn stackLength(ir: []const Insn) StackEffectError!u32 {
-    return (try stackLengthFrom(ir, 0)).exit;
-}
+// pub fn stackLength(ir: []const Insn) StackEffectError!u32 {
+//     return (try stackLengthFrom(ir, 0)).exit;
+// }
 
 pub fn stackLengthFrom(ir: []const Insn, entry: u32) StackEffectError!StackLength {
     var length: i64 = entry;
@@ -421,18 +421,18 @@ pub const Module = struct {
             // ENTER
             try self.append(.{ .@"resume" = 0 });
 
-            switch (ast_node.*) {
-                .root => |ast_list| {
+            const flow = switch (ast_node.*) {
+                .root => |stmt_list| blk: {
                     try self.mod.codeobject_store.append(self.mod.allocator, .{
                         .module = self.mod,
                     });
-                    for (ast_list) |node| try self.generateInsns(node, insns);
+                    break :blk try self.generateStatements(stmt_list, insns);
                 },
-                .fn_decl => |fn_decl| {
+                .fn_decl => |fn_decl| blk: {
                     try self.mod.codeobject_store.append(self.mod.allocator, .{
                         .module = self.mod,
                     });
-                    for (fn_decl.suite.items) |node| try self.generateInsns(node, insns);
+                    break :blk try self.generateStatements(fn_decl.suite.items, insns);
                 },
                 // .lambda,
                 // .class,
@@ -442,16 +442,11 @@ pub const Module = struct {
                     // we're trying to process a codeobject from an invalid seam in the AST
                     return Error.InvalidEntryNode;
                 },
-            }
+            };
 
             // EXIT
-            // TODO: this is pretty hacky - just an intermediate solution. follow compile.c approach
-            const length = try stackLength(self.mod.instruction_store.items[insn_idx..]);
-            // std.debug.assert(length < 2); // should never be more than one lingering item in the stack
-            if (length == 0) {
+            if (flow.falls_through) {
                 try self.append(Insn{ .return_const = {} });
-            } else {
-                try self.append(Insn{ .return_value = {} });
             }
 
             // update spans before exit
@@ -466,6 +461,49 @@ pub const Module = struct {
             self.mod.codeobject_store.items(.co_names)[co_idx] = .{
                 .start = @intCast(co_name_idx),
                 .len = @intCast(self.mod.name_store.items[co_name_idx..].len),
+            };
+        }
+
+        const Flow = struct {
+            falls_through: bool = true,
+            const terminates: Flow = .{ .falls_through = false };
+            const continues: Flow = .{ .falls_through = true };
+        };
+
+        fn generateStatements(self: *Builder, statements: []const parse.StatementNode, insns: *std.ArrayList(Insn)) Error!Flow {
+            var flow = Flow.continues;
+
+            for (statements) |stmt| {
+                if (!flow.falls_through) break;
+                flow = try self.generateStatement(stmt, insns);
+            }
+            return flow;
+        }
+
+        fn generateStatement(self: *Builder, stmt: parse.StatementNode, insns: *std.ArrayList(Insn)) Error!Flow {
+            switch (stmt) {
+                .expr => |expr| {
+                    try self.generateInsns(expr, insns);
+                    if (exprLeavesValue(expr)) try self.append(.{ .pop_top = {} });
+                    return Flow.continues;
+                },
+                .node => |node| switch (node.*) {
+                    .@"return" => {
+                        try self.generateInsns(node, insns);
+                        return Flow.terminates;
+                    },
+                    else => {
+                        try self.generateInsns(node, insns);
+                        return Flow.continues;
+                    },
+                },
+            }
+        }
+
+        fn exprLeavesValue(ast_node: *const AstNode) bool {
+            return switch (ast_node.*) {
+                .assignment => false,
+                else => true,
             };
         }
 
@@ -546,8 +584,6 @@ pub const Module = struct {
                         try self.generateInsns(node, insns);
                     }
                     try self.append(.{ .call = len });
-                    if (call.discard_return_value)
-                        try self.append(.{ .pop_top = {} });
                 },
                 .integer => |int| try self.appendConst(.{ .int = int.value }),
                 .bool => |b| try self.appendConst(.{ .bool = b }),
@@ -583,8 +619,8 @@ pub const Module = struct {
                         try self.storeName(try self.intern_pool.put(target.name.value));
                     }
                     const suite_mark = insns.items.len;
-                    for (for_in.suite.items) |expression|
-                        try self.generateInsns(expression, insns);
+                    // TODO: there is a flow state we need to consider here
+                    _ = try self.generateStatements(for_in.suite.items, insns);
                     // try self.generateInsns(for_in.else_suite, insns); // TODO
 
                     // clean up iterator, but only when the block actually did anything
@@ -712,7 +748,8 @@ test "bytecode: binary ops" {
             .{ .pop_jump_if_false = .{ .delta = 2 } },
             .{ .pop_top = {} },
             .{ .load_const = constant(1) },
-            .{ .return_value = {} },
+            .{ .pop_top = {} },
+            .{ .return_const = {} },
         };
 
         try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
@@ -730,7 +767,8 @@ test "bytecode: binary ops" {
             .{ .pop_jump_if_true = .{ .delta = 2 } },
             .{ .pop_top = {} },
             .{ .load_const = constant(1) },
-            .{ .return_value = {} },
+            .{ .pop_top = {} },
+            .{ .return_const = {} },
         };
 
         try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
@@ -752,7 +790,8 @@ test "bytecode: binary ops" {
             .{ .pop_jump_if_true = .{ .delta = 2 } },
             .{ .pop_top = {} },
             .{ .load_const = constant(2) },
-            .{ .return_value = {} },
+            .{ .pop_top = {} },
+            .{ .return_const = {} },
         };
 
         try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
@@ -777,7 +816,8 @@ test "bytecode: conditional expression" {
             .{ .load_const = constant(1) },
             .{ .return_value = {} },
             .{ .load_const = constant(2) },
-            .{ .return_value = {} },
+            .{ .pop_top = {} },
+            .{ .return_const = {} },
         };
 
         try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
@@ -849,14 +889,12 @@ test "bytecode: codeobject seams for function definitions" {
 
     // TODO: this is actually quite wrong
     // - real python does load_fast instead of load_name
-    // - we have a return statement so that generates return_value, then our co exit handler appends a superfluous return_const
     const expected_fn = [_]Insn{
         .{ .@"resume" = 0 },
         .{ .load_name = nameIndex(0) },
         .{ .load_name = nameIndex(1) },
         .{ .binary_op = .add },
         .{ .return_value = {} },
-        .{ .return_const = {} },
     };
 
     try testing.expectEqualSlices(Insn, expected_fn[0..], fn_co.getInstructions());

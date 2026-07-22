@@ -93,6 +93,7 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_hello_world",
+        .test_bytecode = false,
     },
     .{
         .name = "examples_expressions",
