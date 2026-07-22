@@ -735,6 +735,16 @@ pub const Module = struct {
             try self.append(.{ .contains_op = false });
         }
 
+        fn generateAssignment(self: *Builder, assignment: parse.BinaryOp, keep_value: bool, insns: *std.ArrayList(Insn)) Error!void {
+            if (assignment.rhs.* == .assignment) {
+                try self.generateAssignment(assignment.rhs.assignment, true, insns);
+            } else {
+                try self.generateInsns(assignment.rhs, insns);
+            }
+            if (keep_value) try self.append(.{ .copy = {} });
+            try self.generateInsns(assignment.lhs, insns);
+        }
+
         fn generateListDisplay(self: *Builder, list: anytype, insns: *std.ArrayList(Insn)) Error!void {
             switch (list) {
                 .empty => try self.append(.{ .build_list = 0 }),
@@ -1200,9 +1210,7 @@ pub const Module = struct {
                 .comprehension => |comprehension| try self.generateGeneratorExpression(comprehension, insns),
                 .pass => {}, // surprisingly not a nop
                 .assignment => |assignment| {
-                    try self.generateInsns(assignment.rhs, insns);
-                    // we handle this bit with ExpressionContext which is smelly
-                    try self.generateInsns(assignment.lhs, insns);
+                    try self.generateAssignment(assignment, false, insns);
                 },
                 .augmented_assignment => |assignment| {
                     std.debug.assert(assignment.lhs.* == .name);

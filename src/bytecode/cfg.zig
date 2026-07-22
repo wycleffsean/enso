@@ -114,7 +114,7 @@ fn maybeTerminate(self: *Self, terminal_index: u32, insn: bytecode.Insn) Error!b
             if (fallthrough < self.instructions.len) {
                 self.edges.appendAssumeCapacity(.{ .kind = .fallthrough, .from = terminal_index, .to = fallthrough });
             }
-            if (jump_index != fallthrough) {
+            if (jump_index < self.instructions.len and jump_index != fallthrough) {
                 self.edges.appendAssumeCapacity(.{ .kind = .jump, .from = terminal_index, .to = jump_index });
             }
         },
@@ -143,33 +143,67 @@ pub fn build(allocator: std.mem.Allocator, instructions: []const bytecode.Insn) 
 
     if (instructions.len == 0) return self;
 
-    var insn_to_block: std.ArrayList(BlockIndex) = try .initCapacity(allocator, instructions.len);
-    defer insn_to_block.deinit(allocator);
-    var current_block: BasicBlock = .empty;
+    const leaders = try allocator.alloc(bool, instructions.len);
+    defer allocator.free(leaders);
+    @memset(leaders, false);
+    leaders[0] = true;
 
     for (instructions, 0..) |insn, index_usize| {
         const index: InsnIndex = @intCast(index_usize);
-        insn_to_block.appendAssumeCapacity(@intCast(self.blocks.len));
-
-        if (try self.maybeTerminate(index, insn)) {
-            current_block.instructions.len = index + 1 - current_block.instructions.start;
-            try self.blocks.append(allocator, current_block);
-            current_block = .empty;
-            current_block.instructions.start = index + 1;
+        const edges_start = self.edges.items.len;
+        if (try self.maybeTerminate(index, insn) and index + 1 < instructions.len) {
+            leaders[index + 1] = true;
+        }
+        for (self.edges.items[edges_start..]) |edge| {
+            leaders[edge.to] = true;
         }
     }
 
-    // TODO: add the final block, but I'm not even certain this is necessary
-    if (current_block.instructions.start < instructions.len) {
-        current_block.instructions.len = @as(InsnIndex, @intCast(instructions.len)) - current_block.instructions.start;
-        try self.blocks.append(allocator, current_block);
+    const insn_to_block = try allocator.alloc(BlockIndex, instructions.len);
+    defer allocator.free(insn_to_block);
+
+    var block_start: InsnIndex = 0;
+    var next_block: BlockIndex = 0;
+    for (instructions[1..], 1..) |_, index_usize| {
+        const index: InsnIndex = @intCast(index_usize);
+        if (!leaders[index]) continue;
+
+        try self.blocks.append(allocator, .{
+            .instructions = .{
+                .start = block_start,
+                .len = index - block_start,
+            },
+            .predecessors = .empty,
+            .successors = .empty,
+        });
+        for (insn_to_block[block_start..index]) |*mapped| mapped.* = next_block;
+        next_block += 1;
+        block_start = index;
+    }
+    try self.blocks.append(allocator, .{
+        .instructions = .{
+            .start = block_start,
+            .len = @as(InsnIndex, @intCast(instructions.len)) - block_start,
+        },
+        .predecessors = .empty,
+        .successors = .empty,
+    });
+    for (insn_to_block[block_start..instructions.len]) |*mapped| mapped.* = next_block;
+
+    for (0..self.blocks.len - 1) |block_usize| {
+        const block: BlockIndex = @intCast(block_usize);
+        const insns = self.blockInsns(block);
+        if (insns.len == 0 or terminatesBlock(insns[insns.len - 1])) continue;
+        const from = self.blocks.items(.instructions)[block].start + self.blocks.items(.instructions)[block].len - 1;
+        const to = self.blocks.items(.instructions)[block + 1].start;
+        try self.edges.append(self.allocator, .{ .kind = .fallthrough, .from = from, .to = to });
     }
 
     // all of the edges we created are indexed to the instruction
     // but we need them pointing at the block containing the instruction
     for (self.edges.items) |*edge| {
-        edge.to = insn_to_block.items[edge.to];
-        edge.from = insn_to_block.items[edge.from];
+        edge.to = insn_to_block[edge.to];
+        edge.from = insn_to_block[edge.from];
     }
 
     try self.links.ensureTotalCapacity(self.allocator, self.edges.items.len * 2);
@@ -223,10 +257,11 @@ pub fn validateStackHeights(self: *Self) Error!u32 {
             max_stack_height = @max(max_stack_height, stack.max);
 
             for (self.blockSuccessors(block)) |edge| {
+                const edge_exit = try edgeStackHeight(self.blockInsns(block), stack.exit, edge);
                 if (entries[edge.to]) |known| {
-                    if (known != stack.exit) return Error.StackHeightMismatch;
+                    if (known != edge_exit) return Error.StackHeightMismatch;
                 } else {
-                    entries[edge.to] = stack.exit;
+                    entries[edge.to] = edge_exit;
                     changed = true;
                 }
             }
@@ -235,9 +270,33 @@ pub fn validateStackHeights(self: *Self) Error!u32 {
     return @max(max_stack_height, 1);
 }
 
+fn terminatesBlock(insn: bytecode.Insn) bool {
+    return switch (insn) {
+        .for_iter,
+        .pop_jump_if_false,
+        .pop_jump_if_true,
+        .jump_backward,
+        .jump_backward_no_interrupt,
+        .return_value,
+        .return_const,
+        .return_generator,
+        .send,
+        => true,
+        else => false,
+    };
+}
+
+fn edgeStackHeight(insns: []const bytecode.Insn, default_exit: u32, edge: Edge) Error!u32 {
+    if (insns.len == 0 or edge.kind != .jump) return default_exit;
+    return switch (insns[insns.len - 1]) {
+        .for_iter => if (default_exit >= 2) default_exit - 2 else Error.StackHeightMismatch,
+        else => default_exit,
+    };
+}
+
 fn checkedJumpTarget(base: u32, delta: i64, instructions_len: usize) Error!InsnIndex {
     const jump_index: i64 = @as(i64, @intCast(base)) + delta;
-    if (jump_index < 0 or jump_index >= instructions_len) return Error.BadJumpTarget;
+    if (jump_index < 0 or jump_index > instructions_len) return Error.BadJumpTarget;
     return @intCast(jump_index);
 }
 

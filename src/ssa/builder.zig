@@ -129,6 +129,15 @@ pub const Builder = struct {
         return self.readVariableRecursive(variable, block);
     }
 
+    pub fn currentDefinition(self: *Builder, variable: VariableId, block: BlockId) Error!?ValueId {
+        try self.requireVariable(variable);
+        try self.requireBlock(block);
+        if (self.current_defs[self.tableIndex(block, variable)]) |value| {
+            return self.valueReplacement(value);
+        }
+        return null;
+    }
+
     fn readVariableRecursive(self: *Builder, variable: VariableId, block: BlockId) Error!ValueId {
         const preds = self.cfg.blockPredecessors(block);
 

@@ -45,12 +45,43 @@ fn formatOp(graph_value: *const ssa.SsaGraph, writer: *std.Io.Writer, op: ssa.Op
     switch (op) {
         .load_const => |value| try writer.print("load_const {f}", .{value}),
         .load_name => |name| try writer.print("load_name {f}", .{name}),
+        .load_fast => |local| try writer.print("load_fast {f}", .{local}),
+        .load_global => |name| try writer.print("load_global {f}", .{name}),
+        .load_build_class => try writer.print("load_build_class", .{}),
         .store_name => |store| try writer.print("store_name {f}, %{d}", .{ store.name, graph_value.builder.valueReplacement(store.value) }),
+        .store_fast => |store| try writer.print("store_fast {f}, %{d}", .{ store.local, graph_value.builder.valueReplacement(store.value) }),
         .binary_op => |binary| try writer.print("binary_op {s}, %{d}, %{d}", .{
             @tagName(binary.op),
             graph_value.builder.valueReplacement(binary.lhs),
             graph_value.builder.valueReplacement(binary.rhs),
         }),
+        .unary_op => |unary| try writer.print("{s} %{d}", .{
+            @tagName(unary.op),
+            graph_value.builder.valueReplacement(unary.value),
+        }),
+        .compare_op => |compare| try writer.print("compare_op {s}, %{d}, %{d}", .{
+            @tagName(compare.op),
+            graph_value.builder.valueReplacement(compare.lhs),
+            graph_value.builder.valueReplacement(compare.rhs),
+        }),
+        .predicate_op => |predicate| try writer.print("{s}{s} %{d}, %{d}", .{
+            @tagName(predicate.op),
+            if (predicate.invert) " inverted" else "",
+            graph_value.builder.valueReplacement(predicate.lhs),
+            graph_value.builder.valueReplacement(predicate.rhs),
+        }),
+        .value_op => |value_op| {
+            try writer.print("{s}", .{@tagName(value_op.op)});
+            for (graph_value.call_args.items[value_op.args_start..][0..value_op.args_len]) |arg| {
+                try writer.print(" %{d}", .{graph_value.builder.valueReplacement(arg)});
+            }
+        },
+        .effect_op => |effect| {
+            try writer.print("{s}", .{@tagName(effect.op)});
+            for (graph_value.call_args.items[effect.args_start..][0..effect.args_len]) |arg| {
+                try writer.print(" %{d}", .{graph_value.builder.valueReplacement(arg)});
+            }
+        },
         .call => |call| {
             try writer.print("call %{d}, %{d}", .{
                 graph_value.builder.valueReplacement(call.receiver),
