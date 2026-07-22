@@ -238,8 +238,9 @@ fn Backend(comptime StackValue: type) type {
         fn loadAttr(self: *Self) void {
             _ = self;
         }
-        fn compareOp(self: *Self, left: StackValue, right: StackValue) StackValue {
+        fn compareOp(self: *Self, op: bytecode.CompareOperation, left: StackValue, right: StackValue) StackValue {
             _ = self;
+            _ = op;
             _ = left;
             _ = right;
             return .{ .static = object.None };
@@ -268,14 +269,16 @@ fn Backend(comptime StackValue: type) type {
             _ = namei;
             _ = self;
         }
-        fn isOp(self: *Self, left: StackValue, right: StackValue) StackValue {
+        fn isOp(self: *Self, invert: bool, left: StackValue, right: StackValue) StackValue {
             _ = self;
+            _ = invert;
             _ = left;
             _ = right;
             return .{ .static = object.None };
         }
-        fn containsOp(self: *Self, left: StackValue, right: StackValue) StackValue {
+        fn containsOp(self: *Self, invert: bool, left: StackValue, right: StackValue) StackValue {
             _ = self;
+            _ = invert;
             _ = left;
             _ = right;
             return .{ .static = object.None };

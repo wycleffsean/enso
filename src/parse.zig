@@ -42,6 +42,7 @@ const AstNodeTag = enum {
     fn_decl,
     lambda,
     assignment,
+    augmented_assignment,
     named_expression,
     call,
     field_access,
@@ -50,6 +51,9 @@ const AstNodeTag = enum {
     dictionary,
     target_list,
     for_in,
+    if_stmt,
+    while_stmt,
+    continue_stmt,
     conditional,
     comprehension,
     string_literal,
@@ -151,6 +155,9 @@ const ImportDefinition = struct {
 
 const ImportExpression = std.ArrayList(ImportDefinition);
 const ExpressionContext = enum { Load, Store };
+const AugmentedAssignmentKind = enum {
+    add,
+};
 const Parameter = struct {
     identifier: *const AstNode,
     annotation: ?*const AstNode,
@@ -202,6 +209,7 @@ pub const AstNode = union(AstNodeTag) {
     fn_decl: struct { name: []const u8, async: bool = false, parameters: Parameters, suite: Statement },
     lambda: struct { parameters: Parameters, expression: *const AstNode },
     assignment: BinaryOp,
+    augmented_assignment: struct { kind: AugmentedAssignmentKind, lhs: *const AstNode, rhs: *const AstNode },
     named_expression: BinaryOp,
     call: struct { ref: *const AstNode, args: List },
     field_access: BinaryOp,
@@ -210,6 +218,9 @@ pub const AstNode = union(AstNodeTag) {
     dictionary: DictionaryDisplay,
     target_list: List,
     for_in: struct { target_list: List, iterable: *const AstNode, suite: Statement, else_suite: ?Statement },
+    if_stmt: struct { predicate: *const AstNode, suite: Statement, else_suite: ?Statement },
+    while_stmt: struct { predicate: *const AstNode, suite: Statement, else_suite: ?Statement },
+    continue_stmt: void,
     conditional: struct { predicate: *const AstNode, lhs: *const AstNode, rhs: *const AstNode },
     comprehension: Comprehension,
     string_literal: struct { value: []const u8 },
@@ -224,7 +235,7 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
     lexer: lex.Lexer,
     peeked: ?Token = null,
-    //taken: ?Token = null,
+    last_taken: ?Token = null,
     // sometimes there is enough ambiguity in the lanaguage
     // that we have to rewind the parser and pursue another path.
     // rather than rewind the token stream and bother parsing again,
@@ -269,7 +280,7 @@ pub const Parser = struct {
     fn parseStatement(self: *Self) Error!StatementNode {
         const token = self.peek() orelse return Error.UnexpectedEndOfStream;
         return switch (token) {
-            .return_kw, .pass_kw, .def_kw, .async_kw, .class_kw, .for_kw, .import_kw, .from_kw => blk: {
+            .return_kw, .pass_kw, .def_kw, .async_kw, .class_kw, .for_kw, .if_kw, .while_kw, .continue_kw, .import_kw, .from_kw => blk: {
                 const null_denotation = tokenMap(token)[1];
                 break :blk .{ .node = try null_denotation(self) };
             },
@@ -320,6 +331,7 @@ pub const Parser = struct {
             .comma => .{ .lowest, nullDenotationIllegal, leftDenotationUnhandled },
             .pipe => .{ .bit_or, nullDenotationUnhandled, parseBinaryOp },
             .minus => .{ .prefix, parseUnaryOp, parseBinaryOp },
+            .plus_assign => .{ .equality, nullDenotationUnhandled, parseAugmentedAssignment },
             .percent => .{ .product, nullDenotationUnhandled, parseBinaryOp },
             .labracket => .{ .lessgreater, nullDenotationIllegal, parseComparison },
             .rabracket => .{ .lessgreater, nullDenotationUnhandled, parseComparison },
@@ -353,14 +365,14 @@ pub const Parser = struct {
             .is_kw => .{ .lessgreater, nullDenotationUnhandled, parseIdentityComparison },
             .return_kw => .{ .lowest, parseReturn, leftDenotationUnhandled },
             .and_kw => .{ .sum, nullDenotationUnhandled, parseBoolOp },
-            .continue_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .continue_kw => .{ .lowest, parseContinue, leftDenotationUnhandled },
             .for_kw => .{ .lowest, parseForStatement, leftDenotationUnhandled },
             .lambda_kw => .{ .lowest, parseLambdaDefinition, leftDenotationUnhandled },
             .try_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .as_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .from_kw => .{ .lowest, parseFromImport, leftDenotationUnhandled },
             .nonlocal_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-            .while_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
+            .while_kw => .{ .lowest, parseWhileStatement, leftDenotationUnhandled },
             .assert_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .del_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .global_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
@@ -368,7 +380,7 @@ pub const Parser = struct {
             .with_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
             .async_kw => .{ .lowest, parseAsyncFunctionDefinition, leftDenotationUnhandled },
             .elif_kw => .{ .lowest, nullDenotationUnhandled, leftDenotationUnhandled },
-            .if_kw => .{ .sum, nullDenotationUnhandled, parseIfExpression },
+            .if_kw => .{ .sum, parseIfStatement, parseIfExpression },
             .or_kw => .{ .sum, nullDenotationUnhandled, parseBoolOp },
             .yield_kw => .{ .lowest, parseYield, leftDenotationUnhandled },
         };
@@ -402,6 +414,7 @@ pub const Parser = struct {
     fn take(self: *Self) Error!Token {
         const peeked = self.peek() orelse return Error.UnexpectedEndOfStream;
         self.peeked = null;
+        self.last_taken = peeked;
         return peeked;
     }
 
@@ -456,6 +469,9 @@ pub const Parser = struct {
         var lhs = try lhsFn(self);
         while (@intFromEnum(precedence) < @intFromEnum(try self.peekPrecedence())) {
             token = self.peek() orelse unreachable;
+            if (self.last_taken) |last| {
+                if (token.getLocation().line > last.getLocation().line) break;
+            }
             const infixFn = try leftDenotation(token);
             lhs = try infixFn(self, lhs);
         }
@@ -980,6 +996,18 @@ pub const Parser = struct {
         return assignment_node;
     }
 
+    fn parseAugmentedAssignment(self: *Self, lhs: *AstNode) Error!*AstNode {
+        const op_token = try self.take();
+        const kind: AugmentedAssignmentKind = switch (op_token) {
+            .plus_assign => .add,
+            else => return Error.UnexpectedToken,
+        };
+        const rhs = try self.parseExpression(.lowest);
+        const assignment_node = try self.allocator.create(AstNode);
+        assignment_node.* = .{ .augmented_assignment = .{ .kind = kind, .lhs = lhs, .rhs = rhs } };
+        return assignment_node;
+    }
+
     fn parseNamedExpression(self: *Self, lhs: *AstNode) Error!*AstNode {
         const walrus_token = try self.take(); // skip walrus token
         assert(walrus_token == .walrus);
@@ -1198,6 +1226,51 @@ pub const Parser = struct {
             .else_suite = else_suite,
         } };
         return for_in;
+    }
+
+    fn parseIfStatement(self: *Self) Error!*AstNode {
+        const if_kw = try self.expectAndTake(.if_kw);
+        const predicate = try self.parseExpression(.lowest);
+        const indent = if_kw.getLocation().indent;
+        const suite = try self.parseSuite(indent);
+        var else_suite: ?Statement = null;
+        blk: {
+            self.expectAndSkip(.else_kw) catch break :blk;
+            else_suite = try self.parseSuite(indent);
+        }
+        const if_node = try self.allocator.create(AstNode);
+        if_node.* = .{ .if_stmt = .{
+            .predicate = predicate,
+            .suite = suite,
+            .else_suite = else_suite,
+        } };
+        return if_node;
+    }
+
+    fn parseWhileStatement(self: *Self) Error!*AstNode {
+        const while_kw = try self.expectAndTake(.while_kw);
+        const predicate = try self.parseExpression(.lowest);
+        const indent = while_kw.getLocation().indent;
+        const suite = try self.parseSuite(indent);
+        var else_suite: ?Statement = null;
+        blk: {
+            self.expectAndSkip(.else_kw) catch break :blk;
+            else_suite = try self.parseSuite(indent);
+        }
+        const while_node = try self.allocator.create(AstNode);
+        while_node.* = .{ .while_stmt = .{
+            .predicate = predicate,
+            .suite = suite,
+            .else_suite = else_suite,
+        } };
+        return while_node;
+    }
+
+    fn parseContinue(self: *Self) Error!*AstNode {
+        try self.expectAndSkip(.continue_kw);
+        const node = try self.allocator.create(AstNode);
+        node.* = .{ .continue_stmt = {} };
+        return node;
     }
 
     fn parseImport(self: *Self) Error!*AstNode {

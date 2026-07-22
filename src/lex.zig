@@ -42,6 +42,7 @@ pub const TokenTag = enum {
     comma,
     pipe,
     plus,
+    plus_assign,
     minus,
     asterisk,
     double_asterisk,
@@ -130,6 +131,7 @@ pub const Token = union(TokenTag) {
     comma: Bare,
     pipe: Bare,
     plus: Bare,
+    plus_assign: Bare,
     minus: Bare,
     asterisk: Bare,
     double_asterisk: Bare,
@@ -450,7 +452,15 @@ pub const Lexer = struct {
             },
             ',' => return Token{ .comma = self.bare() },
             '|' => return Token{ .pipe = self.bare() },
-            '+' => return Token{ .plus = self.bare() },
+            '+' => {
+                if (self.peek()) |val| {
+                    if (val == '=') {
+                        _ = self.take() catch unreachable;
+                        return Token{ .plus_assign = self.bare() };
+                    }
+                }
+                return Token{ .plus = self.bare() };
+            },
             '-' => return Token{ .minus = self.bare() },
             '*' => {
                 if (self.peek()) |val| {

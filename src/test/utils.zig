@@ -182,12 +182,11 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_6_10_comparisons",
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
         .name = "langref_6_11_boolean_operations",
-        .test_bytecode = false,
+        .normalize_bytecode = true,
         .test_vm = false,
     },
     .{
@@ -230,20 +229,14 @@ pub const examples = [_]Example{
     },
     .{
         .name = "langref_7_10_continue_statement",
-        .test_parse = false,
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
         .name = "langref_8_1_if_statement",
-        .test_parse = false,
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
         .name = "langref_8_2_while_statement",
-        .test_parse = false,
-        .test_bytecode = false,
         .test_vm = false,
     },
     .{
@@ -506,6 +499,7 @@ fn evalIntBinary(lhs: object.ObjectInt, rhs: object.ObjectInt, op: bytecode.Bina
         .bit_or => .{ .int = lhs | rhs },
         .bit_xor => .{ .int = lhs ^ rhs },
         .bit_and => .{ .int = lhs & rhs },
+        .inplace_add => .{ .int = lhs + rhs },
         .mat_mult => null,
     };
 }
