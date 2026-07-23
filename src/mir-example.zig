@@ -82,7 +82,7 @@ pub fn main() !void {
     // Or call via function pointer after interface setup:
     const addr = fb.func_item.*.addr;
     const Fn = *const fn (i64) callconv(.c) i64;
-    const f: Fn = @ptrCast(addr);
+    const f: Fn = @ptrCast(@alignCast(addr));
     const r = f(10);
     std.debug.print("loop(10)={}\n", .{r});
 }
