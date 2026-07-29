@@ -530,7 +530,7 @@ fn stackVariable(slot: u32) VariableId {
     return slot;
 }
 
-fn nameVariable(out: *const SsaGraph, namei: bytecode.NameIndex) VariableId {
+fn nameVariable(out: *const SsaGraph, namei: bytecode.NameTable.Index) VariableId {
     return out.stack_variable_count + namei.index;
 }
 

@@ -5,6 +5,7 @@ pub const Cfg = @import("bytecode/cfg.zig");
 pub const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const opEffect = @import("bytecode/opcodes.zig").opEffect;
 const object = @import("object.zig");
+const Table = @import("table.zig").Table;
 const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
 const AstNode = parse.AstNode;
@@ -13,29 +14,29 @@ const testing = std.testing;
 
 const comptimePrint = std.fmt.comptimePrint;
 
-/// basically a tightly packed slice
-fn Span(comptime T: type) type {
-    return struct {
-        start: u32,
-        len: u32,
+// /// basically a tightly packed slice
+// fn Span(comptime T: type) type {
+//     return struct {
+//         start: u32,
+//         len: u32,
 
-        inline fn slice(self: @This(), source: []const T) []const T {
-            return source[self.start..][0..self.len];
-        }
+//         inline fn slice(self: @This(), source: []const T) []const T {
+//             return source[self.start..][0..self.len];
+//         }
 
-        const empty = @This(){ .len = 0, .start = 0 };
-    };
-}
+//         const empty = @This(){ .len = 0, .start = 0 };
+//     };
+// }
 
-const CoIndex = struct { index: u32 };
-pub const ConstIndex = struct { index: u32 };
-pub const NameIndex = struct { index: u32 };
-fn constant(i: u32) ConstIndex {
-    return .{ .index = i };
-}
-fn nameIndex(i: u32) NameIndex {
-    return .{ .index = i };
-}
+// const CoIndex = struct { index: u32 };
+// pub const ConstIndex = struct { index: u32 };
+// pub const NameIndex = struct { index: u32 };
+// fn constant(i: u32) ConstIndex {
+//     return .{ .index = i };
+// }
+pub const ConstTable = Table(object.Object);
+pub const NameTable = Table(object.Object);
+const InsnTable = Table(Insn);
 
 pub const StackEffectError = error{
     StackUnderflow,
@@ -152,11 +153,11 @@ pub const Insn = union(OpCode) {
     return_generator: void,
     return_value: void,
     setup_annotations: void,
-    store_name: NameIndex,
+    store_name: NameTable.Index,
     for_iter: RelativeJump,
     swap: usize,
-    load_const: ConstIndex,
-    load_name: NameIndex,
+    load_const: ConstTable.Index,
+    load_name: NameTable.Index,
     build_tuple: usize,
     build_list: usize,
     build_set: usize,
@@ -221,8 +222,8 @@ pub const Insn = union(OpCode) {
             .nop => .{ .nop = {} },
             .@"resume" => .{ .@"resume" = obj.int },
             .push_null => .{ .push_null = {} },
-            .load_name => .{ .load_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
-            .load_const => .{ .load_const = constant(arg orelse return error.MissingOpcodeArgument) },
+            .load_name => .{ .load_name = .init(arg orelse return error.MissingOpcodeArgument) },
+            .load_const => .{ .load_const = .init(arg orelse return error.MissingOpcodeArgument) },
             .return_const => .{ .return_const = {} },
             .return_value => .{ .return_value = {} },
             .call => .{ .call = obj.int },
@@ -231,7 +232,7 @@ pub const Insn = union(OpCode) {
             .store_fast => .{ .store_fast = .{ .int = arg orelse return error.MissingOpcodeArgument } },
             .load_fast_and_clear => .{ .load_fast_and_clear = .{ .int = arg orelse return error.MissingOpcodeArgument } },
             .setup_annotations => .{ .setup_annotations = obj.void },
-            .store_name => .{ .store_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
+            .store_name => .{ .store_name = .init(arg orelse return error.MissingOpcodeArgument) },
             .binary_op => .{ .binary_op = @enumFromInt(arg.?) },
             .compare_op => .{ .compare_op = try compareOperation(dis) },
             .contains_op => .{ .contains_op = (arg orelse return error.MissingOpcodeArgument) != 0 },
@@ -300,18 +301,18 @@ pub const Insn = union(OpCode) {
 
 pub const CodeObject = struct {
     module: *const Module,
-    instructions: Span(Insn) = .empty,
+    instructions: InsnTable.Span = .empty,
     // co_argcount: *const Object = &Zero,
     // co_code: *const Object = &EmptyString,
     // co_exceptiontable: *const Object = &EmptyString,
     // co_firstlineno: *const Object = &One,
     // co_freevars: *const Object = &EmptyTuple,
     // co_lnotab: *const Object = &None, // Deprecated, use co_lines instead
-    co_names: Span(object.Object) = .empty,
+    co_names: NameTable.Span = .empty,
     // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_varnames: *const Object = &EmptyTuple,
     // co_cellvars: *const Object = &EmptyTuple,
-    co_consts: Span(object.Object) = .empty,
+    co_consts: ConstTable.Span = .empty,
     // co_filename: *const Object = &EmptyString,
     // co_flags: *const Object = &Zero,
     // co_kwonlyargcount: *const Object = &Zero,
@@ -345,12 +346,12 @@ pub const Module = struct {
     allocator: std.mem.Allocator,
     /// the full set of instructions for the module
     /// which all code objects slice from
-    instruction_store: std.ArrayList(Insn) = .empty,
+    instruction_store: InsnTable = .empty,
     /// the full set of code object for the module
     /// references to code objects are indexes into this list
     codeobject_store: std.MultiArrayList(CodeObject) = .empty,
-    constant_store: std.ArrayList(object.Object) = .empty,
-    name_store: std.ArrayList(object.Object) = .empty,
+    constant_store: ConstTable = .empty,
+    name_store: NameTable = .empty,
     intern_pool: *intern.StringInternPool,
 
     pub fn init(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool) Module {
@@ -386,25 +387,25 @@ pub const Module = struct {
     }
 
     inline fn instructions(self: *const Module, co: *const CodeObject) []const Insn {
-        return co.instructions.slice(self.instruction_store.items);
+        return co.instructions.slice(self.instruction_store.table.items);
     }
 
     inline fn consts(self: *const Module, co: *const CodeObject) []const object.Object {
-        return co.co_consts.slice(self.constant_store.items);
+        return co.co_consts.slice(self.constant_store.table.items);
     }
 
     inline fn names(self: *const Module, co: *const CodeObject) []const object.Object {
-        return co.co_names.slice(self.name_store.items);
+        return co.co_names.slice(self.name_store.table.items);
     }
 
     pub const Builder = struct {
         allocator: std.mem.Allocator,
         ast_root: *const AstNode,
         intern_pool: *intern.StringInternPool,
-        queue: std.ArrayList(Seam) = .empty,
+        queue: SeamTable = .empty,
         /// Per-codeobject cache for deduping co_names entries.
         /// intern_pool owns string identity; this only maps symbols to local NameIndex operands.
-        current_name_indexes: std.AutoHashMap(object.Symbol, NameIndex),
+        current_name_indexes: std.AutoHashMap(object.Symbol, NameTable.Index),
         current_code_object: u32 = 0,
         current_const_start: usize = 0,
         current_name_start: usize = 0,
@@ -417,6 +418,7 @@ pub const Module = struct {
             parent: u32,
             node: *const AstNode,
         };
+        const SeamTable = Table(Seam);
 
         pub const Error = error{
             InvalidEntryNode,
@@ -439,8 +441,8 @@ pub const Module = struct {
             }
 
             _ = try builder.enqueueSeam(builder.ast_root);
-            while (builder.current_code_object < builder.queue.items.len) {
-                const current_seam = builder.queue.items[builder.current_code_object];
+            while (builder.current_code_object < builder.queue.table.items.len) {
+                const current_seam = builder.queue.table.items[builder.current_code_object];
                 try builder.processEntryNode(current_seam.node, &builder.mod.instruction_store);
                 builder.current_code_object += 1;
             }
@@ -453,19 +455,19 @@ pub const Module = struct {
 
         /// append a constant to the module store, and push the instruction
         fn appendConst(self: *Builder, obj: object.Object) !void {
-            for (self.mod.constant_store.items[self.current_const_start..], 0..) |existing, index| {
+            for (self.mod.constant_store.table.items[self.current_const_start..], 0..) |existing, index| {
                 if (objectEql(existing, obj)) {
                     try self.append(.{ .load_const = .{ .index = @intCast(index) } });
                     return;
                 }
             }
-            const index = self.mod.constant_store.items.len - self.current_const_start;
+            const index = self.mod.constant_store.table.items.len - self.current_const_start;
             try self.mod.constant_store.append(self.mod.allocator, obj);
             try self.append(.{ .load_const = .{ .index = @intCast(index) } });
         }
 
         fn appendFreshConst(self: *Builder, obj: object.Object) !void {
-            const index = self.mod.constant_store.items.len - self.current_const_start;
+            const index = self.mod.constant_store.table.items.len - self.current_const_start;
             try self.mod.constant_store.append(self.mod.allocator, obj);
             try self.append(.{ .load_const = .{ .index = @intCast(index) } });
         }
@@ -486,11 +488,11 @@ pub const Module = struct {
             };
         }
 
-        fn nameIndexForSymbol(self: *Builder, sym: object.Symbol) !NameIndex {
+        fn nameIndexForSymbol(self: *Builder, sym: object.Symbol) !NameTable.Index {
             const gop = try self.current_name_indexes.getOrPut(sym);
             if (!gop.found_existing) {
-                const index = self.mod.name_store.items.len - self.current_name_start;
-                gop.value_ptr.* = .{ .index = @intCast(index) };
+                const index = self.mod.name_store.table.items.len - self.current_name_start;
+                gop.value_ptr.* = .init(index);
                 try self.mod.name_store.append(self.mod.allocator, .{ .symbol = sym });
             }
             return gop.value_ptr.*;
@@ -560,28 +562,28 @@ pub const Module = struct {
 
         fn patchConditionalJump(self: *Builder, jump_index: usize, target_index: usize) void {
             const delta = self.forwardJumpDelta(jump_index, target_index);
-            switch (self.mod.instruction_store.items[jump_index]) {
-                .pop_jump_if_false => self.mod.instruction_store.items[jump_index].pop_jump_if_false.delta = delta,
-                .pop_jump_if_true => self.mod.instruction_store.items[jump_index].pop_jump_if_true.delta = delta,
+            switch (self.mod.instruction_store.table.items[jump_index]) {
+                .pop_jump_if_false => self.mod.instruction_store.table.items[jump_index].pop_jump_if_false.delta = delta,
+                .pop_jump_if_true => self.mod.instruction_store.table.items[jump_index].pop_jump_if_true.delta = delta,
                 else => unreachable,
             }
         }
 
         /// we've found the root node of a new codeobject, enqueue it for later
-        fn enqueueSeam(self: *Builder, node: *const AstNode) !CoIndex {
-            const co_index = self.queue.items.len;
+        fn enqueueSeam(self: *Builder, node: *const AstNode) !SeamTable.Index {
+            const co_index = self.queue.table.items.len;
             try self.queue.append(self.allocator, .{
                 .parent = self.current_code_object,
                 .node = node,
             });
-            return .{ .index = @intCast(co_index) };
+            return .init(co_index);
         }
 
-        fn processEntryNode(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
-            const insn_idx = self.mod.instruction_store.items.len;
+        fn processEntryNode(self: *Builder, ast_node: *const AstNode, insns: *InsnTable) Error!void {
+            const insn_idx = self.mod.instruction_store.table.items.len;
             const co_idx = self.mod.codeobject_store.len;
-            const co_const_idx = self.mod.constant_store.items.len;
-            const co_name_idx = self.mod.name_store.items.len;
+            const co_const_idx = self.mod.constant_store.table.items.len;
+            const co_name_idx = self.mod.name_store.table.items.len;
             self.current_const_start = co_const_idx;
             self.current_name_start = co_name_idx;
             self.current_name_indexes.clearRetainingCapacity();
@@ -628,16 +630,16 @@ pub const Module = struct {
 
             // update spans before exit
             self.mod.codeobject_store.items(.instructions)[co_idx] = .{
-                .start = @intCast(insn_idx),
-                .len = @intCast(self.mod.instruction_store.items[insn_idx..].len),
+                .start = .init(@intCast(insn_idx)),
+                .len = @intCast(self.mod.instruction_store.table.items[insn_idx..].len),
             };
             self.mod.codeobject_store.items(.co_consts)[co_idx] = .{
-                .start = @intCast(co_const_idx),
-                .len = @intCast(self.mod.constant_store.items[co_const_idx..].len),
+                .start = .init(@intCast(co_const_idx)),
+                .len = @intCast(self.mod.constant_store.table.items[co_const_idx..].len),
             };
             self.mod.codeobject_store.items(.co_names)[co_idx] = .{
-                .start = @intCast(co_name_idx),
-                .len = @intCast(self.mod.name_store.items[co_name_idx..].len),
+                .start = .init(@intCast(co_name_idx)),
+                .len = @intCast(self.mod.name_store.table.items[co_name_idx..].len),
             };
         }
 
@@ -647,7 +649,7 @@ pub const Module = struct {
             const continues: Flow = .{ .falls_through = true };
         };
 
-        fn generateStatements(self: *Builder, statements: []const parse.StatementNode, insns: *std.ArrayList(Insn)) Error!Flow {
+        fn generateStatements(self: *Builder, statements: []const parse.StatementNode, insns: *InsnTable) Error!Flow {
             var flow = Flow.continues;
 
             for (statements) |stmt| {
@@ -657,7 +659,7 @@ pub const Module = struct {
             return flow;
         }
 
-        fn generateStatement(self: *Builder, stmt: parse.StatementNode, insns: *std.ArrayList(Insn)) Error!Flow {
+        fn generateStatement(self: *Builder, stmt: parse.StatementNode, insns: *InsnTable) Error!Flow {
             switch (stmt) {
                 .expr => |expr| {
                     try self.generateInsns(expr, insns);
@@ -705,13 +707,13 @@ pub const Module = struct {
             };
         }
 
-        fn generateBinaryOp(self: *Builder, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateBinaryOp(self: *Builder, kind: BinaryOperation, binary_op: *const parse.BinaryOp, insns: *InsnTable) Error!void {
             try self.generateInsns(binary_op.lhs, insns);
             try self.generateInsns(binary_op.rhs, insns);
             try self.append(.{ .binary_op = kind });
         }
 
-        fn generateComparison(self: *Builder, comparison: parse.Comparison, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateComparison(self: *Builder, comparison: parse.Comparison, insns: *InsnTable) Error!void {
             try self.generateInsns(comparison.lhs, insns);
             try self.generateInsns(comparison.rhs, insns);
             switch (comparison.kind) {
@@ -738,13 +740,13 @@ pub const Module = struct {
             try self.append(.{ .compare_op = op });
         }
 
-        fn generateMembership(self: *Builder, membership: parse.BinaryOp, invert: bool, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateMembership(self: *Builder, membership: parse.BinaryOp, invert: bool, insns: *InsnTable) Error!void {
             try self.generateInsns(membership.lhs, insns);
             try self.generateInsns(membership.rhs, insns);
             try self.append(.{ .contains_op = invert });
         }
 
-        fn generateAssignment(self: *Builder, assignment: parse.BinaryOp, keep_value: bool, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateAssignment(self: *Builder, assignment: parse.BinaryOp, keep_value: bool, insns: *InsnTable) Error!void {
             if (assignment.rhs.* == .assignment) {
                 try self.generateAssignment(assignment.rhs.assignment, true, insns);
             } else {
@@ -754,7 +756,7 @@ pub const Module = struct {
             try self.generateInsns(assignment.lhs, insns);
         }
 
-        fn generateListDisplay(self: *Builder, list: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateListDisplay(self: *Builder, list: anytype, insns: *InsnTable) Error!void {
             switch (list) {
                 .empty => try self.append(.{ .build_list = 0 }),
                 .list => |items| {
@@ -786,7 +788,7 @@ pub const Module = struct {
             }
         }
 
-        fn generateSetDisplay(self: *Builder, set: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateSetDisplay(self: *Builder, set: anytype, insns: *InsnTable) Error!void {
             switch (set) {
                 .set => |items| {
                     var built = false;
@@ -815,7 +817,7 @@ pub const Module = struct {
             }
         }
 
-        fn generateDictionaryDisplay(self: *Builder, dictionary: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateDictionaryDisplay(self: *Builder, dictionary: anytype, insns: *InsnTable) Error!void {
             switch (dictionary) {
                 .empty => try self.append(.{ .build_map = 0 }),
                 .dictionary => |items| {
@@ -877,7 +879,7 @@ pub const Module = struct {
             return true;
         }
 
-        fn generateConstListExtend(self: *Builder, items: anytype, insns: *std.ArrayList(Insn)) Error!bool {
+        fn generateConstListExtend(self: *Builder, items: anytype, insns: *InsnTable) Error!bool {
             if (items.len < 3) return false;
             var constants = try std.ArrayList(object.Object).initCapacity(self.allocator, items.len);
             defer constants.deinit(self.allocator);
@@ -893,7 +895,7 @@ pub const Module = struct {
             return true;
         }
 
-        fn generateComprehensionHeader(self: *Builder, comprehension: anytype, comptime build_tag: OpCode, insns: *std.ArrayList(Insn)) Error!object.Symbol {
+        fn generateComprehensionHeader(self: *Builder, comprehension: anytype, comptime build_tag: OpCode, insns: *InsnTable) Error!object.Symbol {
             if (comprehension.for_expressions.items.len != 1) return Error.InvalidEntryNode;
             const comp_for = comprehension.for_expressions.items[0];
             if (comp_for.predicate_expression != null) return Error.InvalidEntryNode;
@@ -916,54 +918,54 @@ pub const Module = struct {
             return sym;
         }
 
-        fn beginComprehensionLoop(self: *Builder, sym: object.Symbol, insns: *std.ArrayList(Insn)) !usize {
+        fn beginComprehensionLoop(self: *Builder, sym: object.Symbol, insns: *InsnTable) !usize {
             try self.append(.{ .for_iter = .{ .delta = 0 } });
-            const for_iter_mark = insns.items.len - 1;
+            const for_iter_mark = insns.table.items.len - 1;
             try self.storeFast(sym);
             try self.current_fast_symbols.append(self.allocator, sym);
             return for_iter_mark;
         }
 
-        fn finishComprehensionLoop(self: *Builder, sym: object.Symbol, for_iter_mark: usize, body_index: usize, insns: *std.ArrayList(Insn)) !void {
+        fn finishComprehensionLoop(self: *Builder, sym: object.Symbol, for_iter_mark: usize, body_index: usize, insns: *InsnTable) !void {
             _ = self.current_fast_symbols.pop();
-            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, for_iter_mark) } });
+            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.table.items.len, for_iter_mark) } });
             try self.append(.{ .end_for = {} });
-            insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
+            insns.table.items[for_iter_mark].for_iter.delta = @intCast(insns.table.items.len - for_iter_mark);
             try self.append(.{ .swap = 2 });
             try self.storeFast(sym);
             try self.deferred_fast_cleanups.append(self.allocator, sym);
             _ = body_index;
         }
 
-        fn generateListComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateListComprehension(self: *Builder, comprehension: anytype, insns: *InsnTable) Error!void {
             const sym = try self.generateComprehensionHeader(comprehension, .build_list, insns);
             const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
-            const body_index = insns.items.len;
+            const body_index = insns.table.items.len;
             try self.generateInsns(comprehension.expression, insns);
             try self.append(.{ .list_append = 2 });
             try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
         }
 
-        fn generateSetComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateSetComprehension(self: *Builder, comprehension: anytype, insns: *InsnTable) Error!void {
             const sym = try self.generateComprehensionHeader(comprehension, .build_set, insns);
             const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
-            const body_index = insns.items.len;
+            const body_index = insns.table.items.len;
             try self.generateInsns(comprehension.expression, insns);
             try self.append(.{ .set_add = 2 });
             try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
         }
 
-        fn generateDictionaryComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateDictionaryComprehension(self: *Builder, comprehension: anytype, insns: *InsnTable) Error!void {
             const sym = try self.generateComprehensionHeader(comprehension, .build_map, insns);
             const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
-            const body_index = insns.items.len;
+            const body_index = insns.table.items.len;
             try self.generateInsns(comprehension.expression.key orelse return Error.InvalidEntryNode, insns);
             try self.generateInsns(comprehension.expression.value, insns);
             try self.append(.{ .map_add = 2 });
             try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
         }
 
-        fn generateGeneratorExpression(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateGeneratorExpression(self: *Builder, comprehension: anytype, insns: *InsnTable) Error!void {
             if (comprehension.for_expressions.items.len == 0) return Error.InvalidEntryNode;
             const seam = try self.allocator.create(AstNode);
             seam.* = .{ .comprehension = comprehension };
@@ -977,17 +979,17 @@ pub const Module = struct {
             try self.append(.{ .call = 0 });
         }
 
-        fn generateYieldExpression(self: *Builder, yield: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateYieldExpression(self: *Builder, yield: anytype, insns: *InsnTable) Error!void {
             switch (yield) {
                 .expression => |expression| {
                     try self.generateInsns(expression, insns);
                     try self.append(.{ .get_yield_from_iter = {} });
                     try self.appendConst(object.None);
-                    const send_index = insns.items.len;
+                    const send_index = insns.table.items.len;
                     try self.append(.{ .send = .{ .delta = 3 } });
                     try self.append(.{ .yield_value = 2 });
                     try self.append(.{ .@"resume" = 2 });
-                    try self.append(.{ .jump_backward_no_interrupt = .{ .delta = self.backwardJumpDelta(insns.items.len, send_index) } });
+                    try self.append(.{ .jump_backward_no_interrupt = .{ .delta = self.backwardJumpDelta(insns.table.items.len, send_index) } });
                     try self.append(.{ .end_send = {} });
                     try self.append(.{ .pop_top = {} });
                 },
@@ -1023,20 +1025,21 @@ pub const Module = struct {
             }
         }
 
-        fn generateAwaitExpression(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateAwaitExpression(self: *Builder, ast_node: *const AstNode, insns: *InsnTable) Error!void {
             try self.generateInsns(ast_node, insns);
             try self.append(.{ .get_awaitable = 0 });
             try self.appendConst(object.None);
-            const send_index = insns.items.len;
+            const send_index = insns.table.items.len;
             try self.append(.{ .send = .{ .delta = 3 } });
             try self.append(.{ .yield_value = 2 });
             try self.append(.{ .@"resume" = 3 });
-            try self.append(.{ .jump_backward_no_interrupt = .{ .delta = self.backwardJumpDelta(insns.items.len, send_index) } });
+            try self.append(.{ .jump_backward_no_interrupt = .{ .delta = self.backwardJumpDelta(insns.table.items.len, send_index) } });
             try self.append(.{ .end_send = {} });
         }
 
-        fn generateGeneratorCodeObject(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateGeneratorCodeObject(self: *Builder, comprehension: anytype, insns: *InsnTable) Error!void {
             if (comprehension.for_expressions.items.len == 0) return Error.InvalidEntryNode;
+            const insns_items = insns.table.items;
             try self.append(.{ .return_generator = {} });
             try self.append(.{ .pop_top = {} });
 
@@ -1051,7 +1054,7 @@ pub const Module = struct {
             const first_sym = try self.intern_pool.put(first_target.name.value);
 
             try self.append(.{ .for_iter = .{ .delta = 0 } });
-            const first_for_iter = insns.items.len - 1;
+            const first_for_iter = insns_items.len - 1;
             try self.current_fast_symbols.append(self.allocator, first_sym);
             try self.storeFast(first_sym);
 
@@ -1065,32 +1068,32 @@ pub const Module = struct {
             try self.generateInsns(second_for.iterator, insns);
             try self.append(.{ .get_iter = {} });
             try self.append(.{ .for_iter = .{ .delta = 0 } });
-            const second_for_iter = insns.items.len - 1;
+            const second_for_iter = insns_items.len - 1;
             try self.current_fast_symbols.append(self.allocator, second_sym);
             try self.storeFast(second_sym);
             try self.generateInsns(comprehension.expression, insns);
             try self.append(.{ .yield_value = 1 });
             try self.append(.{ .@"resume" = 1 });
             try self.append(.{ .pop_top = {} });
-            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, second_for_iter) } });
+            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns_items.len, second_for_iter) } });
             try self.append(.{ .end_for = {} });
-            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, first_for_iter) } });
+            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns_items.len, first_for_iter) } });
             try self.append(.{ .end_for = {} });
             try self.append(.{ .return_const = {} });
-            insns.items[first_for_iter].for_iter.delta = @intCast(insns.items.len - first_for_iter);
-            insns.items[second_for_iter].for_iter.delta = @intCast((second_for_iter + 1 + 0) - second_for_iter);
+            insns.table.items[first_for_iter].for_iter.delta = @intCast(insns_items.len - first_for_iter);
+            insns.table.items[second_for_iter].for_iter.delta = @intCast((second_for_iter + 1 + 0) - second_for_iter);
             try self.append(.{ .call_intrinsic_1 = .stopiteration_error });
             try self.append(.{ .reraise = 1 });
         }
 
-        fn generateIfStatement(self: *Builder, if_stmt: anytype, insns: *std.ArrayList(Insn)) Error!Flow {
+        fn generateIfStatement(self: *Builder, if_stmt: anytype, insns: *InsnTable) Error!Flow {
             try self.generateInsns(if_stmt.predicate, insns);
             try self.append(.{ .pop_jump_if_false = .{ .delta = 0 } });
-            const false_jump_index = insns.items.len - 1;
+            const false_jump_index = insns.table.items.len - 1;
 
             const then_flow = try self.generateStatements(if_stmt.suite.items, insns);
             if (if_stmt.else_suite) |else_suite| {
-                self.patchConditionalJump(false_jump_index, insns.items.len);
+                self.patchConditionalJump(false_jump_index, insns.table.items.len);
                 const else_flow = try self.generateStatements(else_suite.items, insns);
                 return .{ .falls_through = then_flow.falls_through or else_flow.falls_through };
             }
@@ -1099,17 +1102,17 @@ pub const Module = struct {
             // if body, but statement-boundary aware lowering should decide this
             // from the enclosing statement list instead.
             if (then_flow.falls_through) try self.append(.{ .return_const = {} });
-            self.patchConditionalJump(false_jump_index, insns.items.len);
+            self.patchConditionalJump(false_jump_index, insns.table.items.len);
             return Flow.continues;
         }
 
-        fn generateWhileStatement(self: *Builder, while_stmt: anytype, insns: *std.ArrayList(Insn)) Error!Flow {
-            const initial_condition_index = insns.items.len;
+        fn generateWhileStatement(self: *Builder, while_stmt: anytype, insns: *InsnTable) Error!Flow {
+            const initial_condition_index = insns.table.items.len;
             try self.generateInsns(while_stmt.predicate, insns);
             try self.append(.{ .pop_jump_if_false = .{ .delta = 0 } });
-            const initial_false_jump_index = insns.items.len - 1;
+            const initial_false_jump_index = insns.table.items.len - 1;
 
-            const body_index = insns.items.len;
+            const body_index = insns.table.items.len;
             try self.loop_continue_targets.append(self.allocator, initial_condition_index);
             const body_flow = try self.generateStatements(while_stmt.suite.items, insns);
             _ = body_flow;
@@ -1117,21 +1120,21 @@ pub const Module = struct {
 
             try self.generateInsns(while_stmt.predicate, insns);
             try self.append(.{ .pop_jump_if_false = .{ .delta = 1 } });
-            const tail_false_jump_index = insns.items.len - 1;
-            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, body_index) } });
+            const tail_false_jump_index = insns.table.items.len - 1;
+            try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.table.items.len, body_index) } });
 
-            const loop_exit_index = insns.items.len;
+            const loop_exit_index = insns.table.items.len;
             self.patchConditionalJump(tail_false_jump_index, loop_exit_index);
             try self.append(.{ .return_const = {} });
 
-            const initial_exit_index = insns.items.len;
+            const initial_exit_index = insns.table.items.len;
             self.patchConditionalJump(initial_false_jump_index, initial_exit_index);
             try self.append(.{ .return_const = {} });
 
             return Flow.terminates;
         }
 
-        fn generateInsns(self: *Builder, ast_node: *const AstNode, insns: *std.ArrayList(Insn)) Error!void {
+        fn generateInsns(self: *Builder, ast_node: *const AstNode, insns: *InsnTable) Error!void {
             switch (ast_node.*) {
                 // .root => break :blk Insn{ .@"resume" = 0 },
                 .root => {},
@@ -1285,7 +1288,7 @@ pub const Module = struct {
                 .del_stmt => {},
                 .continue_stmt => {
                     const target = self.loop_continue_targets.getLast();
-                    try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, target) } });
+                    try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.table.items.len, target) } });
                 },
                 .break_stmt => {},
                 .raise_stmt => {},
@@ -1298,7 +1301,7 @@ pub const Module = struct {
                     // pop iterable, push iterator
                     try self.append(.{ .get_iter = {} });
                     try self.append(.{ .for_iter = .{ .delta = 0 } });
-                    const for_iter_mark = insns.items.len - 1;
+                    const for_iter_mark = insns.table.items.len - 1;
                     // TODO: for non-trivial cases we'll need call back into this switch statement
                     //   but have a signal for load vs store
                     for (for_in.target_list.items) |target| {
@@ -1311,10 +1314,10 @@ pub const Module = struct {
 
                     // We jump by incrementing/decrementing the program counter.  Cpython records deltas that represent
                     // a similar idea but are a length in bytes; we're not going to match
-                    const jump_index = @as(i64, @intCast(for_iter_mark)) - @as(i64, @intCast(insns.items.len));
+                    const jump_index = @as(i64, @intCast(for_iter_mark)) - @as(i64, @intCast(insns.table.items.len));
                     try self.append(.{ .jump_backward = .{ .delta = jump_index } });
                     try self.append(.{ .end_for = {} });
-                    insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
+                    insns.table.items[for_iter_mark].for_iter.delta = @intCast(insns.table.items.len - for_iter_mark);
                 },
                 .fn_decl => |fn_decl| {
                     // handle the suite in a different co
@@ -1436,11 +1439,11 @@ test "bytecode: binary ops" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = constant(0) },
+            .{ .load_const = .init(0) },
             .{ .copy = {} },
             .{ .pop_jump_if_false = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = constant(1) },
+            .{ .load_const = .init(1) },
             .{ .pop_top = {} },
             .{ .return_const = {} },
         };
@@ -1455,11 +1458,11 @@ test "bytecode: binary ops" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = constant(0) },
+            .{ .load_const = .init(0) },
             .{ .copy = {} },
             .{ .pop_jump_if_true = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = constant(1) },
+            .{ .load_const = .init(1) },
             .{ .pop_top = {} },
             .{ .return_const = {} },
         };
@@ -1474,15 +1477,15 @@ test "bytecode: binary ops" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = constant(0) },
+            .{ .load_const = .init(0) },
             .{ .copy = {} },
             .{ .pop_jump_if_false = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = constant(1) },
+            .{ .load_const = .init(1) },
             .{ .copy = {} },
             .{ .pop_jump_if_true = .{ .delta = 2 } },
             .{ .pop_top = {} },
-            .{ .load_const = constant(0) },
+            .{ .load_const = .init(0) },
             .{ .pop_top = {} },
             .{ .return_const = {} },
         };
@@ -1504,11 +1507,11 @@ test "bytecode: conditional expression" {
 
         const expected = [_]Insn{
             .{ .@"resume" = 0 },
-            .{ .load_const = constant(0) },
+            .{ .load_const = .init(0) },
             .{ .pop_jump_if_false = .{ .delta = 2 } },
-            .{ .load_const = constant(1) },
+            .{ .load_const = .init(1) },
             .{ .return_value = {} },
-            .{ .load_const = constant(2) },
+            .{ .load_const = .init(2) },
             .{ .pop_top = {} },
             .{ .return_const = {} },
         };
@@ -1562,17 +1565,17 @@ test "bytecode: codeobject seams for function definitions" {
 
     const expected_main = [_]Insn{
         .{ .@"resume" = 0 },
-        .{ .load_const = constant(0) },
-        .{ .store_name = nameIndex(0) },
-        .{ .load_const = constant(1) },
-        .{ .store_name = nameIndex(1) },
-        .{ .load_const = constant(2) },
+        .{ .load_const = .init(0) },
+        .{ .store_name = .init(0) },
+        .{ .load_const = .init(1) },
+        .{ .store_name = .init(1) },
+        .{ .load_const = .init(2) },
         .{ .make_function = {} },
-        .{ .store_name = nameIndex(2) },
+        .{ .store_name = .init(2) },
         .{ .push_null = {} },
-        .{ .load_name = nameIndex(2) },
-        .{ .load_name = nameIndex(0) },
-        .{ .load_name = nameIndex(1) },
+        .{ .load_name = .init(2) },
+        .{ .load_name = .init(0) },
+        .{ .load_name = .init(1) },
         .{ .call = 2 },
         .{ .pop_top = {} },
         .{ .return_const = {} },
@@ -1585,8 +1588,8 @@ test "bytecode: codeobject seams for function definitions" {
     // - real python does load_fast instead of load_name
     const expected_fn = [_]Insn{
         .{ .@"resume" = 0 },
-        .{ .load_name = nameIndex(0) },
-        .{ .load_name = nameIndex(1) },
+        .{ .load_name = .init(0) },
+        .{ .load_name = .init(1) },
         .{ .binary_op = .add },
         .{ .return_value = {} },
     };

@@ -483,7 +483,7 @@ fn internOptimizedConst(
     allocator: std.mem.Allocator,
     constants: *std.ArrayList(object.Object),
     value: object.Object,
-) !bytecode.ConstIndex {
+) !bytecode.ConstTable.Index {
     for (constants.items, 0..) |existing, index| {
         if (objectEql(existing, value)) return .{ .index = @intCast(index) };
     }
