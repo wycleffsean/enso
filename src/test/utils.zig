@@ -5,7 +5,7 @@ const object = @import("../object.zig");
 const parse = @import("../parse.zig");
 const intern = @import("../bytecode/intern.zig");
 const bytecode = @import("../bytecode.zig");
-const ssa = @import("../ssa.zig");
+const ssa = @import("../ir/legacy/ssa.zig");
 pub const CompilerHarness = struct {
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,

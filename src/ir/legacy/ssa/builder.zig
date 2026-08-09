@@ -1,5 +1,5 @@
 const std = @import("std");
-const bytecode = @import("../bytecode.zig");
+const bytecode = @import("../../../bytecode.zig");
 
 pub const BlockId = bytecode.Cfg.BlockIndex;
 pub const VariableId = u32;

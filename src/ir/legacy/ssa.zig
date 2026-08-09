@@ -1,8 +1,8 @@
 const std = @import("std");
-const bytecode = @import("bytecode.zig");
-const object = @import("object.zig");
-pub const builder = @import("ssa/builder.zig");
-pub const format = @import("ssa/format.zig");
+const bytecode = @import("../../bytecode.zig");
+const object = @import("../../object.zig");
+pub const builder = @import("./ssa/builder.zig");
+pub const format = @import("./ssa/format.zig");
 
 pub const BlockId = builder.BlockId;
 pub const ValueId = builder.ValueId;
@@ -585,7 +585,7 @@ fn fallthroughBlock(out: *const SsaGraph, block: BlockId) ?BlockId {
 }
 
 const testing = std.testing;
-const test_utils = @import("test/utils.zig");
+const test_utils = @import("../../test/utils.zig");
 
 test "ssa: codeobject lowering uses const and name tables" {
     var harness = try test_utils.CompilerHarness.create(testing.allocator);

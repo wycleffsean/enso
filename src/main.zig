@@ -7,7 +7,7 @@ const parse = @import("parse.zig");
 pub const bytecode = @import("bytecode.zig");
 pub const object = @import("object.zig");
 const vm = @import("vm.zig");
-const ssa = @import("ssa.zig");
+const ssa = @import("ir/legacy/ssa.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
 
