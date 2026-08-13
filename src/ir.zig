@@ -6,6 +6,11 @@ const OpCode = enum(u8) {
     nop,
     identity,
     branch,
+    ret,
+
+    inline fn isTerminator(op: OpCode) bool {
+        return effectsOf(op).terminator;
+    }
 };
 
 const Effects = packed struct(u8) {
@@ -20,7 +25,8 @@ const Effects = packed struct(u8) {
 
 fn effectsOf(op: OpCode) Effects {
     return switch (op) {
-        .nop => .{},
+        .nop, .identity, .branch => .{},
+        .ret => .{ .terminator = true },
     };
 }
 
@@ -85,6 +91,16 @@ const Value = struct {
 const Block = struct {
     // values: std.ArrayList(ValueId) = .empty, - a span into the procedure's values would be better
     preds: std.ArrayList(BlockId) = .empty,
+
+    fn deinit(b: *Block, allocator: std.mem.Allocator) void {
+        b.preds.deinit(allocator);
+    }
+
+    fn terminator(b: Block, proc: *const Procedure) ValueId {
+        if (b.values.items.len == 0) return .none;
+        const last = b.values.items[b.values.items.len - 1];
+        return if (proc.opcodeOf(last).isTerminator()) last else .none;
+    }
 };
 
 const BranchPayload = struct {
@@ -101,11 +117,19 @@ const BranchPayload = struct {
 const Procedure = struct {
     allocator: std.mem.Allocator,
     values: std.MultiArrayList(Value) = .empty,
+    blocks: std.ArrayList(Block) = .empty,
     extra: std.ArrayList(u32) = .empty,
 
     fn deinit(p: *Procedure) void {
         p.values.deinit(p.allocator);
         p.extra.deinit(p.allocator);
+
+        for (p.blocks.items) |*block| block.deinit(p.allocator);
+        p.blocks.deinit(p.allocator);
+    }
+
+    fn opcodeOf(p: *const Procedure, vid: ValueId) OpCode {
+        return p.getValue(vid).op;
     }
 
     fn addValue(p: *Procedure, value: Value) !ValueId {
@@ -113,8 +137,8 @@ const Procedure = struct {
         try p.values.append(p.allocator, value);
         return i;
     }
-    fn getValue(p: *const Procedure, valueid: ValueId) Value {
-        return p.values.get(valueid.idx());
+    fn getValue(p: *const Procedure, vid: ValueId) Value {
+        return p.values.get(vid.idx());
     }
 
     /// Extra Payloads - borrowing this DoD from Zig's own compiler
@@ -157,6 +181,14 @@ const Procedure = struct {
             .rhs = extra_offset,
         });
     }
+
+    pub fn addBlock(p: *Procedure) !BlockId {
+        const id = BlockId.from(@intCast(p.blocks.items.len));
+        try p.blocks.append(p.allocator, .{});
+        return id;
+    }
+
+    pub fn successors(p: *const Procedure, block: BlockId, buf: *[8]BlockId) []const BlockId {}
 };
 
 test "procedure: encoding 'extra' data" {
@@ -178,4 +210,14 @@ test "procedure: encoding 'extra' data" {
 
     const payload = proc.extraData(BranchPayload.Extra, branch_value.rhs);
     try testing.expectEqual(branch_extra, payload);
+}
+
+test "procedure: block successors" {
+    var proc: Procedure = .{
+        .allocator = testing.allocator,
+    };
+    defer proc.deinit();
+
+    const block1 = try proc.addBlock();
+    _ = block1;
 }
