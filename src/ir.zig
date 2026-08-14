@@ -7,6 +7,7 @@ const OpCode = enum(u8) {
     identity,
     branch,
     ret,
+    py_truthy,
 
     inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -26,7 +27,7 @@ const Effects = packed struct(u8) {
 
 fn effectsOf(op: OpCode) Effects {
     return switch (op) {
-        .nop, .identity => .{},
+        .nop, .identity, .py_truthy => .{},
         .branch, .ret => .{ .terminator = true },
     };
 }
@@ -82,7 +83,7 @@ const Value = struct {
     rhs: u32,
 
     const @"true" = Value{
-        .op = .identity,
+        .op = .py_truthy,
         .repr = .i1,
         .lhs = 1,
         .rhs = 0,
@@ -132,7 +133,11 @@ const Procedure = struct {
     }
 
     fn opcodeOf(p: *const Procedure, vid: ValueId) OpCode {
-        return p.getValue(vid).op;
+        return p.values.items(.op)[vid.idx()];
+    }
+
+    fn reprOf(p: *const Procedure, vid: ValueId) Repr {
+        return p.values.items(.repr)[vid.idx()];
     }
 
     fn getValue(p: *const Procedure, vid: ValueId) Value {
@@ -209,6 +214,28 @@ const Procedure = struct {
             else => return buf[0..0],
         }
     }
+
+    fn replaceWithIdentity(p: *Procedure, old: ValueId, new: ValueId) void {
+        assert(old != new);
+        assert(p.reprOf(old) == p.reprOf(new));
+        p.values.items(.op)[old.idx()] = .identity;
+        p.values.items(.lhs)[old.idx()] = @intFromEnum(new);
+        p.values.items(.rhs)[old.idx()] = 0;
+    }
+
+    /// See through `identity` chains.  Every operand read should go thru this
+    fn resolve(p: *const Procedure, vid: ValueId) ValueId {
+        var cur = vid;
+        const ops = p.values.items(.op);
+        const lhs = p.values.items(.lhs);
+        var guard: u32 = 0;
+        while (cur != .none and ops[cur.idx()] == .identity) {
+            cur = ValueId.from(lhs[cur.idx()]);
+            guard += 1;
+            assert(guard < 1_000_000); // we have an identity cycle bug
+        }
+        return cur;
+    }
 };
 
 test "procedure: encoding 'extra' data" {
@@ -248,4 +275,18 @@ test "procedure: block successors" {
 
     var buf: [8]BlockId = undefined;
     try testing.expectEqualSlices(BlockId, ([2]BlockId{ then_b, else_b })[0..], proc.successors(root, &buf));
+}
+
+test "procedure: resolve" {
+    var proc: Procedure = .{
+        .allocator = testing.allocator,
+    };
+    defer proc.deinit();
+
+    const root = try proc.addBlock();
+    const v1 = try proc.addValue(root, .true);
+    const v2 = try proc.addValue(root, .true);
+    proc.replaceWithIdentity(v2, v1);
+
+    try testing.expectEqual(v1, proc.resolve(v2));
 }
