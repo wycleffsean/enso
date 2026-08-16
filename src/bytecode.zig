@@ -564,6 +564,7 @@ pub const Module = struct {
             switch (self.mod.instruction_store.items[jump_index]) {
                 .pop_jump_if_false => self.mod.instruction_store.items[jump_index].pop_jump_if_false.delta = delta,
                 .pop_jump_if_true => self.mod.instruction_store.items[jump_index].pop_jump_if_true.delta = delta,
+                .jump_forward => self.mod.instruction_store.items[jump_index].jump_forward.delta = delta,
                 else => unreachable,
             }
         }
@@ -1091,8 +1092,27 @@ pub const Module = struct {
 
             const then_flow = try self.generateStatements(if_stmt.suite.items, insns);
             if (if_stmt.else_suite) |else_suite| {
+                // The "then" suite is its own basic block, so if it falls
+                // through into what follows it needs an explicit jump past
+                // the "else" suite rather than relying on fallthrough (which
+                // would incorrectly run the else suite too). We deliberately
+                // don't collapse this into a single shared exit jump the way
+                // CPython's peephole optimizer does: that's a bytecode-level
+                // optimization that only makes later SSA/CFG passes redo
+                // work we'd have to undo first.
+                var then_exit_jump_index: ?usize = null;
+                if (then_flow.falls_through) {
+                    try self.append(.{ .jump_forward = .{ .delta = 0 } });
+                    then_exit_jump_index = insns.items.len - 1;
+                }
+
                 self.patchConditionalJump(false_jump_index, insns.items.len);
                 const else_flow = try self.generateStatements(else_suite.items, insns);
+
+                if (then_exit_jump_index) |jump_index| {
+                    self.patchConditionalJump(jump_index, insns.items.len);
+                }
+
                 return .{ .falls_through = then_flow.falls_through or else_flow.falls_through };
             }
 
@@ -1515,6 +1535,109 @@ test "bytecode: conditional expression" {
         };
 
         try testing.expectEqualSlices(Insn, expected[0..], co.getInstructions());
+    }
+}
+
+test "bytecode: if/else statement emits jump_forward past else suite" {
+    // def ex(cond):
+    //     if cond:
+    //         x = 10
+    //     else:
+    //         x = 20
+    //     return x + 1
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+    const source =
+        "def ex(cond):\n" ++
+        "\tif cond:\n" ++
+        "\t\tx = 10\n" ++
+        "\telse:\n" ++
+        "\t\tx = 20\n" ++
+        "\treturn x + 1\n";
+    _ = try harness.buildCodeObjects(source);
+    const fn_co = harness.module.codeobject_store.get(1);
+
+    const expected = [_]Insn{
+        .{ .@"resume" = 0 },
+        .{ .load_name = nameIndex(0) }, // cond
+        .{ .pop_jump_if_false = .{ .delta = 3 } },
+        .{ .load_const = constant(0) }, // 10
+        .{ .store_name = nameIndex(1) }, // x
+        .{ .jump_forward = .{ .delta = 2 } },
+        .{ .load_const = constant(1) }, // 20
+        .{ .store_name = nameIndex(1) }, // x
+        .{ .load_name = nameIndex(1) }, // x
+        .{ .load_const = constant(2) }, // 1
+        .{ .binary_op = .add },
+        .{ .return_value = {} },
+    };
+
+    try testing.expectEqualSlices(Insn, expected[0..], fn_co.getInstructions());
+
+    // The CFG should see the "then" suite as its own block that jumps past
+    // the "else" suite, rather than inferring only three blocks.
+    var cfg = try Cfg.build(testing.allocator, fn_co.getInstructions());
+    defer cfg.deinit();
+    try testing.expectEqual(@as(usize, 4), cfg.blocks.len);
+}
+
+test "bytecode: if/elif/else statement chains jump_forward per branch" {
+    // def ex(cond, other):
+    //     if cond:
+    //         x = 10
+    //     elif other:
+    //         x = 20
+    //     else:
+    //         x = 30
+    //     return x
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+    const source =
+        "def ex(cond, other):\n" ++
+        "\tif cond:\n" ++
+        "\t\tx = 10\n" ++
+        "\telif other:\n" ++
+        "\t\tx = 20\n" ++
+        "\telse:\n" ++
+        "\t\tx = 30\n" ++
+        "\treturn x\n";
+    _ = try harness.buildCodeObjects(source);
+    const fn_co = harness.module.codeobject_store.get(1);
+
+    var jump_forward_count: usize = 0;
+    for (fn_co.getInstructions()) |insn| {
+        if (insn == .jump_forward) jump_forward_count += 1;
+    }
+    // one jump past the elif/else chain, and one past the elif's own else
+    try testing.expectEqual(@as(usize, 2), jump_forward_count);
+
+    var cfg = try Cfg.build(testing.allocator, fn_co.getInstructions());
+    defer cfg.deinit();
+    // entry, if-then, elif-condition, elif-then, else, exit
+    try testing.expectEqual(@as(usize, 6), cfg.blocks.len);
+}
+
+test "bytecode: if/else statement skips jump_forward when then suite terminates" {
+    // def ex(cond):
+    //     if cond:
+    //         return 1
+    //     else:
+    //         x = 2
+    //     return x
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+    const source =
+        "def ex(cond):\n" ++
+        "\tif cond:\n" ++
+        "\t\treturn 1\n" ++
+        "\telse:\n" ++
+        "\t\tx = 2\n" ++
+        "\treturn x\n";
+    _ = try harness.buildCodeObjects(source);
+    const fn_co = harness.module.codeobject_store.get(1);
+
+    for (fn_co.getInstructions()) |insn| {
+        try testing.expect(insn != .jump_forward);
     }
 }
 
