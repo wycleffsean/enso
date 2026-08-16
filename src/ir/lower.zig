@@ -28,11 +28,12 @@ pub fn lowerCodeObject(allocator: std.mem.Allocator, co: bytecode.CodeObject) !i
 }
 
 fn lowerBlock(b: *Builder, insns: []const bytecode.Insn, predecessors: []const cfg.Edge) !void {
-    _ = predecessors;
-    const entry = try b.newBlock();
-    try b.sealBlock(entry);
-    b.switchTo(entry);
+    const bid = try b.newBlock();
+    var block = &b.proc.blocks.items[bid.idx()];
+    try block.addPredecessors(b.proc, predecessors);
+    b.switchTo(bid);
     for (insns) |insn| if (!terminatesBlock(insn)) try lowerInsn(b, insn);
+    try b.sealBlock(bid);
 }
 
 fn lowerInsn(b: *Builder, insn: bytecode.Insn) !void {
@@ -151,7 +152,7 @@ test "ir/lower: branching" {
     // const elseb: BlockId = .from(2);
     // const exitb: BlockId = .from(3);
 
-    // try testing.expectEqual(4, proc.blocks.items.len);
+    try testing.expectEqual(4, proc.blocks.items.len);
 
     // try assertSuccession(&proc, entryb, thenb);
     // try assertSuccession(&proc, entryb, elseb);
