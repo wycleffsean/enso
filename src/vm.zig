@@ -481,7 +481,7 @@ fn LoweringVM(comptime BackendType: type) type {
                     self.backend.storeName(names[namei.index], self.stack.pop());
                 },
                 // TODO: this will all be deleted soon, so we just panic for now
-                .build_tuple => {
+                .build_tuple, .jump_forward => {
                     unreachable;
                 },
                 inline else => |oparg, tag| {

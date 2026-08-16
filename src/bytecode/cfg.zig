@@ -85,6 +85,8 @@ pub fn blockPredecessors(self: *const Self, block: BlockIndex) []const Edge {
     return self.blocks.items(.predecessors)[block].slice(self.links.items);
 }
 
+// TODO: we calculate successors in the SSA so this should just be dropped
+//   We're only using the successors for testing
 pub fn blockSuccessors(self: *const Self, block: BlockIndex) []const Edge {
     return self.blocks.items(.successors)[block].slice(self.links.items);
 }
@@ -120,6 +122,7 @@ fn maybeTerminate(self: *Self, terminal_index: u32, insn: bytecode.Insn) Error!b
         },
         .jump_backward,
         .jump_backward_no_interrupt,
+        .jump_forward,
         => |jump| {
             const jump_index = try checkedJumpTarget(terminal_index, jump.delta, self.instructions.len);
             try self.edges.append(self.allocator, .{ .kind = .jump, .from = terminal_index, .to = jump_index });
@@ -277,6 +280,7 @@ fn terminatesBlock(insn: bytecode.Insn) bool {
         .pop_jump_if_true,
         .jump_backward,
         .jump_backward_no_interrupt,
+        .jump_forward,
         .return_value,
         .return_const,
         .return_generator,
@@ -381,6 +385,38 @@ test "bytecode/cfg fallthrough and jump to same block is a single edge" {
     try testing.expectEqual(@as(usize, 2), cfg.blocks.len);
     try expectEdges(&.{.{ .kind = .fallthrough, .from = 0, .to = 1 }}, cfg.blockSuccessors(0));
     try expectEdges(&.{.{ .kind = .fallthrough, .from = 0, .to = 1 }}, cfg.blockPredecessors(1));
+}
+
+test "bytecode/cfg if/else statement" {
+    const instructions = [_]bytecode.Insn{
+        .{ .@"resume" = 0 },
+        .{ .load_name = .{ .index = 0 } },
+        .{ .pop_jump_if_false = .{ .delta = 3 } },
+        .{ .load_const = .{ .index = 0 } },
+        .{ .store_name = .{ .index = 1 } },
+        .{ .jump_forward = .{ .delta = 2 } },
+        .{ .load_const = .{ .index = 1 } },
+        .{ .store_name = .{ .index = 1 } },
+        .{ .load_name = .{ .index = 1 } },
+        .{ .load_const = .{ .index = 2 } },
+        .{ .binary_op = .add },
+        .{ .return_value = {} },
+    };
+
+    var cfg = try build(testing.allocator, &instructions);
+    defer cfg.deinit();
+
+    try testing.expectEqual(@as(usize, 4), cfg.blocks.len);
+    try expectEdges(&.{
+        .{ .kind = .fallthrough, .from = 0, .to = 1 },
+    }, cfg.blockPredecessors(1));
+    try expectEdges(&.{
+        .{ .kind = .jump, .from = 0, .to = 2 },
+    }, cfg.blockPredecessors(2));
+    try expectEdges(&.{
+        .{ .kind = .jump, .from = 1, .to = 3 },
+        .{ .kind = .fallthrough, .from = 2, .to = 3 },
+    }, cfg.blockPredecessors(3));
 }
 
 test "bytecode/cfg bad jump target" {

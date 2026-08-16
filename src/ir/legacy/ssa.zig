@@ -444,7 +444,7 @@ fn lowerInsn(out: *SsaGraph, co: bytecode.CodeObject, block: BlockId, stack: *Bl
                 .false_block = done_block,
             } });
         },
-        .jump_backward, .jump_backward_no_interrupt => {
+        .jump_backward, .jump_backward_no_interrupt, .jump_forward => {
             const target = jumpTargetBlock(out, block) orelse return Error.UnsupportedOpcode;
             try record(out, block, null, .{ .jump = target });
         },

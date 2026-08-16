@@ -19,7 +19,7 @@ fn Span(comptime T: type) type {
         start: u32,
         len: u32,
 
-        inline fn slice(self: @This(), source: []const T) []const T {
+        pub inline fn slice(self: @This(), source: []const T) []const T {
             return source[self.start..][0..self.len];
         }
 
@@ -181,6 +181,7 @@ pub const Insn = union(OpCode) {
     make_function: void,
     jump_backward_no_interrupt: RelativeJump,
     jump_backward: RelativeJump,
+    jump_forward: RelativeJump,
     load_fast_and_clear: object.Object,
     list_append: usize,
     set_add: usize,
