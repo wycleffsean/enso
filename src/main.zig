@@ -7,7 +7,7 @@ const parse = @import("parse.zig");
 pub const bytecode = @import("bytecode.zig");
 pub const object = @import("object.zig");
 const vm = @import("vm.zig");
-const ssa = @import("ir/legacy/ssa.zig");
+// const ssa = @import("ir/legacy/ssa.zig");
 const ir = @import("ir.zig");
 const runtime = @import("runtime.zig");
 const testing = std.testing;
@@ -174,10 +174,10 @@ fn disassemble(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void
     }
     try stdout.flush();
 
-    var example = try ssa.build(allocator, co);
-    defer example.deinit();
+    // var example = try ssa.build(allocator, co);
+    // defer example.deinit();
 
-    try stdout.print("{f}", .{ssa.format.graph(&example)});
+    // try stdout.print("{f}", .{ssa.format.graph(&example)});
     try stdout.flush();
 }
 
@@ -196,7 +196,7 @@ test {
     _ = parse;
     _ = bytecode;
     _ = vm;
-    _ = ssa;
+    // _ = ssa;
     _ = ir;
     _ = runtime;
     _ = @import("lex/lexer_test.zig");

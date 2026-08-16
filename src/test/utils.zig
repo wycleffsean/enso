@@ -5,7 +5,8 @@ const object = @import("../object.zig");
 const parse = @import("../parse.zig");
 const intern = @import("../bytecode/intern.zig");
 const bytecode = @import("../bytecode.zig");
-const ssa = @import("../ir/legacy/ssa.zig");
+// const ssa = @import("../ir/legacy/ssa.zig");
+const eir = @import("../ir.zig");
 pub const CompilerHarness = struct {
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
@@ -15,7 +16,7 @@ pub const CompilerHarness = struct {
     const Self = @This();
     const ParseError = parse.Parser.Error;
     const ParseOrIRGenError = ParseError || bytecode.Module.Builder.Error;
-    const SsaError = ParseOrIRGenError || ssa.Error;
+    // const SsaError = ParseOrIRGenError || ssa.Error;
 
     pub fn create(base_allocator: std.mem.Allocator) !*Self {
         var arena = std.heap.ArenaAllocator.init(base_allocator);
@@ -49,9 +50,14 @@ pub const CompilerHarness = struct {
         return self.module.codeobject_store.get(0);
     }
 
-    pub fn doSsa(self: *Self, code: []const u8) SsaError!ssa.SsaGraph {
+    // pub fn doSsa(self: *Self, code: []const u8) SsaError!ssa.SsaGraph {
+    //     const co = try self.buildCodeObjects(code);
+    //     return ssa.SsaBuilder.generate(self.allocator, co);
+    // }
+
+    pub fn lower(self: *Self, code: []const u8) !eir.Procedure {
         const co = try self.buildCodeObjects(code);
-        return ssa.SsaBuilder.generate(self.allocator, co);
+        return eir.lowerCodeObject(self.allocator, co);
     }
 };
 

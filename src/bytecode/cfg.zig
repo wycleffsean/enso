@@ -273,7 +273,7 @@ pub fn validateStackHeights(self: *Self) Error!u32 {
     return @max(max_stack_height, 1);
 }
 
-fn terminatesBlock(insn: bytecode.Insn) bool {
+pub fn terminatesBlock(insn: bytecode.Insn) bool {
     return switch (insn) {
         .for_iter,
         .pop_jump_if_false,

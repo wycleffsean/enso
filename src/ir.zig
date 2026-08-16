@@ -1,13 +1,24 @@
 const std = @import("std");
+const cfg = @import("bytecode/cfg.zig");
+const lower = @import("ir/lower.zig");
+pub const lowerCodeObject = lower.lowerCodeObject;
 const assert = std.debug.assert;
 const testing = std.testing;
 
-const OpCode = enum(u8) {
+pub const OpCode = enum(u8) {
     nop,
     identity,
     branch,
     ret,
+    phi,
+    upsilon,
+
+    arg,
+
+    const_obj,
+
     py_truthy,
+    py_call,
 
     inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -27,8 +38,12 @@ const Effects = packed struct(u8) {
 
 fn effectsOf(op: OpCode) Effects {
     return switch (op) {
-        .nop, .identity, .py_truthy => .{},
+        .nop, .identity, .phi, .upsilon => .{},
         .branch, .ret => .{ .terminator = true },
+        .arg => .{},
+        .const_obj => .{},
+        .py_truthy => .{},
+        .py_call => .{},
     };
 }
 
@@ -50,35 +65,38 @@ const Repr = enum(u8) {
     }
 };
 
-const ValueId = enum(u32) {
+pub const ValueId = enum(u32) {
     none = std.math.maxInt(u32),
     _,
 
-    inline fn idx(b: ValueId) u32 {
+    pub inline fn idx(b: ValueId) u32 {
         assert(b != .none);
         return @intFromEnum(b);
     }
-    inline fn from(i: u32) ValueId {
+    pub inline fn from(i: u32) ValueId {
         return @enumFromInt(i);
     }
 };
 
-const BlockId = enum(u32) {
+pub const BlockId = enum(u32) {
     none = std.math.maxInt(u32),
     _,
 
-    inline fn idx(b: BlockId) u32 {
+    pub inline fn idx(b: BlockId) u32 {
         assert(b != .none);
         return @intFromEnum(b);
     }
-    inline fn from(i: u32) BlockId {
+    pub inline fn from(i: u32) BlockId {
         return @enumFromInt(i);
     }
 };
 
-const Value = struct {
+pub const LocalIdx = u16;
+
+pub const Value = struct {
     op: OpCode,
     repr: Repr,
+    origin: u32 = 0, //TODO: fix me, no default value
     lhs: u32,
     rhs: u32,
 
@@ -104,10 +122,16 @@ const Block = struct {
     // TODO: would a span into the procedure's values would be better?
     values: std.ArrayList(ValueId) = .empty,
     preds: std.ArrayList(BlockId) = .empty,
+    sealed: bool = false,
 
     fn deinit(b: *Block, allocator: std.mem.Allocator) void {
         b.preds.deinit(allocator);
         b.values.deinit(allocator);
+    }
+
+    fn addPredecessors(b: *Block, p: *Procedure, edges: []const cfg.Edge ) !void {
+        b.preds.ensureUnusedCapacity(p.allocator, edges.len);
+        for(edges) |edge|
     }
 
     fn terminator(b: *const Block, p: *const Procedure) ValueId {
@@ -118,13 +142,13 @@ const Block = struct {
 };
 
 /// like in B3! :)
-const Procedure = struct {
+pub const Procedure = struct {
     allocator: std.mem.Allocator,
     values: std.MultiArrayList(Value) = .empty,
     blocks: std.ArrayList(Block) = .empty,
     extra: std.ArrayList(u32) = .empty,
 
-    fn deinit(p: *Procedure) void {
+    pub fn deinit(p: *Procedure) void {
         p.values.deinit(p.allocator);
         p.extra.deinit(p.allocator);
 
@@ -132,12 +156,16 @@ const Procedure = struct {
         p.blocks.deinit(p.allocator);
     }
 
-    fn opcodeOf(p: *const Procedure, vid: ValueId) OpCode {
+    inline fn opcodeOf(p: *const Procedure, vid: ValueId) OpCode {
         return p.values.items(.op)[vid.idx()];
     }
 
-    fn reprOf(p: *const Procedure, vid: ValueId) Repr {
+    inline fn reprOf(p: *const Procedure, vid: ValueId) Repr {
         return p.values.items(.repr)[vid.idx()];
+    }
+
+    inline fn effectsFor(p: *const Procedure, vid: ValueId) Effects {
+        return effectsOf(p.opcodeOf(vid));
     }
 
     fn getValue(p: *const Procedure, vid: ValueId) Value {
@@ -181,7 +209,7 @@ const Procedure = struct {
         return id;
     }
 
-    fn addValue(p: *Procedure, bid: BlockId, value: Value) !ValueId {
+    pub fn addValue(p: *Procedure, bid: BlockId, value: Value) !ValueId {
         const i = ValueId.from(@intCast(p.values.len));
         try p.values.append(p.allocator, value);
         var block = &p.blocks.items[bid.idx()];
@@ -215,12 +243,18 @@ const Procedure = struct {
         }
     }
 
-    fn replaceWithIdentity(p: *Procedure, old: ValueId, new: ValueId) void {
+    pub fn replaceWithIdentity(p: *Procedure, old: ValueId, new: ValueId) void {
         assert(old != new);
         assert(p.reprOf(old) == p.reprOf(new));
         p.values.items(.op)[old.idx()] = .identity;
         p.values.items(.lhs)[old.idx()] = @intFromEnum(new);
         p.values.items(.rhs)[old.idx()] = 0;
+    }
+
+    pub fn deleteValue(p: *Procedure, vid: ValueId) void {
+        assert(!p.effectsFor(vid).terminator);
+        p.values.items(.op)[vid.idx()] = .nop;
+        p.values.items(.repr)[vid.idx()] = .none;
     }
 
     /// See through `identity` chains.  Every operand read should go thru this
@@ -237,6 +271,10 @@ const Procedure = struct {
         return cur;
     }
 };
+
+test {
+    _ = lower;
+}
 
 test "procedure: encoding 'extra' data" {
     var proc: Procedure = .{
