@@ -76,7 +76,7 @@ pub fn push(b: *Builder, v: ValueId) !void {
     try b.stack.append(b.allocator, v);
 }
 pub fn pop(b: *Builder) ValueId {
-    return b.stack.pop();
+    return b.stack.pop().?;
 }
 pub fn peek(b: *Builder, depth: usize) ValueId {
     return b.stack.items[b.stack.items.len - 1 - depth];

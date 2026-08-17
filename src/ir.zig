@@ -9,6 +9,7 @@ pub const OpCode = enum(u8) {
     nop,
     identity,
     branch,
+    jump,
     ret,
     phi,
     upsilon,
@@ -18,6 +19,7 @@ pub const OpCode = enum(u8) {
     const_obj,
 
     py_truthy,
+    py_binary_op,
     py_call,
 
     inline fn isTerminator(op: OpCode) bool {
@@ -39,11 +41,12 @@ const Effects = packed struct(u8) {
 fn effectsOf(op: OpCode) Effects {
     return switch (op) {
         .nop, .identity, .phi, .upsilon => .{},
-        .branch, .ret => .{ .terminator = true },
+        .branch, .jump, .ret => .{ .terminator = true },
         .arg => .{},
         .const_obj => .{},
         .py_truthy => .{},
-        .py_call => .{},
+        .py_binary_op => .{ .reads_world = true, .writes_world = true, .can_raise = true, .can_allocate = true, .has_result = true },
+        .py_call => .{ .reads_world = true, .writes_world = true, .can_raise = true, .can_allocate = true, .has_result = true },
     };
 }
 
@@ -238,7 +241,7 @@ pub const Procedure = struct {
     pub fn successors(p: *const Procedure, bid: BlockId, buf: *[8]BlockId) []const BlockId {
         const term = p.blocks.items[bid.idx()].terminator(p);
         if (term == .none) return buf[0..0];
-        // const lhs = p.values.items(.lhs)[term.idx()];
+        const lhs = p.values.items(.lhs)[term.idx()];
         const rhs = p.values.items(.rhs)[term.idx()];
         switch (p.opcodeOf(term)) {
             .branch => {
@@ -247,6 +250,11 @@ pub const Procedure = struct {
                 buf[1] = extra.@"else";
                 return buf[0..2];
             },
+            .jump => {
+                buf[0] = @enumFromInt(lhs);
+                return buf[0..1];
+            },
+            .ret => return buf[0..0],
             else => return buf[0..0],
         }
     }
