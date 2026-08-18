@@ -9,7 +9,7 @@ pub const object = @import("object.zig");
 const vm = @import("vm.zig");
 // const ssa = @import("ir/legacy/ssa.zig");
 const ir = @import("ir.zig");
-const formatproc = @import("ir/format.zig").format;
+const FormatProcedure = @import("ir/format.zig").FormatProcedure;
 const runtime = @import("runtime.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
@@ -212,12 +212,14 @@ fn disassemble(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void
 fn printssa(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     var harness = try test_utils.CompilerHarness.create(allocator);
     defer harness.deinit();
-    const proc = try harness.lower(code);
+    const co = try harness.buildCodeObjects(code);
+    const proc = try harness.lowerCodeObject(co);
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout = &stdout_file_writer.interface;
 
-    try formatproc(&proc, stdout);
+    const fmtproc: FormatProcedure = .{ .name = co.co_name, .proc = &proc };
+    try fmtproc.format(stdout);
     try stdout.flush();
 }
 
