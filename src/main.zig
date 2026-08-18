@@ -9,6 +9,7 @@ pub const object = @import("object.zig");
 const vm = @import("vm.zig");
 // const ssa = @import("ir/legacy/ssa.zig");
 const ir = @import("ir.zig");
+const formatproc = @import("ir/format.zig").format;
 const runtime = @import("runtime.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
@@ -18,6 +19,7 @@ const help =
     \\-c,--command <str> Specify the command to execute
     \\<str> File to execute
     \\dis disassemble file
+    \\ssa disassemble file
     \\interpret execute through SSA/c2mir/MIR
 ;
 
@@ -45,6 +47,8 @@ pub fn main(init: std.process.Init) anyerror!void {
             return try interpret(allocator, init.io, command);
         } else if (eql("dis", arg)) {
             return try dis(allocator, init.io, &args);
+        } else if (eql("ssa", arg)) {
+            return try ssa(allocator, init.io, &args);
         } else if (eql("interpret", arg) or eql("run", arg)) {
             return try runInterpret(allocator, init.io, &args);
         } else {
@@ -89,6 +93,30 @@ fn dis(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterato
             const file_bytes = try readFile(allocator, io, arg);
             defer allocator.free(file_bytes);
             return try disassemble(allocator, io, file_bytes);
+        }
+    }
+}
+
+const ssa_help =
+    \\-h, --help Display this help and exit.
+    \\-c,--command <str> Specify the command to execute
+    \\<str> File to execute
+;
+
+fn ssa(allocator: std.mem.Allocator, io: std.Io, args: *std.process.Args.Iterator) !void {
+    if (args.next()) |arg| {
+        if (eql("-h", arg)) {
+            // HELP!!!
+            return std.debug.print("{s}\n", .{dis_help});
+        } else if (eql("-c", arg) or eql("--command", arg)) {
+            const command = args.next() orelse return CliError.MissingArgument;
+            // user gave us a string of literal code
+            return try printssa(allocator, io, command);
+        } else {
+            // default argument - file we should run
+            const file_bytes = try readFile(allocator, io, arg);
+            defer allocator.free(file_bytes);
+            return try printssa(allocator, io, file_bytes);
         }
     }
 }
@@ -178,6 +206,18 @@ fn disassemble(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void
     // defer example.deinit();
 
     // try stdout.print("{f}", .{ssa.format.graph(&example)});
+    try stdout.flush();
+}
+
+fn printssa(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
+    var harness = try test_utils.CompilerHarness.create(allocator);
+    defer harness.deinit();
+    const proc = try harness.lower(code);
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout = &stdout_file_writer.interface;
+
+    try formatproc(&proc, stdout);
     try stdout.flush();
 }
 
