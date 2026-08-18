@@ -1,72 +1,10 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const CodeObject = @import("../bytecode.zig").CodeObject;
+const TaggedValue = @import("../TaggedValue.zig");
 const sys = @import("lib/sys.zig");
 const testing = std.testing;
 const test_utils = @import("../test/utils.zig");
-
-const TaggedValue = struct {
-    bits: u64,
-
-    const TagBits = 4;
-    const PayloadBits = 64 - TagBits;
-    const TagShift = PayloadBits;
-    const PayloadMask = (@as(u64, 1) << TagShift) - 1;
-    const TagMask = ((@as(u64, 1) << TagBits) - 1) << TagShift;
-
-    const Tag = enum(u4) {
-        pointer = 0x0,
-        integer = 0xE,
-        boolean = 0xF,
-        none = 0xD,
-    };
-
-    const none: TaggedValue = .{ .bits = @as(u64, @intFromEnum(Tag.none)) << TagShift };
-
-    /// Ensure the high bits we're using aren't utilized
-    /// by pointers on the system
-    fn addressSpaceCheck() bool {
-        var x: u8 = 0;
-        const addr = @intFromPtr(&x);
-        return (addr >> TagShift) == 0;
-    }
-
-    inline fn tag(value: TaggedValue) Tag {
-        return @enumFromInt((value.bits & TagMask) >> TagShift);
-    }
-
-    inline fn setTag(bits: u60, kind: Tag) u64 {
-        return (@as(u64, @intFromEnum(kind)) << TagShift) | bits;
-    }
-
-    inline fn is(value: TaggedValue, kind: Tag) bool {
-        return value.tag() == kind;
-    }
-
-    fn pointer(ptr: *void) TaggedValue {
-        const raw = @intFromPtr(ptr);
-        assert((raw >> TagShift) == 0);
-
-        return .{ .bits = raw | @as(u64, @intFromEnum(Tag.pointer)) << TagShift };
-    }
-
-    fn asPointer(value: TaggedValue) *void {
-        assert(value.is(.pointer));
-
-        return @ptrFromInt(value.bits & ((@as(u64, 1) << TagShift) - 1));
-    }
-
-    fn integer(int: i60) TaggedValue {
-        return .{ .bits = setTag(@bitCast(int), .integer) };
-    }
-
-    fn asInteger(value: TaggedValue) i60 {
-        assert(value.is(.integer));
-
-        const payload: u60 = @intCast(value.bits & PayloadMask);
-        return @bitCast(payload);
-    }
-};
 
 const EnsoFrame = struct {
     prev: ?*EnsoFrame,
@@ -131,39 +69,6 @@ pub const StackFrame = struct {
         self.pool.destroy(frame);
     }
 };
-
-test "values: address space" {
-    try testing.expect(TaggedValue.addressSpaceCheck());
-}
-
-test "values: none" {
-    const v: TaggedValue = .none;
-    try testing.expect(v.is(.none));
-}
-
-test "values: pointers" {
-    var x: u8 = 99;
-    const value = TaggedValue.pointer(@ptrCast(&x));
-    try testing.expect(value.is(.pointer));
-
-    const ptr: *u8 = @ptrCast(value.asPointer());
-    try testing.expectEqual(&x, ptr);
-}
-
-test "values: integers" {
-    const max: TaggedValue = .integer(std.math.maxInt(i60));
-    const min = TaggedValue.integer(std.math.minInt(i60));
-    const one: TaggedValue = .integer(1);
-    const neg_one = TaggedValue.integer(-1);
-    const zero = TaggedValue.integer(0);
-
-    try testing.expectEqual(576460752303423486, max.asInteger() + neg_one.asInteger());
-    try testing.expectEqual(std.math.maxInt(i60), max.asInteger());
-    try testing.expectEqual(std.math.minInt(i60), min.asInteger());
-    try testing.expectEqual(1, one.asInteger());
-    try testing.expectEqual(0, zero.asInteger());
-    try testing.expectEqual(-1, neg_one.asInteger());
-}
 
 test "stackframe: overflow" {
     const harness = try test_utils.CompilerHarness.create(testing.allocator);
