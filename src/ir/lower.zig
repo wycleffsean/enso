@@ -12,7 +12,10 @@ const BlockId = ir.BlockId;
 
 pub fn lowerCodeObject(allocator: std.mem.Allocator, co: bytecode.CodeObject) !ir.Procedure {
     var proc: ir.Procedure = .{ .allocator = allocator };
-    var b: Builder = .init(&proc, @intCast(co.co_stacksize));
+    // nlocals: count of fast local slots (params + body-assigned locals).
+    // Use at least 1 so module-level code objects with no locals don't zero-size the defs table.
+    const nlocals: u16 = @max(1, @as(u16, @intCast(co.co_nlocals)));
+    var b: Builder = .init(&proc, nlocals);
     defer b.deinit();
 
     var graph = try cfg.buildFromCodeObject(allocator, co);
@@ -111,6 +114,7 @@ fn lowerInsn(b: *Builder, insn: bytecode.Insn) !void {
             try b.push(v);
         },
         .load_name => {
+            // Global/builtin lookup — stub until runtime lookup is implemented.
             const v = try b.emit(.{ .op = .const_obj, .repr = .object, .lhs = 0, .rhs = 0 });
             try b.push(v);
         },
@@ -120,6 +124,7 @@ fn lowerInsn(b: *Builder, insn: bytecode.Insn) !void {
             try b.push(v);
         },
         .store_name => {
+            // Global store — stub until runtime is implemented.
             _ = b.pop();
         },
         .store_fast => |obj| {
@@ -190,6 +195,14 @@ fn assertSuccession(p: *const ir.Procedure, pred: BlockId, succ: BlockId) !void 
     return error.TestExpectedSuccessor;
 }
 
+fn assertContainsPhi(p: *const ir.Procedure, bid: BlockId) !void {
+    var has_phi = false;
+    for (p.blocks.items[bid.idx()].values.items) |vid| {
+        has_phi = has_phi or p.values.items(.op)[vid.idx()] == .phi;
+    }
+    try testing.expect(has_phi);
+}
+
 test "ir/lower: branching" {
     // def ex(cond):
     //     if cond:   ← entry block: load cond, py_truthy, branch → then(1) / else(2)
@@ -228,4 +241,6 @@ test "ir/lower: branching" {
     try assertSuccession(&proc, entryb, elseb);
     try assertSuccession(&proc, thenb, exitb);
     try assertSuccession(&proc, elseb, exitb);
+
+    try assertContainsPhi(&proc, exitb);
 }

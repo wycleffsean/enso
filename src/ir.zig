@@ -22,7 +22,7 @@ pub const OpCode = enum(u8) {
     py_binary_op,
     py_call,
 
-    inline fn isTerminator(op: OpCode) bool {
+    pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
     }
 };

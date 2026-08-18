@@ -122,9 +122,13 @@ fn maybeTerminate(self: *Self, terminal_index: u32, insn: bytecode.Insn) Error!b
         },
         .jump_backward,
         .jump_backward_no_interrupt,
-        .jump_forward,
         => |jump| {
             const jump_index = try checkedJumpTarget(terminal_index, jump.delta, self.instructions.len);
+            try self.edges.append(self.allocator, .{ .kind = .jump, .from = terminal_index, .to = jump_index });
+        },
+        .jump_forward => |jump| {
+            // forwardJumpDelta encodes delta = target - (jump_index + 1), so decode symmetrically.
+            const jump_index = try checkedJumpTarget(terminal_index + 1, jump.delta, self.instructions.len);
             try self.edges.append(self.allocator, .{ .kind = .jump, .from = terminal_index, .to = jump_index });
         },
         .return_value,

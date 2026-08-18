@@ -72,6 +72,24 @@ fn emitIn(b: *Builder, bid: BlockId, v: ir.Value) !ValueId {
     return try b.proc.addValue(bid, val);
 }
 
+/// Like emitIn but inserts before the block's terminator (if any),
+/// so that upsilons don't appear after a jump/branch/ret.
+fn emitBeforeTerminator(b: *Builder, bid: BlockId, v: ir.Value) !ValueId {
+    var val = v;
+    val.origin = b.pc;
+    const id = ir.ValueId.from(@intCast(b.proc.values.len));
+    try b.proc.values.append(b.proc.allocator, val);
+    const blk = &b.proc.blocks.items[bid.idx()];
+    // Insert before terminator if the last value is one.
+    const insert_pos = if (blk.values.items.len > 0 and
+        b.proc.values.items(.op)[blk.values.items[blk.values.items.len - 1].idx()].isTerminator())
+        blk.values.items.len - 1
+    else
+        blk.values.items.len;
+    try blk.values.insert(b.proc.allocator, insert_pos, id);
+    return id;
+}
+
 pub fn push(b: *Builder, v: ValueId) !void {
     try b.stack.append(b.allocator, v);
 }
@@ -112,6 +130,10 @@ fn readLocalRecursive(b: *Builder, block: BlockId, local: ir.LocalIdx) !ValueId 
         // an operand-less phi; sealBlock fills in the upsilons later
         result = try b.emitPhi(block);
         try b.incomplete.append(b.allocator, .{ .bid = block, .local = local, .phi = result });
+    } else if (blk.preds.items.len == 0) {
+        // Entry block or unreachable: no definition reaches here.
+        // Emit a placeholder; a later pass can lower this to an UnboundLocalError check.
+        result = try b.emitIn(block, .{ .op = .const_obj, .repr = .object, .origin = 0, .lhs = 0, .rhs = 0 });
     } else if (blk.preds.items.len == 1) {
         result = try b.readLocalIn(blk.preds.items[0], local);
     } else {
@@ -126,14 +148,17 @@ fn readLocalRecursive(b: *Builder, block: BlockId, local: ir.LocalIdx) !ValueId 
 }
 
 fn emitPhi(b: *Builder, bid: BlockId) !ValueId {
-    const id = try b.proc.addValue(bid, .{
+    // Allocate the value ID and append to the value store directly —
+    // do NOT use proc.addValue which also appends to block.values.
+    // We then insert at position 0 so phis always precede all other instructions.
+    const id = ir.ValueId.from(@intCast(b.proc.values.len));
+    try b.proc.values.append(b.proc.allocator, .{
         .op = .phi,
         .repr = .object, // tier 1/baseline: everything is a boxed reference
         .origin = b.pc,
         .lhs = 0,
         .rhs = 0,
     });
-    // Phis go at the very top of the block
     const blk = &b.proc.blocks.items[bid.idx()];
     try blk.values.insert(b.allocator, 0, id);
     try b.upsilons_of.put(b.allocator, id, .empty);
@@ -153,7 +178,7 @@ fn addPhiOperands(b: *Builder, local: ir.LocalIdx, phi: ValueId, block: BlockId)
 }
 
 fn addUpsilon(b: *Builder, pred: BlockId, v: ValueId, phi: ValueId) !void {
-    const u = try b.emitIn(pred, .{
+    const u = try b.emitBeforeTerminator(pred, .{
         .op = .upsilon,
         .repr = .none,
         .origin = b.pc,

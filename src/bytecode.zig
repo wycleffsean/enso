@@ -309,6 +309,7 @@ pub const CodeObject = struct {
     // co_freevars: *const Object = &EmptyTuple,
     // co_lnotab: *const Object = &None, // Deprecated, use co_lines instead
     co_names: Span(object.Object) = .empty,
+    co_nlocals: u32 = 0, // count of fast local slots for this code object
     // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_varnames: *const Object = &EmptyTuple,
     // co_cellvars: *const Object = &EmptyTuple,
@@ -411,7 +412,11 @@ pub const Module = struct {
         current_name_start: usize = 0,
         loop_continue_targets: std.ArrayList(usize) = .empty,
         current_fast_symbols: std.ArrayList(object.Symbol) = .empty,
+        /// Maps fast symbol → slot index within the current code object's locals.
+        current_fast_indexes: std.AutoHashMap(object.Symbol, u32) = undefined,
         deferred_fast_cleanups: std.ArrayList(object.Symbol) = .empty,
+        /// True when generating inside a function body (where locals use fast slots).
+        in_function_scope: bool = false,
         mod: *Module,
 
         const Seam = struct {
@@ -429,11 +434,13 @@ pub const Module = struct {
                 .ast_root = ast,
                 .intern_pool = intern_pool,
                 .current_name_indexes = .init(allocator),
+                .current_fast_indexes = .init(allocator),
                 .mod = mod,
             };
             defer {
                 builder.deferred_fast_cleanups.deinit(allocator);
                 builder.current_fast_symbols.deinit(allocator);
+                builder.current_fast_indexes.deinit();
                 builder.loop_continue_targets.deinit(allocator);
                 builder.current_name_indexes.deinit();
                 builder.queue.deinit(allocator);
@@ -506,20 +513,28 @@ pub const Module = struct {
         }
 
         fn isFastSymbol(self: *const Builder, sym: object.Symbol) bool {
-            for (self.current_fast_symbols.items) |fast| {
-                if (fast == sym) return true;
+            return self.current_fast_indexes.contains(sym);
+        }
+
+        /// Register sym as a fast local (if not already) and return its slot index.
+        fn fastIndexForSymbol(self: *Builder, sym: object.Symbol) !u32 {
+            const gop = try self.current_fast_indexes.getOrPut(sym);
+            if (!gop.found_existing) {
+                const idx: u32 = @intCast(self.current_fast_symbols.items.len);
+                gop.value_ptr.* = idx;
+                try self.current_fast_symbols.append(self.allocator, sym);
             }
-            return false;
+            return gop.value_ptr.*;
         }
 
         fn loadFast(self: *Builder, sym: object.Symbol) !void {
-            _ = sym;
-            try self.append(.{ .load_fast = .{ .int = 0 } });
+            const idx = try self.fastIndexForSymbol(sym);
+            try self.append(.{ .load_fast = .{ .int = @intCast(idx) } });
         }
 
         fn storeFast(self: *Builder, sym: object.Symbol) !void {
-            _ = sym;
-            try self.append(.{ .store_fast = .{ .int = 0 } });
+            const idx = try self.fastIndexForSymbol(sym);
+            try self.append(.{ .store_fast = .{ .int = @intCast(idx) } });
         }
 
         fn appendTupleConst(self: *Builder, values: []const object.Object) !void {
@@ -588,6 +603,8 @@ pub const Module = struct {
             self.current_name_start = co_name_idx;
             self.current_name_indexes.clearRetainingCapacity();
             self.current_fast_symbols.clearRetainingCapacity();
+            self.current_fast_indexes.clearRetainingCapacity();
+            self.in_function_scope = false;
             self.deferred_fast_cleanups.clearRetainingCapacity();
 
             // ENTER
@@ -604,6 +621,14 @@ pub const Module = struct {
                     try self.mod.codeobject_store.append(self.mod.allocator, .{
                         .module = self.mod,
                     });
+                    self.in_function_scope = true;
+                    // Register positional parameters as fast locals in slot order.
+                    for (fn_decl.parameters.arguments.items) |param| {
+                        if (param.identifier.* == .name) {
+                            const sym = try self.intern_pool.put(param.identifier.name.value);
+                            _ = try self.fastIndexForSymbol(sym);
+                        }
+                    }
                     break :blk try self.generateStatements(fn_decl.suite.items, insns);
                 },
                 .comprehension => |comprehension| blk: {
@@ -641,6 +666,8 @@ pub const Module = struct {
                 .start = @intCast(co_name_idx),
                 .len = @intCast(self.mod.name_store.items[co_name_idx..].len),
             };
+            self.mod.codeobject_store.items(.co_nlocals)[co_idx] =
+                @intCast(self.current_fast_symbols.items.len);
         }
 
         const Flow = struct {
@@ -923,10 +950,14 @@ pub const Module = struct {
             const for_iter_mark = insns.items.len - 1;
             try self.storeFast(sym);
             try self.current_fast_symbols.append(self.allocator, sym);
+            // Comprehension body expressions use fast slots for the loop variable,
+            // so treat the body as a fast scope regardless of the enclosing scope.
+            self.in_function_scope = true;
             return for_iter_mark;
         }
 
-        fn finishComprehensionLoop(self: *Builder, sym: object.Symbol, for_iter_mark: usize, body_index: usize, insns: *std.ArrayList(Insn)) !void {
+        fn finishComprehensionLoop(self: *Builder, sym: object.Symbol, saved_in_function_scope: bool, for_iter_mark: usize, body_index: usize, insns: *std.ArrayList(Insn)) !void {
+            self.in_function_scope = saved_in_function_scope;
             _ = self.current_fast_symbols.pop();
             try self.append(.{ .jump_backward = .{ .delta = self.backwardJumpDelta(insns.items.len, for_iter_mark) } });
             try self.append(.{ .end_for = {} });
@@ -939,30 +970,33 @@ pub const Module = struct {
 
         fn generateListComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
             const sym = try self.generateComprehensionHeader(comprehension, .build_list, insns);
+            const saved = self.in_function_scope;
             const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
             const body_index = insns.items.len;
             try self.generateInsns(comprehension.expression, insns);
             try self.append(.{ .list_append = 2 });
-            try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
+            try self.finishComprehensionLoop(sym, saved, for_iter_mark, body_index, insns);
         }
 
         fn generateSetComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
             const sym = try self.generateComprehensionHeader(comprehension, .build_set, insns);
+            const saved = self.in_function_scope;
             const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
             const body_index = insns.items.len;
             try self.generateInsns(comprehension.expression, insns);
             try self.append(.{ .set_add = 2 });
-            try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
+            try self.finishComprehensionLoop(sym, saved, for_iter_mark, body_index, insns);
         }
 
         fn generateDictionaryComprehension(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
             const sym = try self.generateComprehensionHeader(comprehension, .build_map, insns);
+            const saved = self.in_function_scope;
             const for_iter_mark = try self.beginComprehensionLoop(sym, insns);
             const body_index = insns.items.len;
             try self.generateInsns(comprehension.expression.key orelse return Error.InvalidEntryNode, insns);
             try self.generateInsns(comprehension.expression.value, insns);
             try self.append(.{ .map_add = 2 });
-            try self.finishComprehensionLoop(sym, for_iter_mark, body_index, insns);
+            try self.finishComprehensionLoop(sym, saved, for_iter_mark, body_index, insns);
         }
 
         fn generateGeneratorExpression(self: *Builder, comprehension: anytype, insns: *std.ArrayList(Insn)) Error!void {
@@ -1159,9 +1193,21 @@ pub const Module = struct {
                 // .integer => break :blk Insn{ .load_const = .{ .value = ast_node.integer.value } },
                 .name => |name| {
                     const sym = try self.intern_pool.put(name.value);
-                    switch (name.context) {
-                        .Load => if (self.isFastSymbol(sym)) try self.loadFast(sym) else try self.loadName(sym),
-                        .Store => if (self.isFastSymbol(sym)) try self.storeFast(sym) else try self.storeName(sym),
+                    if (self.in_function_scope) {
+                        switch (name.context) {
+                            // In function scope every local is a fast slot.
+                            // store auto-registers the symbol; load looks it up.
+                            .Store => try self.storeFast(sym),
+                            .Load => if (self.isFastSymbol(sym))
+                                try self.loadFast(sym)
+                            else
+                                try self.loadName(sym), // global/builtin reference
+                        }
+                    } else {
+                        switch (name.context) {
+                            .Load => try self.loadName(sym),
+                            .Store => try self.storeName(sym),
+                        }
                     }
                 },
                 .string_literal => |string| {
@@ -1559,14 +1605,14 @@ test "bytecode: if/else statement emits jump_forward past else suite" {
 
     const expected = [_]Insn{
         .{ .@"resume" = 0 },
-        .{ .load_name = nameIndex(0) }, // cond
+        .{ .load_fast = .{ .int = 0 } }, // cond
         .{ .pop_jump_if_false = .{ .delta = 3 } },
         .{ .load_const = constant(0) }, // 10
-        .{ .store_name = nameIndex(1) }, // x
+        .{ .store_fast = .{ .int = 1 } }, // x
         .{ .jump_forward = .{ .delta = 2 } },
         .{ .load_const = constant(1) }, // 20
-        .{ .store_name = nameIndex(1) }, // x
-        .{ .load_name = nameIndex(1) }, // x
+        .{ .store_fast = .{ .int = 1 } }, // x
+        .{ .load_fast = .{ .int = 1 } }, // x
         .{ .load_const = constant(2) }, // 1
         .{ .binary_op = .add },
         .{ .return_value = {} },
@@ -1705,12 +1751,10 @@ test "bytecode: codeobject seams for function definitions" {
     try testing.expectEqualSlices(Insn, expected_main[0..], main_co.getInstructions());
     try testing.expectEqual(object.Object{ .codeobject = 1 }, main_co.consts()[2]);
 
-    // TODO: this is actually quite wrong
-    // - real python does load_fast instead of load_name
     const expected_fn = [_]Insn{
         .{ .@"resume" = 0 },
-        .{ .load_name = nameIndex(0) },
-        .{ .load_name = nameIndex(1) },
+        .{ .load_fast = .{ .int = 0 } }, // x
+        .{ .load_fast = .{ .int = 1 } }, // y
         .{ .binary_op = .add },
         .{ .return_value = {} },
     };
