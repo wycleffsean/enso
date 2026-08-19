@@ -1,5 +1,6 @@
 const std = @import("std");
 const cfg = @import("bytecode/cfg.zig");
+const TaggedValue = @import("TaggedValue.zig");
 const lower = @import("ir/lower.zig");
 pub const lowerCodeObject = lower.lowerCodeObject;
 const assert = std.debug.assert;
@@ -103,12 +104,27 @@ pub const Value = struct {
     lhs: u32,
     rhs: u32,
 
-    const @"true" = Value{
+    pub fn fromTagged(value: TaggedValue) Value {
+        return .{
+            .op = .const_obj,
+            .repr = .tagged,
+            .lhs = value.highWord(),
+            .rhs = value.lowWord(),
+        };
+    }
+
+    pub fn asTagged(value: Value) TaggedValue {
+        return TaggedValue.assemble(value.lhs, value.rhs);
+    }
+
+    const True = Value{
         .op = .py_truthy,
         .repr = .i1,
         .lhs = 1,
         .rhs = 0,
     };
+
+    const None: Value = .fromTagged(.None);
 };
 
 const BranchPayload = struct {
@@ -298,7 +314,7 @@ test "procedure: encoding 'extra' data" {
     };
     defer proc.deinit();
 
-    const predicate: Value = .true;
+    const predicate: Value = .True;
     const root = try proc.addBlock();
     const then_b = try proc.addBlock();
     const else_b = try proc.addBlock();
@@ -324,7 +340,7 @@ test "procedure: block successors" {
     const then_b = try proc.addBlock();
     const else_b = try proc.addBlock();
 
-    const pred = try proc.addValue(root, .true);
+    const pred = try proc.addValue(root, .True);
     _ = try proc.addBranch(root, .{ .predicate = pred.idx(), .extra = .{ .then = then_b, .@"else" = else_b } });
 
     var buf: [8]BlockId = undefined;
@@ -338,8 +354,8 @@ test "procedure: resolve" {
     defer proc.deinit();
 
     const root = try proc.addBlock();
-    const v1 = try proc.addValue(root, .true);
-    const v2 = try proc.addValue(root, .true);
+    const v1 = try proc.addValue(root, .True);
+    const v2 = try proc.addValue(root, .True);
     proc.replaceWithIdentity(v2, v1);
 
     try testing.expectEqual(v1, proc.resolve(v2));

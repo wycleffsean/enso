@@ -21,7 +21,7 @@ const Tag = enum(u4) {
     none = 0xD,
 };
 
-pub const none: TaggedValue = .{ .bits = @as(u64, @intFromEnum(Tag.none)) << TagShift };
+pub const None: TaggedValue = .{ .bits = @as(u64, @intFromEnum(Tag.none)) << TagShift };
 
 /// Ensure the high bits we're using aren't utilized
 /// by pointers on the system
@@ -29,6 +29,20 @@ fn addressSpaceCheck() bool {
     var x: u8 = 0;
     const addr = @intFromPtr(&x);
     return (addr >> TagShift) == 0;
+}
+
+pub inline fn highWord(value: TaggedValue) u32 {
+    return @truncate(value.bits >> 32);
+}
+
+pub inline fn lowWord(value: TaggedValue) u32 {
+    return @as(u32, @truncate(value.bits));
+}
+
+pub inline fn assemble(high: u32, low: u32) TaggedValue {
+    return .{
+        .bits = @as(u64, high) << 32 | @as(u64, low),
+    };
 }
 
 inline fn tag(value: TaggedValue) Tag {
@@ -72,7 +86,7 @@ test "values: address space" {
 }
 
 test "values: none" {
-    const v: TaggedValue = .none;
+    const v: TaggedValue = .None;
     try testing.expect(v.is(.none));
 }
 
@@ -98,4 +112,14 @@ test "values: integers" {
     try testing.expectEqual(1, one.asInteger());
     try testing.expectEqual(0, zero.asInteger());
     try testing.expectEqual(-1, neg_one.asInteger());
+}
+
+test "values: encoding/decoding" {
+    const min = math.minInt(u60);
+    const value = TaggedValue.integer(min);
+    const lhs = value.highWord();
+    const rhs = value.lowWord();
+    const new_value = TaggedValue.assemble(lhs, rhs);
+
+    try testing.expectEqual(min, new_value.asInteger());
 }
