@@ -91,8 +91,8 @@ test "stackframe: set/get local values" {
     const frame = try sf.push(&co, 1000);
     defer sf.pop();
 
-    frame.setLocal(0, .none);
-    frame.setLocal(999, .none);
+    frame.setLocal(0, .None);
+    frame.setLocal(999, .None);
     _ = frame.getLocal(0);
     _ = frame.getLocal(999);
 }

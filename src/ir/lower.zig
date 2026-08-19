@@ -106,16 +106,16 @@ fn lowerInsn(b: *Builder, insn: bytecode.Insn) !void {
             _ = try b.emit(.{ .op = .nop, .repr = .none, .lhs = 0, .rhs = 0 });
         },
         .push_null => {
-            const v = try b.emit(.{ .op = .const_obj, .repr = .object, .lhs = 0, .rhs = 0 });
+            const v = try b.emit(.{ .op = .const_obj, .repr = .tagged, .lhs = 0, .rhs = 0 });
             try b.push(v);
         },
         .load_const => {
-            const v = try b.emit(.{ .op = .const_obj, .repr = .object, .lhs = 0, .rhs = 0 });
+            const v = try b.emit(.{ .op = .const_obj, .repr = .tagged, .lhs = 0, .rhs = 0 });
             try b.push(v);
         },
         .load_name => {
             // Global/builtin lookup — stub until runtime lookup is implemented.
-            const v = try b.emit(.{ .op = .const_obj, .repr = .object, .lhs = 0, .rhs = 0 });
+            const v = try b.emit(.{ .op = .const_obj, .repr = .tagged, .lhs = 0, .rhs = 0 });
             try b.push(v);
         },
         .load_fast => |obj| {
