@@ -1,4 +1,5 @@
 const std = @import("std");
+const object = @import("object.zig");
 const StringArrayHashMap = std.array_hash_map.String;
 const testing = std.testing;
 
@@ -37,7 +38,7 @@ pub const StringInternPool = struct {
         return entry.index;
     }
 
-    // O(n)
+    /// O(n)
     pub fn getIndex(self: *Self, needle: []const u8) ?Index {
         const slice = self.pool.entries.slice();
         const keys_array = slice.items(.key);
@@ -73,4 +74,45 @@ test "intern: put and get" {
     try testing.expectEqual(key_idx, try intern_pool.put(&b));
     try testing.expectEqual(@as(Index, 1), try intern_pool.put("yoyo"));
     try testing.expectEqual(@as(Index, 2), intern_pool.pool.count());
+}
+
+pub const ObjectPool = struct {
+    allocator: std.mem.Allocator,
+    pool: std.ArrayHashMapUnmanaged(object.Object, void, object.ObjectContext, true) = .empty,
+
+    const Self = @This();
+    pub const ObjectIndex = enum(u32) { _ };
+
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.pool.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub fn put(self: *Self, obj: object.Object) !ObjectIndex {
+        // const index: ObjectIndex = @enumFromInt(self.pool.entries.len);
+        const gop = try self.pool.getOrPut(self.allocator, obj);
+        return @enumFromInt(gop.index);
+    }
+
+    pub fn get(self: *Self, i: ObjectIndex) object.Object {
+        return self.pool.entries.items(.key)[@intFromEnum(i)];
+    }
+};
+
+test "intern(ObjectPool): put and get" {
+    var objects: ObjectPool = .init(testing.allocator);
+    defer objects.deinit();
+
+    const a = try objects.put(.{ .int = 42 });
+    const b = try objects.put(.{ .int = 43 });
+    const c = try objects.put(.{ .int = 42 });
+
+    try testing.expect(a != b);
+    try testing.expectEqual(a, c);
+
+    try testing.expectEqual(42, objects.get(c).int);
 }
