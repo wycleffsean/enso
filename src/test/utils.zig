@@ -59,6 +59,10 @@ pub const CompilerHarness = struct {
         const co = try self.buildCodeObjects(code);
         return eir.lowerCodeObject(self.allocator, co);
     }
+
+    pub fn lowerCodeObject(self: *Self, co: bytecode.CodeObject) !eir.Procedure {
+        return eir.lowerCodeObject(self.allocator, co);
+    }
 };
 
 pub const Example = struct {
