@@ -38,6 +38,36 @@ pub const Object = union(enum) {
             .codeobject => |index| try writer.print("<enso code object {d}>", .{index}),
         }
     }
+
+    fn hash(self: Self) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        return switch (self) {
+            .string => |str| @truncate(str.hash()),
+            .array, .tuple => |list| blk: {
+                for (list) |item|
+                    std.hash.autoHash(&hasher, item.hash());
+                break :blk @truncate(hasher.final());
+            },
+            .float => |f| blk: {
+                std.hash.autoHash(&hasher, @as(u64, @bitCast(f)));
+                break :blk @truncate(hasher.final());
+            },
+            .complex => |val| blk: {
+                std.hash.autoHash(&hasher, @as(u64, @bitCast(val.im)));
+                std.hash.autoHash(&hasher, @as(u64, @bitCast(val.re)));
+                break :blk @truncate(hasher.final());
+            },
+            .code => |c| blk: {
+                // the instruction slice should be unique (one would hope)
+                std.hash.autoHash(&hasher, @intFromPtr(c.instructions.ptr));
+                break :blk @truncate(hasher.final());
+            },
+            inline else => |obj_payload| blk: {
+                std.hash.autoHash(&hasher, obj_payload);
+                break :blk @truncate(hasher.final());
+            },
+        };
+    }
 };
 
 pub const FormatObject = struct {
@@ -50,6 +80,17 @@ pub const FormatObject = struct {
             .symbol => |idx| try writer.print("{s}", .{self.intern_pool.get(idx)}),
             inline else => try writer.print("{f}", .{self.obj.*}),
         }
+    }
+};
+
+/// used as the context for HashMaps
+pub const ObjectContext = struct {
+    pub fn hash(_: @This(), object: Object) u32 {
+        return object.hash();
+    }
+
+    pub fn eql(_: @This(), a: Object, b: Object, _: usize) bool {
+        return a.hash() == b.hash();
     }
 };
 
@@ -104,6 +145,10 @@ pub const String = struct {
 
     pub fn symbolize(self: *const Self, intern_pool: *intern.StringInternPool) !Object {
         return stringToSymbol(self.string, intern_pool);
+    }
+
+    pub fn hash(self: Self) u64 {
+        return std.hash.Wyhash.hash(0, self.string);
     }
 };
 
