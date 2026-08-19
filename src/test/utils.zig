@@ -3,7 +3,7 @@ const dis_examples = @import("disassembled_examples");
 const object = @import("../object.zig");
 
 const parse = @import("../parse.zig");
-const intern = @import("../bytecode/intern.zig");
+const intern = @import("../intern.zig");
 const bytecode = @import("../bytecode.zig");
 // const ssa = @import("../ir/legacy/ssa.zig");
 const eir = @import("../ir.zig");

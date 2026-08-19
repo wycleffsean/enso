@@ -13,7 +13,7 @@ const None = object.None;
 const assert = std.debug.assert;
 // for tests
 const testing = std.testing;
-const intern = @import("bytecode/intern.zig");
+const intern = @import("intern.zig");
 const Parser = @import("parse.zig").Parser;
 const test_utils = @import("test/utils.zig");
 const test_examples = test_utils.examples;
