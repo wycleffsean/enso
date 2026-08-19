@@ -173,10 +173,20 @@ pub const Procedure = struct {
     values: std.MultiArrayList(Value) = .empty,
     blocks: std.ArrayList(Block) = .empty,
     extra: std.ArrayList(u32) = .empty,
+    name: []const u8,
+
+    pub fn new(allocator: std.mem.Allocator, name: []const u8) !Procedure {
+        const name_dup = try allocator.dupe(u8, name);
+        return .{
+            .allocator = allocator,
+            .name = name_dup,
+        };
+    }
 
     pub fn deinit(p: *Procedure) void {
         p.values.deinit(p.allocator);
         p.extra.deinit(p.allocator);
+        p.allocator.free(p.name);
 
         for (p.blocks.items) |*block| block.deinit(p.allocator);
         p.blocks.deinit(p.allocator);
@@ -274,12 +284,12 @@ pub const Procedure = struct {
         }
     }
 
-    pub fn replaceWithIdentity(p: *Procedure, old: ValueId, new: ValueId) void {
-        assert(old != new);
-        assert(p.reprOf(old) == p.reprOf(new));
-        p.values.items(.op)[old.idx()] = .identity;
-        p.values.items(.lhs)[old.idx()] = @intFromEnum(new);
-        p.values.items(.rhs)[old.idx()] = 0;
+    pub fn replaceWithIdentity(p: *Procedure, older: ValueId, newer: ValueId) void {
+        assert(older != newer);
+        assert(p.reprOf(older) == p.reprOf(newer));
+        p.values.items(.op)[older.idx()] = .identity;
+        p.values.items(.lhs)[older.idx()] = @intFromEnum(newer);
+        p.values.items(.rhs)[older.idx()] = 0;
     }
 
     pub fn deleteValue(p: *Procedure, vid: ValueId) void {
@@ -308,9 +318,7 @@ test {
 }
 
 test "procedure: encoding 'extra' data" {
-    var proc: Procedure = .{
-        .allocator = testing.allocator,
-    };
+    var proc: Procedure = try .new(testing.allocator, "");
     defer proc.deinit();
 
     const predicate: Value = .True;
@@ -330,9 +338,7 @@ test "procedure: encoding 'extra' data" {
 }
 
 test "procedure: block successors" {
-    var proc: Procedure = .{
-        .allocator = testing.allocator,
-    };
+    var proc: Procedure = try .new(testing.allocator, "");
     defer proc.deinit();
 
     const root = try proc.addBlock();
@@ -347,9 +353,7 @@ test "procedure: block successors" {
 }
 
 test "procedure: resolve" {
-    var proc: Procedure = .{
-        .allocator = testing.allocator,
-    };
+    var proc: Procedure = try .new(testing.allocator, "");
     defer proc.deinit();
 
     const root = try proc.addBlock();

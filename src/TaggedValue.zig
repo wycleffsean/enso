@@ -1,6 +1,7 @@
-const assert = @import("std").debug.assert;
-const testing = @import("std").testing;
-const math = @import("std").math;
+const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
+const math = std.math;
 
 /// high bit "tagged" values, for densely encoding pointers
 /// integers, and other immediate values in the same bits
@@ -22,6 +23,15 @@ const Tag = enum(u4) {
 };
 
 pub const None: TaggedValue = .{ .bits = @as(u64, @intFromEnum(Tag.none)) << TagShift };
+
+pub fn format(self: *const TaggedValue, writer: *std.Io.Writer) !void {
+    switch (self.tag()) {
+        .pointer => try writer.writeAll("<pointer>"),
+        .integer => try writer.print("{d}", .{self.asInteger()}),
+        .boolean => try writer.writeAll("(True or False - fixme"),
+        .none => try writer.writeAll("None"),
+    }
+}
 
 /// Ensure the high bits we're using aren't utilized
 /// by pointers on the system

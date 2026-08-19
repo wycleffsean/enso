@@ -318,7 +318,7 @@ pub const CodeObject = struct {
     // co_flags: *const Object = &Zero,
     // co_kwonlyargcount: *const Object = &Zero,
     // co_linetable: *const Object = &EmptyString,
-    co_name: []const u8 = "<module>", //*const object.Object = &.{ .string = .{ .string = "<module>" } },
+    co_name: []const u8 = "<co>", //*const object.Object = &.{ .string = .{ .string = "<module>" } },
     // co_nlocals: *const Object = &Zero,
     // co_posonlyargcount: *const Object = &Zero,
     co_stacksize: u32 = 0,

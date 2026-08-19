@@ -10,10 +10,36 @@ const test_utils = @import("../test/utils.zig");
 
 const Module = @This();
 
+allocator: std.mem.Allocator,
+procedures: std.ArrayList(ir.Procedure) = .empty,
+
 const BlockId = ir.BlockId;
 
+fn init(allocator: std.mem.Allocator) Module {
+    return .{ .allocator = allocator };
+}
+
+pub fn build(allocator: std.mem.Allocator, bmod: *const bytecode.Module) !Module {
+    const proccount = bmod.codeobject_store.len;
+    var mod: Module = .init(allocator);
+    try mod.procedures.ensureTotalCapacity(mod.allocator, proccount);
+    for (0..proccount) |pid| {
+        const co = bmod.codeobject_store.get(pid);
+        const proc = try lowerCodeObject(mod.allocator, co);
+        mod.procedures.appendAssumeCapacity(proc);
+    }
+    return mod;
+}
+
+pub fn deinit(m: *Module) void {
+    for (m.procedures.items) |*proc| proc.deinit();
+    m.procedures.deinit(m.allocator);
+
+    m.* = undefined;
+}
+
 pub fn lowerCodeObject(allocator: std.mem.Allocator, co: bytecode.CodeObject) !ir.Procedure {
-    var proc: ir.Procedure = .{ .allocator = allocator };
+    var proc: ir.Procedure = try .new(allocator, co.co_name);
     var b: Builder = .init(&proc, co);
     defer b.deinit();
 
