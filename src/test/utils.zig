@@ -40,7 +40,7 @@ pub const CompilerHarness = struct {
         };
     }
 
-    pub fn buildModule(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.Module {
+    pub fn buildBytecodeModule(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.Module {
         const ast = try self.doParse(code);
         self.module = bytecode.Module.init(
             self.allocator,
@@ -51,7 +51,7 @@ pub const CompilerHarness = struct {
     }
 
     pub fn buildCodeObjects(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.CodeObject {
-        const module = try self.buildModule(code);
+        const module = try self.buildBytecodeModule(code);
         return module.codeobject_store.get(0);
     }
 
@@ -67,6 +67,11 @@ pub const CompilerHarness = struct {
 
     pub fn lowerCodeObject(self: *Self, co: bytecode.CodeObject) !eir.Procedure {
         return eir.Module.lowerCodeObject(self.allocator, co);
+    }
+
+    pub fn lowerModule(self: *Self, allocator: std.mem.Allocator, code: []const u8) !eir.Module {
+        const bmod = try self.buildBytecodeModule(code);
+        return .build(allocator, &bmod);
     }
 };
 
