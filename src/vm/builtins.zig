@@ -4,7 +4,7 @@ const Error = @import("../vm.zig").Error;
 const object = @import("../object.zig");
 const Object = object.Object;
 const Callable = object.Callable;
-const intern = @import("../bytecode/intern.zig");
+const intern = @import("../intern.zig");
 
 pub const Builtins = struct {
     const Self = @This();

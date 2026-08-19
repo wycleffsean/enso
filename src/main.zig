@@ -1,5 +1,5 @@
 const std = @import("std");
-const intern = @import("bytecode/intern.zig");
+const intern = @import("intern.zig");
 
 // for tests
 const lex = @import("lex.zig");

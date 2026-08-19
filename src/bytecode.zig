@@ -1,6 +1,6 @@
 const std = @import("std");
 const parse = @import("parse.zig");
-const intern = @import("bytecode/intern.zig");
+const intern = @import("intern.zig");
 pub const Cfg = @import("bytecode/cfg.zig");
 pub const OpCode = @import("bytecode/opcodes.zig").OpCode;
 const opEffect = @import("bytecode/opcodes.zig").opEffect;

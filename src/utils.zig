@@ -26,7 +26,7 @@ pub fn fatalExit(exit_code: u8, comptime fmt: []const u8, args: anytype) noretur
 
 pub const testing = struct {
     const bc = @import("bytecode.zig");
-    const intern = @import("bytecode/intern.zig");
+    const intern = @import("intern.zig");
     const Parser = @import("parse.zig").Parser;
 
     pub const TestParse = struct {
