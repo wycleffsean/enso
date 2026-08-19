@@ -40,14 +40,19 @@ pub const CompilerHarness = struct {
         };
     }
 
-    pub fn buildCodeObjects(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.CodeObject {
+    pub fn buildModule(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.Module {
         const ast = try self.doParse(code);
         self.module = bytecode.Module.init(
             self.allocator,
             &self.intern_pool,
         );
         try self.module.buildFromAst(ast);
-        return self.module.codeobject_store.get(0);
+        return self.module;
+    }
+
+    pub fn buildCodeObjects(self: *Self, code: []const u8) ParseOrIRGenError!bytecode.CodeObject {
+        const module = try self.buildModule(code);
+        return module.codeobject_store.get(0);
     }
 
     // pub fn doSsa(self: *Self, code: []const u8) SsaError!ssa.SsaGraph {
@@ -57,11 +62,11 @@ pub const CompilerHarness = struct {
 
     pub fn lower(self: *Self, code: []const u8) !eir.Procedure {
         const co = try self.buildCodeObjects(code);
-        return eir.lowerCodeObject(self.allocator, co);
+        return eir.Module.lowerCodeObject(self.allocator, co);
     }
 
     pub fn lowerCodeObject(self: *Self, co: bytecode.CodeObject) !eir.Procedure {
-        return eir.lowerCodeObject(self.allocator, co);
+        return eir.Module.lowerCodeObject(self.allocator, co);
     }
 };
 
