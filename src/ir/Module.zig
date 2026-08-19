@@ -8,14 +8,13 @@ const Builder = @import("lower/Builder.zig");
 const testing = std.testing;
 const test_utils = @import("../test/utils.zig");
 
+const Module = @This();
+
 const BlockId = ir.BlockId;
 
 pub fn lowerCodeObject(allocator: std.mem.Allocator, co: bytecode.CodeObject) !ir.Procedure {
     var proc: ir.Procedure = .{ .allocator = allocator };
-    // nlocals: count of fast local slots (params + body-assigned locals).
-    // Use at least 1 so module-level code objects with no locals don't zero-size the defs table.
-    const nlocals: u16 = @max(1, @as(u16, @intCast(co.co_nlocals)));
-    var b: Builder = .init(&proc, nlocals);
+    var b: Builder = .init(&proc, co);
     defer b.deinit();
 
     var graph = try cfg.buildFromCodeObject(allocator, co);
@@ -106,10 +105,14 @@ fn lowerInsn(b: *Builder, insn: bytecode.Insn) !void {
             _ = try b.emit(.{ .op = .nop, .repr = .none, .lhs = 0, .rhs = 0 });
         },
         .push_null => {
-            const v = try b.emit(.{ .op = .const_obj, .repr = .tagged, .lhs = 0, .rhs = 0 });
+            const v = try b.emit(.None);
             try b.push(v);
         },
         .load_const => {
+            // I'm guessing const index is on the codeobject?  Can we fetch that value?
+            // I _think_ we need to encode that into a TaggedValue OR maybe even copy it
+            // to some store/table that we'll drop into MIR or something like that?  The constants
+            // will need to remain in memory and also land in the finished binary/c code mir gens
             const v = try b.emit(.{ .op = .const_obj, .repr = .tagged, .lhs = 0, .rhs = 0 });
             try b.push(v);
         },

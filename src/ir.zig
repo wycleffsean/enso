@@ -1,8 +1,7 @@
 const std = @import("std");
 const cfg = @import("bytecode/cfg.zig");
 const TaggedValue = @import("TaggedValue.zig");
-const lower = @import("ir/lower.zig");
-pub const lowerCodeObject = lower.lowerCodeObject;
+pub const Module = @import("ir/Module.zig");
 const assert = std.debug.assert;
 const testing = std.testing;
 
@@ -124,7 +123,7 @@ pub const Value = struct {
         .rhs = 0,
     };
 
-    const None: Value = .fromTagged(.None);
+    pub const None: Value = .fromTagged(.None);
 };
 
 const BranchPayload = struct {
@@ -305,7 +304,7 @@ pub const Procedure = struct {
 };
 
 test {
-    _ = lower;
+    _ = Module;
 }
 
 test "procedure: encoding 'extra' data" {

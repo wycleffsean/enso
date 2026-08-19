@@ -1,5 +1,6 @@
 const std = @import("std");
 const ir = @import("../../ir.zig");
+const bytecode = @import("../../bytecode.zig");
 
 const ValueId = ir.ValueId;
 const BlockId = ir.BlockId;
@@ -14,13 +15,17 @@ read_by: std.AutoHashMapUnmanaged(ValueId, std.ArrayList(ValueId)) = .empty,
 stack: std.ArrayList(ValueId) = .empty,
 current: BlockId = .none,
 pc: u32 = 0,
+co: bytecode.CodeObject,
 
 const Builder = @This();
 
 const Incomplete = struct { bid: BlockId, local: ir.LocalIdx, phi: ValueId };
 
-pub fn init(proc: *ir.Procedure, nlocals: u16) Builder {
-    return .{ .proc = proc, .allocator = proc.allocator, .nlocals = nlocals };
+pub fn init(proc: *ir.Procedure, co: bytecode.CodeObject) Builder {
+    // nlocals: count of fast local slots (params + body-assigned locals).
+    // Use at least 1 so module-level code objects with no locals don't zero-size the defs table.
+    const nlocals: u16 = @max(1, @as(u16, @intCast(co.co_nlocals)));
+    return .{ .co = co, .proc = proc, .allocator = proc.allocator, .nlocals = nlocals };
 }
 
 pub fn deinit(b: *Builder) void {
