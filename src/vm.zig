@@ -57,8 +57,10 @@ pub const VM = struct {
                 .load_const => |consti| {
                     self.push(co.consts()[consti.index]);
                 },
-                .load_name => |namei| {
-                    self.push(co.names()[namei.index]);
+                .load_name => |sym| {
+                    // Symbol IS the intern index — push it as an object so call() can resolve it.
+                    // TODO: proper global/builtin lookup
+                    self.push(.{ .symbol = sym });
                 },
                 .return_const => {},
                 .@"resume" => {},
@@ -440,7 +442,7 @@ fn LoweringVM(comptime BackendType: type) type {
 
         pub fn eval(self: *Self, co: bytecode.CodeObject) void {
             for (co.getInstructions()) |insn| {
-                self.step(insn, co.consts(), co.names());
+                self.step(insn, co.consts());
             }
         }
 
@@ -468,17 +470,18 @@ fn LoweringVM(comptime BackendType: type) type {
             }
         }
 
-        pub fn step(self: *Self, insn: bytecode.Insn, consts: []const object.Object, names: []const object.Object) void {
+        pub fn step(self: *Self, insn: bytecode.Insn, consts: []const object.Object) void {
             switch (insn) {
                 .for_iter => {},
                 .load_const => |consti| {
                     self.stack.push(.{ .static = consts[consti.index] });
                 },
-                .load_name => |namei| {
-                    self.stack.push(.{ .static = names[namei.index] });
+                .load_name => {
+                    // TODO: resolve symbol via intern pool / globals — stub
                 },
-                .store_name => |namei| {
-                    self.backend.storeName(names[namei.index], self.stack.pop());
+                .store_name => {
+                    // TODO: resolve symbol via intern pool / globals — stub
+                    _ = self.stack.pop();
                 },
                 // TODO: this will all be deleted soon, so we just panic for now
                 .build_tuple, .jump_forward => {

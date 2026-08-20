@@ -29,11 +29,7 @@ fn Span(comptime T: type) type {
 
 const CoIndex = struct { index: u32 };
 pub const ConstIndex = struct { index: u32 };
-pub const NameIndex = struct { index: u32 };
 fn constant(i: u32) ConstIndex {
-    return .{ .index = i };
-}
-fn nameIndex(i: u32) NameIndex {
     return .{ .index = i };
 }
 
@@ -152,11 +148,11 @@ pub const Insn = union(OpCode) {
     return_generator: void,
     return_value: void,
     setup_annotations: void,
-    store_name: NameIndex,
+    store_name: object.Symbol,
     for_iter: RelativeJump,
     swap: usize,
     load_const: ConstIndex,
-    load_name: NameIndex,
+    load_name: object.Symbol,
     build_tuple: usize,
     build_list: usize,
     build_set: usize,
@@ -222,7 +218,7 @@ pub const Insn = union(OpCode) {
             .nop => .{ .nop = {} },
             .@"resume" => .{ .@"resume" = obj.int },
             .push_null => .{ .push_null = {} },
-            .load_name => .{ .load_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
+            .load_name => .{ .load_name = obj.symbol },
             .load_const => .{ .load_const = constant(arg orelse return error.MissingOpcodeArgument) },
             .return_const => .{ .return_const = {} },
             .return_value => .{ .return_value = {} },
@@ -232,7 +228,7 @@ pub const Insn = union(OpCode) {
             .store_fast => .{ .store_fast = .{ .int = arg orelse return error.MissingOpcodeArgument } },
             .load_fast_and_clear => .{ .load_fast_and_clear = .{ .int = arg orelse return error.MissingOpcodeArgument } },
             .setup_annotations => .{ .setup_annotations = obj.void },
-            .store_name => .{ .store_name = nameIndex(arg orelse return error.MissingOpcodeArgument) },
+            .store_name => .{ .store_name = obj.symbol },
             .binary_op => .{ .binary_op = @enumFromInt(arg.?) },
             .compare_op => .{ .compare_op = try compareOperation(dis) },
             .contains_op => .{ .contains_op = (arg orelse return error.MissingOpcodeArgument) != 0 },
@@ -308,12 +304,13 @@ pub const CodeObject = struct {
     // co_firstlineno: *const Object = &One,
     // co_freevars: *const Object = &EmptyTuple,
     // co_lnotab: *const Object = &None, // Deprecated, use co_lines instead
-    co_names: Span(object.Object) = .empty,
     co_nlocals: u32 = 0, // count of fast local slots for this code object
     // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_varnames: *const Object = &EmptyTuple,
     // co_cellvars: *const Object = &EmptyTuple,
     co_consts: Span(object.Object) = .empty,
+    // co_names: when userspace asks for code.co_names, iterate load_name/store_name instructions
+    //   and collect unique symbols; resolve each via module.intern_pool.get(sym) to get the string.
     // co_filename: *const Object = &EmptyString,
     // co_flags: *const Object = &Zero,
     // co_kwonlyargcount: *const Object = &Zero,
@@ -338,9 +335,6 @@ pub const CodeObject = struct {
     pub fn consts(self: *const CodeObject) []const object.Object {
         return self.module.consts(self);
     }
-    pub fn names(self: *const CodeObject) []const object.Object {
-        return self.module.names(self);
-    }
 };
 
 pub const Module = struct {
@@ -352,7 +346,6 @@ pub const Module = struct {
     /// references to code objects are indexes into this list
     codeobject_store: std.MultiArrayList(CodeObject) = .empty,
     constant_store: std.ArrayList(object.Object) = .empty,
-    name_store: std.ArrayList(object.Object) = .empty,
     intern_pool: *intern.StringInternPool,
 
     pub fn init(allocator: std.mem.Allocator, intern_pool: *intern.StringInternPool) Module {
@@ -384,7 +377,6 @@ pub const Module = struct {
         self.instruction_store.deinit(self.allocator);
         self.codeobject_store.deinit(self.allocator);
         self.constant_store.deinit(self.allocator);
-        self.name_store.deinit(self.allocator);
     }
 
     inline fn instructions(self: *const Module, co: *const CodeObject) []const Insn {
@@ -395,21 +387,13 @@ pub const Module = struct {
         return co.co_consts.slice(self.constant_store.items);
     }
 
-    inline fn names(self: *const Module, co: *const CodeObject) []const object.Object {
-        return co.co_names.slice(self.name_store.items);
-    }
-
     pub const Builder = struct {
         allocator: std.mem.Allocator,
         ast_root: *const AstNode,
         intern_pool: *intern.StringInternPool,
         queue: std.ArrayList(Seam) = .empty,
-        /// Per-codeobject cache for deduping co_names entries.
-        /// intern_pool owns string identity; this only maps symbols to local NameIndex operands.
-        current_name_indexes: std.AutoHashMap(object.Symbol, NameIndex),
         current_code_object: u32 = 0,
         current_const_start: usize = 0,
-        current_name_start: usize = 0,
         loop_continue_targets: std.ArrayList(usize) = .empty,
         current_fast_symbols: std.ArrayList(object.Symbol) = .empty,
         /// Maps fast symbol → slot index within the current code object's locals.
@@ -433,7 +417,6 @@ pub const Module = struct {
                 .allocator = allocator,
                 .ast_root = ast,
                 .intern_pool = intern_pool,
-                .current_name_indexes = .init(allocator),
                 .current_fast_indexes = .init(allocator),
                 .mod = mod,
             };
@@ -442,7 +425,6 @@ pub const Module = struct {
                 builder.current_fast_symbols.deinit(allocator);
                 builder.current_fast_indexes.deinit();
                 builder.loop_continue_targets.deinit(allocator);
-                builder.current_name_indexes.deinit();
                 builder.queue.deinit(allocator);
             }
 
@@ -494,22 +476,12 @@ pub const Module = struct {
             };
         }
 
-        fn nameIndexForSymbol(self: *Builder, sym: object.Symbol) !NameIndex {
-            const gop = try self.current_name_indexes.getOrPut(sym);
-            if (!gop.found_existing) {
-                const index = self.mod.name_store.items.len - self.current_name_start;
-                gop.value_ptr.* = .{ .index = @intCast(index) };
-                try self.mod.name_store.append(self.mod.allocator, .{ .symbol = sym });
-            }
-            return gop.value_ptr.*;
-        }
-
         fn loadName(self: *Builder, sym: object.Symbol) !void {
-            try self.append(.{ .load_name = try self.nameIndexForSymbol(sym) });
+            try self.append(.{ .load_name = sym });
         }
 
         fn storeName(self: *Builder, sym: object.Symbol) !void {
-            try self.append(.{ .store_name = try self.nameIndexForSymbol(sym) });
+            try self.append(.{ .store_name = sym });
         }
 
         fn isFastSymbol(self: *const Builder, sym: object.Symbol) bool {
@@ -598,10 +570,7 @@ pub const Module = struct {
             const insn_idx = self.mod.instruction_store.items.len;
             const co_idx = self.mod.codeobject_store.len;
             const co_const_idx = self.mod.constant_store.items.len;
-            const co_name_idx = self.mod.name_store.items.len;
             self.current_const_start = co_const_idx;
-            self.current_name_start = co_name_idx;
-            self.current_name_indexes.clearRetainingCapacity();
             self.current_fast_symbols.clearRetainingCapacity();
             self.current_fast_indexes.clearRetainingCapacity();
             self.in_function_scope = false;
@@ -661,10 +630,6 @@ pub const Module = struct {
             self.mod.codeobject_store.items(.co_consts)[co_idx] = .{
                 .start = @intCast(co_const_idx),
                 .len = @intCast(self.mod.constant_store.items[co_const_idx..].len),
-            };
-            self.mod.codeobject_store.items(.co_names)[co_idx] = .{
-                .start = @intCast(co_name_idx),
-                .len = @intCast(self.mod.name_store.items[co_name_idx..].len),
             };
             self.mod.codeobject_store.items(.co_nlocals)[co_idx] =
                 @intCast(self.current_fast_symbols.items.len);
@@ -1444,16 +1409,11 @@ test "bytecode: example fixtures" {
             ir;
         defer if (example.normalize_bytecode) testing.allocator.free(actual);
 
-        var arena = std.heap.ArenaAllocator.init(testing.allocator);
-        defer arena.deinit();
-        var intern_pool = intern.StringInternPool.init(arena.allocator());
-        defer intern_pool.deinit();
-
         const len = comptime example.code().instructions.len;
         var expected: [len]Insn = undefined;
 
         inline for (comptime example.code().instructions, 0..) |dis, i| {
-            expected[i] = try Insn.normalize_for_test(dis, &intern_pool);
+            expected[i] = try Insn.normalize_for_test(dis, &harness.intern_pool);
             // we cheat and rewrite the delta values since we calculate them
             // differently.  Of course this is a hack and will only update the
             // deltas if they appear on the same line which is good enough
@@ -1730,19 +1690,23 @@ test "bytecode: codeobject seams for function definitions" {
     const main_co = mod.codeobject_store.get(0);
     const fn_co = mod.codeobject_store.get(1);
 
+    const sym_a = mod.intern_pool.getIndex("a").?;
+    const sym_b = mod.intern_pool.getIndex("b").?;
+    const sym_add = mod.intern_pool.getIndex("add").?;
+
     const expected_main = [_]Insn{
         .{ .@"resume" = 0 },
         .{ .load_const = constant(0) },
-        .{ .store_name = nameIndex(0) },
+        .{ .store_name = sym_a },
         .{ .load_const = constant(1) },
-        .{ .store_name = nameIndex(1) },
+        .{ .store_name = sym_b },
         .{ .load_const = constant(2) },
         .{ .make_function = {} },
-        .{ .store_name = nameIndex(2) },
+        .{ .store_name = sym_add },
         .{ .push_null = {} },
-        .{ .load_name = nameIndex(2) },
-        .{ .load_name = nameIndex(0) },
-        .{ .load_name = nameIndex(1) },
+        .{ .load_name = sym_add },
+        .{ .load_name = sym_a },
+        .{ .load_name = sym_b },
         .{ .call = 2 },
         .{ .pop_top = {} },
         .{ .return_const = {} },

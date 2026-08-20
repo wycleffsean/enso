@@ -373,11 +373,16 @@ pub const Lexer = struct {
 
     // whitespace or grammar punctuation that can immediately follow a keyword
     fn matchExactTerminatedByWhitspace(self: *Self, comptime needle: []const u8) bool {
+        const saved = self.index;
         if (!self.matchExact(needle)) return false;
         if (self.peek()) |byte| {
             switch (byte) {
                 '\n', '\t', ' ', ':', '*' => {},
-                else => return false,
+                else => {
+                    // matchExact advanced index; restore it so callers see an unchanged position
+                    self.index = saved;
+                    return false;
+                },
             }
         }
         return true;

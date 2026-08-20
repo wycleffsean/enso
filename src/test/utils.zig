@@ -631,14 +631,18 @@ test "test utils: optimize bytecode constants for python fixture comparison" {
         const optimized = try optimizeBytecodeForPythonFixture(std.testing.allocator, co);
         defer std.testing.allocator.free(optimized);
 
+        const sym_negative = harness.intern_pool.getIndex("negative").?;
+        const sym_logical_not = harness.intern_pool.getIndex("logical_not").?;
+        const sym_bitwise_invert = harness.intern_pool.getIndex("bitwise_invert").?;
+
         const expected = [_]bytecode.Insn{
             .{ .@"resume" = 0 },
             .{ .load_const = .{ .index = 0 } },
-            .{ .store_name = .{ .index = 0 } },
+            .{ .store_name = sym_negative },
             .{ .load_const = .{ .index = 1 } },
-            .{ .store_name = .{ .index = 1 } },
+            .{ .store_name = sym_logical_not },
             .{ .load_const = .{ .index = 2 } },
-            .{ .store_name = .{ .index = 2 } },
+            .{ .store_name = sym_bitwise_invert },
             .{ .return_const = {} },
         };
         try std.testing.expectEqualSlices(bytecode.Insn, expected[0..], optimized);
