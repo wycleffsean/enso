@@ -1,7 +1,10 @@
 const std = @import("std");
 const ir = @import("../ir.zig");
 const bytecode = @import("../bytecode.zig");
+const intern = @import("../intern.zig");
+const object = @import("../object.zig");
 const cfg = @import("../bytecode/cfg.zig");
+const TaggedValue = @import("../TaggedValue.zig");
 const terminatesBlock = cfg.terminatesBlock;
 const Builder = @import("lower/Builder.zig");
 
@@ -12,11 +15,15 @@ const Module = @This();
 
 allocator: std.mem.Allocator,
 procedures: std.ArrayList(ir.Procedure) = .empty,
+object_pool: intern.ObjectPool,
 
 const BlockId = ir.BlockId;
 
 fn init(allocator: std.mem.Allocator) Module {
-    return .{ .allocator = allocator };
+    return .{
+        .allocator = allocator,
+        .object_pool = .init(allocator),
+    };
 }
 
 pub fn build(allocator: std.mem.Allocator, bmod: *const bytecode.Module) !Module {
@@ -25,25 +32,45 @@ pub fn build(allocator: std.mem.Allocator, bmod: *const bytecode.Module) !Module
     try mod.procedures.ensureTotalCapacity(mod.allocator, proccount);
     for (0..proccount) |pid| {
         const co = bmod.codeobject_store.get(pid);
-        const proc = try lowerCodeObject(mod.allocator, co);
+        const proc = try lowerCodeObject(&mod, co);
         mod.procedures.appendAssumeCapacity(proc);
     }
     return mod;
 }
 
 pub fn deinit(m: *Module) void {
+    m.object_pool.deinit();
     for (m.procedures.items) |*proc| proc.deinit();
     m.procedures.deinit(m.allocator);
 
     m.* = undefined;
 }
 
-pub fn lowerCodeObject(allocator: std.mem.Allocator, co: bytecode.CodeObject) !ir.Procedure {
-    var proc: ir.Procedure = try .new(allocator, co.co_name);
+/// Intern a compile-time constant into the module, returning an ir.Value.
+/// Inlines None and small integers as TaggedValues; everything else goes into the object pool.
+pub fn internConst(m: *Module, obj: object.Object) !ir.Value {
+    switch (obj) {
+        .none => return .fromTagged(.None),
+        .int => |i| {
+            const casted = std.math.cast(i60, i) orelse {
+                const idx = try m.object_pool.put(obj);
+                return .fromObject(idx);
+            };
+            return .fromTagged(TaggedValue.integer(casted));
+        },
+        else => {
+            const idx = try m.object_pool.put(obj);
+            return .fromObject(idx);
+        },
+    }
+}
+
+pub fn lowerCodeObject(mod: *Module, co: bytecode.CodeObject) !ir.Procedure {
+    var proc: ir.Procedure = try .new(mod.allocator, co.co_name);
     var b: Builder = .init(&proc, co);
     defer b.deinit();
 
-    var graph = try cfg.buildFromCodeObject(allocator, co);
+    var graph = try cfg.buildFromCodeObject(mod.allocator, co);
     defer graph.deinit();
 
     // Pass 1: allocate all BlockIds so terminators can reference successor blocks
@@ -56,13 +83,14 @@ pub fn lowerCodeObject(allocator: std.mem.Allocator, co: bytecode.CodeObject) !i
         const insns = graph.blockInsns(@intCast(bid));
         const preds = graph.blockPredecessors(@intCast(bid));
         const succs = graph.blockSuccessors(@intCast(bid));
-        try lowerBlock(&b, block_id, insns, preds, succs);
+        try lowerBlock(mod, &b, block_id, insns, preds, succs);
     }
 
     return proc;
 }
 
 fn lowerBlock(
+    mod: *Module,
     b: *Builder,
     bid: ir.BlockId,
     insns: []const bytecode.Insn,
@@ -75,10 +103,10 @@ fn lowerBlock(
     var has_terminator = false;
     for (insns) |insn| {
         if (terminatesBlock(insn)) {
-            try lowerTerminator(b, insn, successors);
+            try lowerTerminator(mod, b, insn, successors);
             has_terminator = true;
         } else {
-            try lowerInsn(b, insn);
+            try lowerInsn(mod, b, insn);
         }
     }
     // A block without an explicit terminator falls through to its single successor.
@@ -93,7 +121,7 @@ fn lowerBlock(
 /// Emit the terminating instruction for a block.
 /// `successors` are the CFG edges out of this block, in the order the CFG built them
 /// (fallthrough first, then jump — matching pop_jump_if_false semantics).
-fn lowerTerminator(b: *Builder, insn: bytecode.Insn, successors: []const cfg.Edge) !void {
+fn lowerTerminator(_: *Module, b: *Builder, insn: bytecode.Insn, successors: []const cfg.Edge) !void {
     switch (insn) {
         .pop_jump_if_false, .pop_jump_if_true => {
             // successors[0] = fallthrough (then), successors[1] = jump (else)
@@ -116,7 +144,10 @@ fn lowerTerminator(b: *Builder, insn: bytecode.Insn, successors: []const cfg.Edg
             _ = try b.emit(.{ .op = .ret, .repr = .none, .lhs = val.idx(), .rhs = 0 });
         },
         .return_const => {
-            _ = try b.emit(.{ .op = .ret, .repr = .none, .lhs = 0, .rhs = 0 });
+            // Our bytecode representation discards the const arg; in practice this is always
+            // the implicit `return None` at the end of a function body.
+            const vid = try b.emit(.None);
+            _ = try b.emit(.{ .op = .ret, .repr = .none, .lhs = vid.idx(), .rhs = 0 });
         },
         else => {
             // Non-branching terminals (return_generator, for_iter, send) — stub
@@ -125,7 +156,7 @@ fn lowerTerminator(b: *Builder, insn: bytecode.Insn, successors: []const cfg.Edg
     }
 }
 
-fn lowerInsn(b: *Builder, insn: bytecode.Insn) !void {
+fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
     switch (insn) {
         .@"resume", .nop => {
             _ = try b.emit(.{ .op = .nop, .repr = .none, .lhs = 0, .rhs = 0 });
@@ -134,12 +165,10 @@ fn lowerInsn(b: *Builder, insn: bytecode.Insn) !void {
             const v = try b.emit(.None);
             try b.push(v);
         },
-        .load_const => {
-            // I'm guessing const index is on the codeobject?  Can we fetch that value?
-            // I _think_ we need to encode that into a TaggedValue OR maybe even copy it
-            // to some store/table that we'll drop into MIR or something like that?  The constants
-            // will need to remain in memory and also land in the finished binary/c code mir gens
-            const v = try b.emit(.{ .op = .const_obj, .repr = .tagged, .lhs = 0, .rhs = 0 });
+        .load_const => |ci| {
+            const obj = b.co.consts()[ci.index];
+            const val = try mod.internConst(obj);
+            const v = try b.emit(val);
             try b.push(v);
         },
         .load_name => {
@@ -193,7 +222,7 @@ test "ir/lower: none" {
 
     var proc = try harness.lower("");
     defer proc.deinit();
-    try testing.expectEqualSlices(ir.OpCode, ([_]ir.OpCode{ .nop, .ret })[0..], proc.values.items(.op));
+    try testing.expectEqualSlices(ir.OpCode, ([_]ir.OpCode{ .nop, .const_obj, .ret })[0..], proc.values.items(.op));
 }
 
 test "ir/lower: hello_world" {
@@ -205,12 +234,13 @@ test "ir/lower: hello_world" {
     try testing.expectEqualSlices(
         ir.OpCode,
         ([_]ir.OpCode{
-            .nop, // resume
-            .const_obj, // push_null
-            .const_obj, // load_name(print)
+            .nop,      // resume
+            .const_obj, // push_null (None)
+            .const_obj, // load_name(print)  — stub
             .const_obj, // load_const('hello world')
-            .py_call, // call(1)
-            .ret, // return_const
+            .py_call,  // call(1)
+            .const_obj, // return_const None
+            .ret,
         })[0..],
         proc.values.items(.op),
     );
@@ -256,7 +286,9 @@ test "ir/lower: branching" {
 
     const root_co = try harness.buildCodeObjects(code);
     const co = root_co.module.codeobject_store.get(1);
-    var proc = try lowerCodeObject(arena.allocator(), co);
+    var mod: Module = .init(arena.allocator());
+    defer mod.object_pool.deinit();
+    var proc = try lowerCodeObject(&mod, co);
     defer proc.deinit();
 
     const entryb: BlockId = .from(0);
