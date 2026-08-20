@@ -394,14 +394,14 @@ test "bytecode/cfg fallthrough and jump to same block is a single edge" {
 test "bytecode/cfg if/else statement" {
     const instructions = [_]bytecode.Insn{
         .{ .@"resume" = 0 },
-        .{ .load_name = .{ .index = 0 } },
+        .{ .load_name = 0 },
         .{ .pop_jump_if_false = .{ .delta = 3 } },
         .{ .load_const = .{ .index = 0 } },
-        .{ .store_name = .{ .index = 1 } },
+        .{ .store_name = 1 },
         .{ .jump_forward = .{ .delta = 2 } },
         .{ .load_const = .{ .index = 1 } },
-        .{ .store_name = .{ .index = 1 } },
-        .{ .load_name = .{ .index = 1 } },
+        .{ .store_name = 1 },
+        .{ .load_name = 1 },
         .{ .load_const = .{ .index = 2 } },
         .{ .binary_op = .add },
         .{ .return_value = {} },

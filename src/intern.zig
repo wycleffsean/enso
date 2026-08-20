@@ -30,10 +30,9 @@ pub const StringInternPool = struct {
     }
 
     pub fn put(self: *Self, string: []const u8) Error!Index {
-        var entry = try self.pool.getOrPut(self.allocator, string);
+        const entry = try self.pool.getOrPut(self.allocator, string);
         if (!entry.found_existing) {
-            var string_dup = try self.allocator.dupe(u8, string);
-            entry.key_ptr = @ptrCast(&string_dup);
+            entry.key_ptr.* = try self.allocator.dupe(u8, string);
         }
         return entry.index;
     }
