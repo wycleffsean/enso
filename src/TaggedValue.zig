@@ -80,7 +80,7 @@ fn asPointer(value: TaggedValue) *void {
     return @ptrFromInt(value.bits & ((@as(u64, 1) << TagShift) - 1));
 }
 
-fn integer(int: i60) TaggedValue {
+pub fn integer(int: i60) TaggedValue {
     return .{ .bits = setTag(@bitCast(int), .integer) };
 }
 

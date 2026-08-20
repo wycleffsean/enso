@@ -1,6 +1,7 @@
 const std = @import("std");
 const cfg = @import("bytecode/cfg.zig");
 const TaggedValue = @import("TaggedValue.zig");
+const intern = @import("intern.zig");
 pub const Module = @import("ir/Module.zig");
 const assert = std.debug.assert;
 const testing = std.testing;
@@ -114,6 +115,15 @@ pub const Value = struct {
 
     pub fn asTagged(value: Value) TaggedValue {
         return TaggedValue.assemble(value.lhs, value.rhs);
+    }
+
+    pub fn fromObject(obj: intern.ObjectPool.ObjectIndex) Value {
+        return .{
+            .op = .const_obj,
+            .repr = .object,
+            .lhs = @intFromEnum(obj),
+            .rhs = 0,
+        };
     }
 
     const True = Value{

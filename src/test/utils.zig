@@ -61,12 +61,14 @@ pub const CompilerHarness = struct {
     // }
 
     pub fn lower(self: *Self, code: []const u8) !eir.Procedure {
-        const co = try self.buildCodeObjects(code);
-        return eir.Module.lowerCodeObject(self.allocator, co);
-    }
-
-    pub fn lowerCodeObject(self: *Self, co: bytecode.CodeObject) !eir.Procedure {
-        return eir.Module.lowerCodeObject(self.allocator, co);
+        const bmod = try self.buildBytecodeModule(code);
+        var ir_mod: eir.Module = try .build(self.allocator, &bmod);
+        defer {
+            // deinit the module shell but leave procedures alone — caller owns the returned proc
+            ir_mod.object_pool.deinit();
+            ir_mod.procedures.deinit(ir_mod.allocator);
+        }
+        return ir_mod.procedures.items[0];
     }
 
     pub fn lowerModule(self: *Self, allocator: std.mem.Allocator, code: []const u8) !eir.Module {
