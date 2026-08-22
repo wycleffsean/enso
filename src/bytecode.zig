@@ -157,7 +157,7 @@ pub const Insn = union(OpCode) {
     build_list: usize,
     build_set: usize,
     build_map: usize,
-    load_attr: void,
+    load_attr: object.Symbol,
     compare_op: CompareOperation,
     import_name: void,
     import_from: void,
@@ -1233,9 +1233,10 @@ pub const Module = struct {
                     // try self.append( .{ .return_value = {} }); // implied
                 },
                 .field_access => |field_access| {
-                    _ = field_access.rhs;
                     try self.generateInsns(field_access.lhs, insns);
-                    try self.append(.{ .load_attr = {} });
+                    const attr_name = field_access.rhs.name.value;
+                    const sym = try self.intern_pool.put(attr_name);
+                    try self.append(.{ .load_attr = sym });
                 },
                 .call => |call| {
                     const len = call.args.items.len;
