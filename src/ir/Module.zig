@@ -137,13 +137,16 @@ fn lowerTerminator(_: *Module, b: *Builder, insn: bytecode.Insn, successors: []c
     switch (insn) {
         .pop_jump_if_false, .pop_jump_if_true => {
             // successors[0] = fallthrough (then), successors[1] = jump (else)
-            // For pop_jump_if_false: condition is true → fallthrough (then), false → jump (else)
             const cond_val = b.pop();
-            const truthy = try b.emit(.{ .op = .py_truthy, .repr = .i1, .lhs = cond_val.idx(), .rhs = 0 });
+            // If the condition is already a boolean (e.g. from compare_op), use it directly.
+            // Otherwise wrap in py_truthy to coerce an arbitrary Python object to i1.
+            const repr = b.proc.values.items(.repr)[cond_val.idx()];
+            const predicate = if (repr == .i1) cond_val else
+                try b.emit(.{ .op = .py_truthy, .repr = .i1, .lhs = cond_val.idx(), .rhs = 0 });
             const then_bid: ir.BlockId = if (successors.len > 0) .from(successors[0].to) else .none;
             const else_bid: ir.BlockId = if (successors.len > 1) .from(successors[1].to) else .none;
             _ = try b.proc.addBranch(b.current, .{
-                .predicate = truthy.idx(),
+                .predicate = predicate.idx(),
                 .extra = .{ .then = then_bid, .@"else" = else_bid },
             });
         },
@@ -219,7 +222,7 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
         .binary_op => |kind| {
             const rhs = b.pop();
             const lhs = b.pop();
-            const v = try b.emit(.{ .op = .py_binary_op, .repr = .object, .origin = @intFromEnum(kind), .lhs = lhs.idx(), .rhs = rhs.idx() });
+            const v = try b.emit(.binaryOp(kind, lhs.idx(), rhs.idx()));
             try b.push(v);
         },
         .call => |argc| {
@@ -240,6 +243,27 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             operands[0] = b.pop().idx(); // receiver (from push_null or load_attr)
 
             const v = try b.proc.addCall(b.current, operands);
+            try b.push(v);
+        },
+        .compare_op => |kind| {
+            const rhs = b.pop();
+            const lhs = b.pop();
+            const v = try b.emit(.compareOp(kind, lhs.idx(), rhs.idx()));
+            try b.push(v);
+        },
+        .unary_negative => {
+            const operand = b.pop();
+            const v = try b.emit(.{ .op = .py_unary_op, .repr = .object, .lhs = operand.idx(), .rhs = @intFromEnum(ir.UnaryOp.negative) });
+            try b.push(v);
+        },
+        .unary_invert => {
+            const operand = b.pop();
+            const v = try b.emit(.{ .op = .py_unary_op, .repr = .object, .lhs = operand.idx(), .rhs = @intFromEnum(ir.UnaryOp.invert) });
+            try b.push(v);
+        },
+        .unary_not => {
+            const operand = b.pop();
+            const v = try b.emit(.{ .op = .py_unary_op, .repr = .object, .lhs = operand.idx(), .rhs = @intFromEnum(ir.UnaryOp.not) });
             try b.push(v);
         },
         .make_function => {
@@ -407,10 +431,6 @@ test "ir/lower: binary_op lhs and rhs are correct" {
 
     // lhs (x) was loaded before rhs (y)
     try testing.expect(lhs < rhs);
-
-    // The two constants must be distinct values (different slots in bytecode)
-    // and lhs (x=1) was emitted before rhs (y=2)
-    try testing.expect(lhs < rhs);
 }
 
 fn assertSuccession(p: *const ir.Procedure, pred: BlockId, succ: BlockId) !void {
@@ -499,6 +519,7 @@ test "ir/lower: function args map to arg() nodes via Braun" {
     // binary_op operands resolve directly to arg nodes (Braun forwarded them)
     try testing.expectEqual(@as(u32, 0), proc.values.items(.lhs)[3]); // lhs = %v0 = x
     try testing.expectEqual(@as(u32, 1), proc.values.items(.rhs)[3]); // rhs = %v1 = y
+    try testing.expectEqual(ir.BinaryOp.add, proc.values.get(3).binaryOpKind());
 }
 
 test "ir/lower: make_function in module emits py_make_function" {

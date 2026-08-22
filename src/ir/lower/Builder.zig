@@ -69,24 +69,18 @@ pub fn switchTo(b: *Builder, block: BlockId) void {
 }
 
 pub fn emit(b: *Builder, v: ir.Value) !ValueId {
-    var val = v;
-    val.origin = b.pc;
-    return try b.proc.addValue(b.current, val);
+    return try b.proc.addValue(b.current, v);
 }
 
 fn emitIn(b: *Builder, bid: BlockId, v: ir.Value) !ValueId {
-    var val = v;
-    val.origin = b.pc;
-    return try b.proc.addValue(bid, val);
+    return try b.proc.addValue(bid, v);
 }
 
 /// Like emitIn but inserts before the block's terminator (if any),
 /// so that upsilons don't appear after a jump/branch/ret.
 fn emitBeforeTerminator(b: *Builder, bid: BlockId, v: ir.Value) !ValueId {
-    var val = v;
-    val.origin = b.pc;
     const id = ir.ValueId.from(@intCast(b.proc.values.len));
-    try b.proc.values.append(b.proc.allocator, val);
+    try b.proc.values.append(b.proc.allocator, v);
     const blk = &b.proc.blocks.items[bid.idx()];
     // Insert before terminator if the last value is one.
     const insert_pos = if (blk.values.items.len > 0 and

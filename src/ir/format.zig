@@ -1,7 +1,6 @@
 const std = @import("std");
 const ir = @import("../ir.zig");
 const intern = @import("../intern.zig");
-const bytecode = @import("../bytecode.zig");
 
 const Error = std.Io.Writer.Error;
 
@@ -89,10 +88,9 @@ const FormatOp = struct {
             .upsilon => try writer.print("upsilon({f}, ^%v{d})", .{ self.ref(v.lhs), v.rhs }),
             .arg => try writer.print("arg({d})", .{v.lhs}),
             .py_truthy => try writer.print("py_truthy({f})", .{self.ref(v.lhs)}),
-            .py_binary_op => {
-                const kind: bytecode.BinaryOperation = @enumFromInt(v.origin);
-                try writer.print("py_binary_op(.{s}, {f}, {f})", .{ @tagName(kind), self.ref(v.lhs), self.ref(v.rhs) });
-            },
+            .py_binary_op => try writer.print("py_binary_op(.{s}, {f}, {f})", .{
+                @tagName(v.binaryOpKind()), self.ref(v.lhs), self.ref(v.rhs),
+            }),
             .py_load_name => {
                 const idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.lhs);
                 const obj = self.pool.getConst(idx);
@@ -102,6 +100,13 @@ const FormatOp = struct {
                 }
             },
             .py_make_function => try writer.print("py_make_function({d})", .{v.lhs}),
+            .py_compare_op => try writer.print("py_compare_op(.{s}, {f}, {f})", .{
+                @tagName(v.compareOpKind()), self.ref(v.lhs), self.ref(v.rhs),
+            }),
+            .py_unary_op => {
+                const kind: ir.UnaryOp = @enumFromInt(v.rhs);
+                try writer.print("py_unary_op(.{s}, {f})", .{ @tagName(kind), self.ref(v.lhs) });
+            },
             .py_store_name => {
                 const idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.lhs);
                 const obj = self.pool.getConst(idx);
