@@ -11,6 +11,8 @@ const vm = @import("vm.zig");
 const ir = @import("ir.zig");
 const FormatModule = @import("ir/format.zig").FormatModule;
 const runtime = @import("runtime.zig");
+const MirBackend = @import("backend.zig").MirBackend;
+const TaggedValue = @import("TaggedValue.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
 
@@ -67,10 +69,26 @@ fn repl() void {
 }
 
 fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
-    _ = io;
-    _ = allocator;
-    _ = code;
-    std.debug.print("Not implemented\n", .{});
+    var harness = try test_utils.CompilerHarness.create(allocator);
+    defer harness.deinit();
+    var mod = try harness.lowerModule(allocator, code);
+    defer mod.deinit();
+
+    var mir_backend = try MirBackend.init(allocator);
+    const b = mir_backend.backend();
+    defer b.deinit();
+
+    const compiled = try b.compileModule(&mod);
+    defer compiled.deinit();
+
+    const result_bits = compiled.call();
+    const result: TaggedValue = .{ .bits = result_bits };
+
+    var stdout_buf: [256]u8 = undefined;
+    var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buf);
+    const stdout = &stdout_file_writer.interface;
+    try stdout.print("{f}\n", .{&result});
+    try stdout.flush();
 }
 
 const dis_help =
