@@ -245,6 +245,12 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             const v = try b.proc.addCall(b.current, operands);
             try b.push(v);
         },
+        .load_attr => |sym| {
+            const obj = b.pop();
+            const idx = try mod.object_pool.put(.{ .symbol = sym });
+            const v = try b.emit(.{ .op = .py_load_attr, .repr = .object, .lhs = obj.idx(), .rhs = @intFromEnum(idx) });
+            try b.push(v);
+        },
         .compare_op => |kind| {
             const rhs = b.pop();
             const lhs = b.pop();

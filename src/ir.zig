@@ -29,8 +29,9 @@ pub const OpCode = enum(u8) {
     py_load_name,     // global/builtin lookup; lhs = ObjectPool index of the name symbol
     py_store_name,    // global dict write; lhs = ObjectPool index of name, rhs = value vid
     py_make_function, // create function object; lhs = codeobject index in bytecode store
-    py_compare_op,    // rich comparison; origin = CompareOperation, lhs = left vid, rhs = right vid
-    py_unary_op,      // unary op; origin = UnaryOp tag, lhs = operand vid
+    py_compare_op,    // rich comparison; repr = CompareOp kind, lhs = left vid, rhs = right vid
+    py_unary_op,      // unary op; lhs = operand vid, rhs = UnaryOp kind
+    py_load_attr,     // attribute load; lhs = object vid, rhs = ObjectPool index of name symbol
 
     pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -62,6 +63,7 @@ fn effectsOf(op: OpCode) Effects {
         .py_make_function => .{ .can_allocate = true, .has_result = true },
         .py_compare_op => .{ .reads_world = true, .can_raise = true, .has_result = true },
         .py_unary_op => .{ .reads_world = true, .can_raise = true, .has_result = true },
+        .py_load_attr => .{ .reads_world = true, .can_raise = true, .has_result = true },
     };
 }
 

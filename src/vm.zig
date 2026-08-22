@@ -242,8 +242,9 @@ fn Backend(comptime StackValue: type) type {
             _ = argc;
             return .{ .static = object.None };
         }
-        fn loadAttr(self: *Self) void {
+        fn loadAttr(self: *Self, attr: object.Symbol) void {
             _ = self;
+            _ = attr;
         }
         fn compareOp(self: *Self, op: bytecode.CompareOperation, left: StackValue, right: StackValue) StackValue {
             _ = self;

@@ -99,6 +99,14 @@ const FormatOp = struct {
                     else => try writer.print("py_load_name(<?>)", .{}),
                 }
             },
+            .py_load_attr => {
+                const idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.rhs);
+                const obj = self.pool.getConst(idx);
+                switch (obj) {
+                    .symbol => |sym| try writer.print("py_load_attr({f}, \"{s}\")", .{ self.ref(v.lhs), self.strings.get(sym) }),
+                    else => try writer.print("py_load_attr({f}, <?>)", .{self.ref(v.lhs)}),
+                }
+            },
             .py_make_function => try writer.print("py_make_function({d})", .{v.lhs}),
             .py_compare_op => try writer.print("py_compare_op(.{s}, {f}, {f})", .{
                 @tagName(v.compareOpKind()), self.ref(v.lhs), self.ref(v.rhs),
