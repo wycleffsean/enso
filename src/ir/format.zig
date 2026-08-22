@@ -1,5 +1,7 @@
 const std = @import("std");
 const ir = @import("../ir.zig");
+const intern = @import("../intern.zig");
+const bytecode = @import("../bytecode.zig");
 
 const Error = std.Io.Writer.Error;
 
@@ -11,28 +13,28 @@ pub const FormatModule = struct {
 
     pub fn format(self: *const Self, writer: *std.Io.Writer) Error!void {
         try writer.print("{s}:\n", .{self.name});
-
-        const procs = self.mod.procedures.items;
-
-        for (procs) |proc| try (FormatProcedure{ .proc = &proc }).format(writer);
+        for (self.mod.procedures.items) |proc|
+            try (FormatProcedure{
+                .proc = &proc,
+                .pool = &self.mod.object_pool,
+                .strings = self.mod.intern_pool,
+            }).format(writer);
     }
 };
 
 const FormatProcedure = struct {
     proc: *const ir.Procedure,
+    pool: *const intern.ObjectPool,
+    strings: *const intern.StringInternPool,
 
     const Self = @This();
 
     pub fn format(self: *const Self, writer: *std.Io.Writer) Error!void {
-        const blocks = self.proc.blocks;
-        const values = self.proc.values;
-
         try writer.print("\t{s}:\n", .{self.proc.name});
-
-        for (blocks.items, 0..) |block, bi| {
+        for (self.proc.blocks.items, 0..) |block, bi| {
             try writer.print("\t\tbb{d}:\n", .{bi});
             for (block.values.items) |vid| {
-                const op: FormatOperation = .init(self.proc, vid, &values.get(vid.idx()));
+                const op: FormatOp = .init(self.proc, self.pool, self.strings, vid);
                 try op.format(writer);
             }
             try writer.writeAll("\n");
@@ -40,71 +42,125 @@ const FormatProcedure = struct {
     }
 };
 
-const FormatOperation = struct {
+const FormatOp = struct {
     vid: ir.ValueId,
     proc: *const ir.Procedure,
-    value: *const ir.Value,
+    pool: *const intern.ObjectPool,
+    strings: *const intern.StringInternPool,
+    value: ir.Value,
 
     const Self = @This();
 
-    fn init(proc: *const ir.Procedure, vid: ir.ValueId, value: *const ir.Value) Self {
-        return .{
-            .proc = proc,
-            .vid = vid,
-            .value = value,
-        };
+    fn init(proc: *const ir.Procedure, pool: *const intern.ObjectPool, strings: *const intern.StringInternPool, vid: ir.ValueId) Self {
+        return .{ .proc = proc, .pool = pool, .strings = strings, .vid = vid, .value = proc.values.get(vid.idx()) };
     }
 
-    inline fn fmtval(self: *const Self, id: u32) FormatValue {
-        const value = self.proc.values.get(id);
-        return .init(id, &value);
+    fn ref(_: *const Self, vid: u32) FormatRef {
+        return .{ .vid = ir.ValueId.from(vid) };
+    }
+
+    fn block(bid: u32) FormatBlock {
+        return .{ .bid = ir.BlockId.from(bid) };
+    }
+
+    fn constval(self: *const Self) FormatConst {
+        return .{ .value = &self.value, .pool = self.pool, .strings = self.strings };
     }
 
     pub fn format(self: *const Self, writer: *std.Io.Writer) Error!void {
-        const value = self.value;
-        const lhs = value.lhs;
-        const rhs = value.rhs;
-
+        const v = &self.value;
         try writer.writeAll("\t\t\t");
-        try writer.print("%v{d} = ", .{self.vid});
-        switch (value.op) {
-            .nop => {
-                try writer.writeAll("nop()");
+        try writer.print("%v{d} = ", .{self.vid.idx()});
+        switch (v.op) {
+            .nop => try writer.writeAll("nop()"),
+            .identity => try writer.print("identity({f})", .{self.ref(v.lhs)}),
+            .const_obj => try writer.print("const({f})", .{self.constval()}),
+            .ret => try writer.print("ret({f})", .{self.ref(v.lhs)}),
+            .jump => try writer.print("jump({f})", .{block(v.lhs)}),
+            .branch => {
+                const extra = self.proc.extraData(ir.BranchExtra, v.rhs);
+                try writer.print("branch({f}, then:{f}, else:{f})", .{
+                    self.ref(v.lhs),
+                    block(@intFromEnum(extra.then)),
+                    block(@intFromEnum(extra.@"else")),
+                });
             },
-            .identity => {
-                try writer.print("identity({f})", .{self.fmtval(lhs)});
+            .phi => try writer.print("phi()", .{}),
+            .upsilon => try writer.print("upsilon({f}, ^%v{d})", .{ self.ref(v.lhs), v.rhs }),
+            .arg => try writer.print("arg({d})", .{v.lhs}),
+            .py_truthy => try writer.print("py_truthy({f})", .{self.ref(v.lhs)}),
+            .py_binary_op => {
+                const kind: bytecode.BinaryOperation = @enumFromInt(v.origin);
+                try writer.print("py_binary_op(.{s}, {f}, {f})", .{ @tagName(kind), self.ref(v.lhs), self.ref(v.rhs) });
             },
-            .const_obj => {
-                try writer.print("const({f})", .{FormatValue{ .vid = self.vid, .value = value }});
+            .py_load_name => {
+                const idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.lhs);
+                const obj = self.pool.getConst(idx);
+                switch (obj) {
+                    .symbol => |sym| try writer.print("py_load_name(\"{s}\")", .{self.strings.get(sym)}),
+                    else => try writer.print("py_load_name(<?>)", .{}),
+                }
             },
-            inline else => |op| {
-                const tag = @tagName(op);
-                try writer.print("{s}({f}, {f})", .{ tag, self.fmtval(lhs), self.fmtval(rhs) });
+            .py_store_name => {
+                const idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.lhs);
+                const obj = self.pool.getConst(idx);
+                switch (obj) {
+                    .symbol => |sym| try writer.print("py_store_name(\"{s}\", {f})", .{ self.strings.get(sym), self.ref(v.rhs) }),
+                    else => try writer.print("py_store_name(<?>, {f})", .{self.ref(v.rhs)}),
+                }
+            },
+            .py_call => {
+                // lhs = operand count, rhs = extra offset; extra stores [callable, arg0, ...]
+                const count = v.lhs;
+                try writer.writeAll("py_call(");
+                for (0..count) |i| {
+                    if (i > 0) try writer.writeAll(", ");
+                    const operand_vid = self.proc.extra.items[v.rhs + @as(u32, @intCast(i))];
+                    try writer.print("{f}", .{FormatRef{ .vid = ir.ValueId.from(operand_vid) }});
+                }
+                try writer.writeAll(")");
             },
         }
         try writer.writeAll("\n");
     }
 };
 
-const FormatValue = struct {
+/// Formats a reference to another value by its id.
+const FormatRef = struct {
     vid: ir.ValueId,
-    value: *const ir.Value,
 
-    fn init(vid: u32, value: *const ir.Value) FormatValue {
-        return .{ .vid = ir.ValueId.from(vid), .value = value };
-    }
-
-    pub fn format(self: *const FormatValue, writer: *std.Io.Writer) Error!void {
-        // if (self.vid == .none) return writer.writeAll("None");
-        switch (self.value.repr) {
-            .tagged => {
-                try writer.print("{f}", .{self.value.asTagged()});
-            },
-            else => {
-                try writer.print("%v{d}", .{self.vid.idx()});
-            },
-        }
+    pub fn format(self: *const FormatRef, writer: *std.Io.Writer) Error!void {
+        try writer.print("%v{d}", .{self.vid.idx()});
     }
 };
 
-// fn formatValue(vid: ir.ValueId)
+const FormatBlock = struct {
+    bid: ir.BlockId,
+
+    pub fn format(self: *const FormatBlock, writer: *std.Io.Writer) Error!void {
+        try writer.print("bb{d}", .{self.bid.idx()});
+    }
+};
+
+/// Formats the payload of a const_obj inline: tagged values print their Python literal,
+/// object-pool entries delegate to object.Object.format (with symbol resolution).
+const FormatConst = struct {
+    value: *const ir.Value,
+    pool: *const intern.ObjectPool,
+    strings: *const intern.StringInternPool,
+
+    pub fn format(self: *const FormatConst, writer: *std.Io.Writer) Error!void {
+        switch (self.value.repr) {
+            .tagged => try writer.print("{f}", .{self.value.asTagged()}),
+            .object => {
+                const idx: intern.ObjectPool.ObjectIndex = @enumFromInt(self.value.lhs);
+                const obj = self.pool.getConst(idx);
+                switch (obj) {
+                    .symbol => |sym| try writer.print("\"{s}\"", .{self.strings.get(sym)}),
+                    else => try writer.print("{f}", .{obj}),
+                }
+            },
+            else => try writer.print("<repr:{s}>", .{@tagName(self.value.repr)}),
+        }
+    }
+};

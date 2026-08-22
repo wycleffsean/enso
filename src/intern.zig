@@ -51,7 +51,7 @@ pub const StringInternPool = struct {
         return null;
     }
 
-    pub fn get(self: *Self, index: Index) []const u8 {
+    pub fn get(self: *const Self, index: Index) []const u8 {
         const slice = self.pool.entries.slice();
         const keys_array = slice.items(.key);
         return keys_array[index];
@@ -98,6 +98,10 @@ pub const ObjectPool = struct {
     }
 
     pub fn get(self: *Self, i: ObjectIndex) object.Object {
+        return self.pool.entries.items(.key)[@intFromEnum(i)];
+    }
+
+    pub fn getConst(self: *const Self, i: ObjectIndex) object.Object {
         return self.pool.entries.items(.key)[@intFromEnum(i)];
     }
 };
