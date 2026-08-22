@@ -32,6 +32,11 @@ pub const OpCode = enum(u8) {
     py_compare_op,    // rich comparison; repr = CompareOp kind, lhs = left vid, rhs = right vid
     py_unary_op,      // unary op; lhs = operand vid, rhs = UnaryOp kind
     py_load_attr,     // attribute load; lhs = object vid, rhs = ObjectPool index of name symbol
+    py_build_list,    // [e0, ...]; lhs = count, rhs = extra offset of element vids
+    py_build_tuple,   // (e0, ...); lhs = count, rhs = extra offset of element vids
+    py_build_set,     // {e0, ...}; lhs = count, rhs = extra offset of element vids
+    py_build_map,     // {k0: v0, ...}; lhs = count (pairs), rhs = extra offset of [k0,v0,...] vids
+    py_list_extend,   // list.extend(iterable); lhs = list vid, rhs = iterable vid; result = same list
 
     pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -64,6 +69,11 @@ fn effectsOf(op: OpCode) Effects {
         .py_compare_op => .{ .reads_world = true, .can_raise = true, .has_result = true },
         .py_unary_op => .{ .reads_world = true, .can_raise = true, .has_result = true },
         .py_load_attr => .{ .reads_world = true, .can_raise = true, .has_result = true },
+        .py_build_list => .{ .can_allocate = true, .can_raise = true, .has_result = true },
+        .py_build_tuple => .{ .can_allocate = true, .has_result = true },
+        .py_build_set => .{ .can_allocate = true, .can_raise = true, .has_result = true },
+        .py_build_map => .{ .can_allocate = true, .has_result = true },
+        .py_list_extend => .{ .writes_world = true, .can_raise = true, .has_result = true },
     };
 }
 
@@ -294,6 +304,20 @@ pub const Procedure = struct {
         var block = &p.blocks.items[bid.idx()];
         try block.values.append(p.allocator, i);
         return i;
+    }
+
+    /// Encode a variadic collection node: extra stores element vids.
+    /// lhs = element count, rhs = offset into extra.
+    pub fn addCollection(p: *Procedure, bid: BlockId, op: OpCode, elements: []const u32) !ValueId {
+        try p.extra.ensureUnusedCapacity(p.allocator, elements.len);
+        const off: u32 = @intCast(p.extra.items.len);
+        for (elements) |e| p.extra.appendAssumeCapacity(e);
+        return try p.addValue(bid, .{
+            .op = op,
+            .repr = .object,
+            .lhs = @intCast(elements.len),
+            .rhs = off,
+        });
     }
 
     /// Encode a variadic call: extra stores [callable_vid, arg0_vid, ...].

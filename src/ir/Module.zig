@@ -290,6 +290,99 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             const v = try b.emit(.{ .op = .py_make_function, .repr = .object, .lhs = co_idx, .rhs = 0 });
             try b.push(v);
         },
+        .build_list, .build_tuple, .build_set => |count| {
+            const ir_op: ir.OpCode = switch (insn) {
+                .build_list => .py_build_list,
+                .build_tuple => .py_build_tuple,
+                .build_set => .py_build_set,
+                else => unreachable,
+            };
+            var buf: [64]u32 = undefined;
+            const elems: []u32 = if (count <= buf.len)
+                buf[0..count]
+            else
+                try b.allocator.alloc(u32, count);
+            defer if (count > buf.len) b.allocator.free(elems);
+            // Pop in reverse; store left-to-right in extra.
+            var i: usize = count;
+            while (i > 0) { i -= 1; elems[i] = b.pop().idx(); }
+            const v = try b.proc.addCollection(b.current, ir_op, elems);
+            try b.push(v);
+        },
+        .build_const_key_map => |count| {
+            // Stack: [v0, v1, ..., v_{n-1}, keys_tuple_const]
+            // Extra layout: [k0, v0, k1, v1, ...]
+            const keys_vid = b.pop(); // pop the const tuple of keys
+            const keys_val = b.proc.values.get(keys_vid.idx());
+
+            // Recover the tuple from the object pool.
+            const keys_obj: object.Object = switch (keys_val.repr) {
+                .object => blk: {
+                    const pool_idx: intern.ObjectPool.ObjectIndex = @enumFromInt(keys_val.lhs);
+                    break :blk mod.object_pool.getConst(pool_idx);
+                },
+                .tagged => .{ .tuple = &.{} }, // shouldn't happen but be safe
+                else => .{ .tuple = &.{} },
+            };
+            const key_objects: []const object.Object = switch (keys_obj) {
+                .tuple => |t| t,
+                else => &.{},
+            };
+
+            var buf: [128]u32 = undefined;
+            const pair_count = count * 2;
+            const elems: []u32 = if (pair_count <= buf.len)
+                buf[0..pair_count]
+            else
+                try b.allocator.alloc(u32, pair_count);
+            defer if (pair_count > buf.len) b.allocator.free(elems);
+
+            // Pop values in reverse, pair with keys.
+            var i: usize = count;
+            while (i > 0) {
+                i -= 1;
+                const val = b.pop();
+                const key_val = if (i < key_objects.len)
+                    try mod.internConst(key_objects[i])
+                else
+                    ir.Value.None;
+                const key_vid = try b.emit(key_val);
+                elems[i * 2 + 0] = key_vid.idx();
+                elems[i * 2 + 1] = val.idx();
+            }
+            const v = try b.proc.addCollection(b.current, .py_build_map, elems);
+            try b.push(v);
+        },
+        .build_map => |count| {
+            // Stack (top-down): v_{n-1}, k_{n-1}, ..., v_0, k_0
+            // extra layout: [k0, v0, k1, v1, ...]
+            const pair_count = count * 2;
+            var buf: [128]u32 = undefined;
+            const elems: []u32 = if (pair_count <= buf.len)
+                buf[0..pair_count]
+            else
+                try b.allocator.alloc(u32, pair_count);
+            defer if (pair_count > buf.len) b.allocator.free(elems);
+            var i: usize = count;
+            while (i > 0) {
+                i -= 1;
+                const val = b.pop();
+                const key = b.pop();
+                elems[i * 2 + 0] = key.idx();
+                elems[i * 2 + 1] = val.idx();
+            }
+            const v = try b.proc.addCollection(b.current, .py_build_map, elems);
+            try b.push(v);
+        },
+        .list_extend => |i| {
+            // STACK[-i] is the list (before pop); TOS is the iterable.
+            // Peek the list at depth i (0-indexed from top, so depth i since iterable is at 0).
+            const list_vid = b.peek(i); // list is i items below TOS (TOS = iterable at depth 0)
+            const iterable = b.pop();
+            const v = try b.emit(.{ .op = .py_list_extend, .repr = .object, .lhs = list_vid.idx(), .rhs = iterable.idx() });
+            // Replace the list slot with the new value representing the extended list.
+            b.stack.items[b.stack.items.len - i] = v;
+        },
         .pop_top => {
             _ = b.pop();
         },
@@ -526,6 +619,106 @@ test "ir/lower: function args map to arg() nodes via Braun" {
     try testing.expectEqual(@as(u32, 0), proc.values.items(.lhs)[3]); // lhs = %v0 = x
     try testing.expectEqual(@as(u32, 1), proc.values.items(.rhs)[3]); // rhs = %v1 = y
     try testing.expectEqual(ir.BinaryOp.add, proc.values.get(3).binaryOpKind());
+}
+
+test "ir/lower: build_list with variable elements" {
+    // [a, b, c] — three LOAD_NAME + BUILD_LIST 3
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("[a, b, c]");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var build_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_build_list) { build_idx = i; break; }
+    }
+    try testing.expect(build_idx > 0);
+
+    const count = proc.values.items(.lhs)[build_idx];
+    const off = proc.values.items(.rhs)[build_idx];
+    try testing.expectEqual(@as(u32, 3), count);
+    // elements left-to-right: a=%v1, b=%v2, c=%v3
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[proc.extra.items[off + 0]]); // a
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[proc.extra.items[off + 1]]); // b
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[proc.extra.items[off + 2]]); // c
+    // left-to-right allocation order
+    try testing.expect(proc.extra.items[off + 0] < proc.extra.items[off + 1]);
+    try testing.expect(proc.extra.items[off + 1] < proc.extra.items[off + 2]);
+}
+
+test "ir/lower: build_tuple with variable elements" {
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("(a, b)");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var build_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_build_tuple) { build_idx = i; break; }
+    }
+    try testing.expect(build_idx > 0);
+    try testing.expectEqual(@as(u32, 2), proc.values.items(.lhs)[build_idx]);
+}
+
+test "ir/lower: build_set with variable elements" {
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("{a, b}");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var found = false;
+    for (ops) |op| if (op == .py_build_set) { found = true; break; };
+    try testing.expect(found);
+}
+
+test "ir/lower: build_map with variable keys and values" {
+    // {a: b, c: d} — interleaved [k0,v0,k1,v1] in extra
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("{a: b, c: d}");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var build_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_build_map) { build_idx = i; break; }
+    }
+    try testing.expect(build_idx > 0);
+
+    const count = proc.values.items(.lhs)[build_idx]; // pair count
+    const off = proc.values.items(.rhs)[build_idx];
+    try testing.expectEqual(@as(u32, 4), count); // 2 pairs = 4 vids in extra
+    // extra layout: [k0, v0, k1, v1]
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[proc.extra.items[off + 0]]); // k0=a
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[proc.extra.items[off + 1]]); // v0=b
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[proc.extra.items[off + 2]]); // k1=c
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[proc.extra.items[off + 3]]); // v1=d
+}
+
+test "ir/lower: build_list literal uses list_extend" {
+    // [1, 2, 3] — CPython emits BUILD_LIST 0 + LIST_EXTEND, lowered to py_build_list + py_list_extend
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("[1, 2, 3]");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var extend_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_list_extend) { extend_idx = i; break; }
+    }
+    try testing.expect(extend_idx > 0);
+    // extend's lhs must be the empty list
+    const extend_lhs = proc.values.items(.lhs)[extend_idx];
+    try testing.expectEqual(ir.OpCode.py_build_list, ops[extend_lhs]);
 }
 
 test "ir/lower: method call uses object as receiver" {

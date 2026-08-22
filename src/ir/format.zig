@@ -108,6 +108,18 @@ const FormatOp = struct {
                 }
             },
             .py_make_function => try writer.print("py_make_function({d})", .{v.lhs}),
+            .py_list_extend => try writer.print("py_list_extend({f}, {f})", .{ self.ref(v.lhs), self.ref(v.rhs) }),
+            .py_build_list, .py_build_tuple, .py_build_set, .py_build_map => {
+                const name = @tagName(v.op);
+                const count = v.lhs;
+                try writer.print("{s}(", .{name});
+                for (0..count) |i| {
+                    if (i > 0) try writer.writeAll(", ");
+                    const elem_vid = self.proc.extra.items[v.rhs + @as(u32, @intCast(i))];
+                    try writer.print("{f}", .{FormatRef{ .vid = ir.ValueId.from(elem_vid) }});
+                }
+                try writer.writeAll(")");
+            },
             .py_compare_op => try writer.print("py_compare_op(.{s}, {f}, {f})", .{
                 @tagName(v.compareOpKind()), self.ref(v.lhs), self.ref(v.rhs),
             }),
