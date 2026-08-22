@@ -304,6 +304,7 @@ pub const CodeObject = struct {
     // co_firstlineno: *const Object = &One,
     // co_freevars: *const Object = &EmptyTuple,
     // co_lnotab: *const Object = &None, // Deprecated, use co_lines instead
+    co_argcount: u32 = 0, // number of positional parameters (fast locals 0..co_argcount-1)
     co_nlocals: u32 = 0, // count of fast local slots for this code object
     // co_qualname: *const Object = &.{ .string = .{ .string = "<module>" } },
     // co_varnames: *const Object = &EmptyTuple,
@@ -598,6 +599,8 @@ pub const Module = struct {
                             _ = try self.fastIndexForSymbol(sym);
                         }
                     }
+                    self.mod.codeobject_store.items(.co_argcount)[co_idx] =
+                        @intCast(fn_decl.parameters.arguments.items.len);
                     break :blk try self.generateStatements(fn_decl.suite.items, insns);
                 },
                 .comprehension => |comprehension| blk: {
