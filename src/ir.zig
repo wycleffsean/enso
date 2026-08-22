@@ -5,6 +5,8 @@ const intern = @import("intern.zig");
 const bytecode = @import("bytecode.zig");
 pub const Module = @import("ir/Module.zig");
 pub const BinaryOp = bytecode.BinaryOperation;
+pub const CompareOp = bytecode.CompareOperation;
+pub const UnaryOp = enum(u8) { negative, invert, not };
 const assert = std.debug.assert;
 const testing = std.testing;
 
@@ -24,9 +26,11 @@ pub const OpCode = enum(u8) {
     py_truthy,
     py_binary_op,
     py_call,
-    py_load_name,    // global/builtin lookup; lhs = ObjectPool index of the name symbol
-    py_store_name,   // global dict write; lhs = ObjectPool index of name, rhs = value vid
+    py_load_name,     // global/builtin lookup; lhs = ObjectPool index of the name symbol
+    py_store_name,    // global dict write; lhs = ObjectPool index of name, rhs = value vid
     py_make_function, // create function object; lhs = codeobject index in bytecode store
+    py_compare_op,    // rich comparison; origin = CompareOperation, lhs = left vid, rhs = right vid
+    py_unary_op,      // unary op; origin = UnaryOp tag, lhs = operand vid
 
     pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -56,6 +60,8 @@ fn effectsOf(op: OpCode) Effects {
         .py_load_name => .{ .reads_world = true, .can_raise = true, .has_result = true },
         .py_store_name => .{ .writes_world = true, .can_raise = true },
         .py_make_function => .{ .can_allocate = true, .has_result = true },
+        .py_compare_op => .{ .reads_world = true, .can_raise = true, .has_result = true },
+        .py_unary_op => .{ .reads_world = true, .can_raise = true, .has_result = true },
     };
 }
 
@@ -68,6 +74,7 @@ const Repr = enum(u8) {
     ptr, // raw pointer
     object, // owned *Object reference
     tagged, // high bit tagged immediate value or *Object
+    _,  // allows arbitrary u8 values for opcode-specific repurposing (e.g. operator kinds)
 
     fn needsBoxing(r: Repr) bool {
         return switch (r) {
@@ -142,6 +149,20 @@ pub const Value = struct {
     };
 
     pub const None: Value = .fromTagged(.None);
+
+    pub fn binaryOp(kind: BinaryOp, lhs: u32, rhs: u32) Value {
+        return .{ .op = .py_binary_op, .repr = @enumFromInt(@intFromEnum(kind)), .lhs = lhs, .rhs = rhs };
+    }
+    pub fn binaryOpKind(v: Value) BinaryOp {
+        return @enumFromInt(@intFromEnum(v.repr));
+    }
+
+    pub fn compareOp(kind: CompareOp, lhs: u32, rhs: u32) Value {
+        return .{ .op = .py_compare_op, .repr = @enumFromInt(@intFromEnum(kind)), .lhs = lhs, .rhs = rhs };
+    }
+    pub fn compareOpKind(v: Value) CompareOp {
+        return @enumFromInt(@intFromEnum(v.repr));
+    }
 };
 
 pub const BranchExtra = struct {
@@ -153,6 +174,8 @@ const BranchPayload = struct {
     predicate: u32,
     extra: BranchExtra,
 };
+
+
 
 const Block = struct {
     // TODO: would a span into the procedure's values would be better?
