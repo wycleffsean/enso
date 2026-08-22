@@ -101,6 +101,7 @@ const FormatOp = struct {
                     else => try writer.print("py_load_name(<?>)", .{}),
                 }
             },
+            .py_make_function => try writer.print("py_make_function({d})", .{v.lhs}),
             .py_store_name => {
                 const idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.lhs);
                 const obj = self.pool.getConst(idx);

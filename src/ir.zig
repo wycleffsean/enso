@@ -24,8 +24,9 @@ pub const OpCode = enum(u8) {
     py_truthy,
     py_binary_op,
     py_call,
-    py_load_name,  // global/builtin lookup; lhs = ObjectPool index of the name symbol
-    py_store_name, // global dict write; lhs = ObjectPool index of name, rhs = value vid
+    py_load_name,    // global/builtin lookup; lhs = ObjectPool index of the name symbol
+    py_store_name,   // global dict write; lhs = ObjectPool index of name, rhs = value vid
+    py_make_function, // create function object; lhs = codeobject index in bytecode store
 
     pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -54,6 +55,7 @@ fn effectsOf(op: OpCode) Effects {
         .py_call => .{ .reads_world = true, .writes_world = true, .can_raise = true, .can_allocate = true, .has_result = true },
         .py_load_name => .{ .reads_world = true, .can_raise = true, .has_result = true },
         .py_store_name => .{ .writes_world = true, .can_raise = true },
+        .py_make_function => .{ .can_allocate = true, .has_result = true },
     };
 }
 

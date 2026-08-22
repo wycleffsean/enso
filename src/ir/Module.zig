@@ -79,6 +79,16 @@ pub fn lowerCodeObject(mod: *Module, co: bytecode.CodeObject) !ir.Procedure {
     // by stable ID before those blocks' instructions are lowered
     for (0..graph.blocks.len) |_| _ = try b.newBlock();
 
+    // Emit arg() nodes for each positional parameter into block 0.
+    // Parameters occupy fast local slots 0..co_argcount-1 in the order they were declared.
+    if (co.co_argcount > 0) {
+        b.switchTo(.from(0));
+        for (0..co.co_argcount) |i| {
+            const vid = try b.emit(.{ .op = .arg, .repr = .object, .lhs = @intCast(i), .rhs = 0 });
+            try b.writeLocal(@intCast(i), vid);
+        }
+    }
+
     // Pass 2: lower each block's instructions, including its terminator
     for (0..graph.blocks.len) |bid| {
         const block_id: ir.BlockId = .from(@intCast(bid));
@@ -230,6 +240,24 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             operands[0] = b.pop().idx(); // receiver (from push_null or load_attr)
 
             const v = try b.proc.addCall(b.current, operands);
+            try b.push(v);
+        },
+        .make_function => {
+            // The code object index was pushed by LOAD_CONST as a codeobject value.
+            // We need to look it up in the object pool to recover the index.
+            const co_vid = b.pop();
+            const co_val = b.proc.values.get(co_vid.idx());
+            // The const_obj for a codeobject stores the index in lhs (via fromObject).
+            // But codeobject is stored as a tagged int — recover from the pool.
+            const co_idx: u32 = switch (co_val.repr) {
+                .object => blk: {
+                    const pool_idx: intern.ObjectPool.ObjectIndex = @enumFromInt(co_val.lhs);
+                    const obj = mod.object_pool.getConst(pool_idx);
+                    break :blk obj.codeobject;
+                },
+                else => 0,
+            };
+            const v = try b.emit(.{ .op = .py_make_function, .repr = .object, .lhs = co_idx, .rhs = 0 });
             try b.push(v);
         },
         .pop_top => {
@@ -443,4 +471,46 @@ test "ir/lower: branching" {
     try assertSuccession(&proc, elseb, exitb);
 
     try assertContainsPhi(&proc, exitb);
+}
+
+test "ir/lower: function args map to arg() nodes via Braun" {
+    // def f(x, y): return x + y
+    // The function body (co index 1) should have arg(0), arg(1) at the top,
+    // and LOAD_FAST 0/1 should resolve directly to those nodes without phi.
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lowerAt("def f(x, y): return x + y", 1);
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    // Expected: arg(0), arg(1), nop(resume), py_binary_op(.add, %v0, %v1), ret(%v3)
+    try testing.expectEqual(ir.OpCode.arg, ops[0]);
+    try testing.expectEqual(ir.OpCode.arg, ops[1]);
+    try testing.expectEqual(ir.OpCode.nop, ops[2]);
+    try testing.expectEqual(ir.OpCode.py_binary_op, ops[3]);
+    try testing.expectEqual(ir.OpCode.ret, ops[4]);
+    try testing.expectEqual(@as(usize, 5), ops.len);
+
+    // arg indices
+    try testing.expectEqual(@as(u32, 0), proc.values.items(.lhs)[0]); // arg(0) = x
+    try testing.expectEqual(@as(u32, 1), proc.values.items(.lhs)[1]); // arg(1) = y
+
+    // binary_op operands resolve directly to arg nodes (Braun forwarded them)
+    try testing.expectEqual(@as(u32, 0), proc.values.items(.lhs)[3]); // lhs = %v0 = x
+    try testing.expectEqual(@as(u32, 1), proc.values.items(.rhs)[3]); // rhs = %v1 = y
+}
+
+test "ir/lower: make_function in module emits py_make_function" {
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    // Module-level proc (co 0): nop, const(co), py_make_function, py_store_name("f"), const(None), ret
+    var proc = try harness.lower("def f(x): return x + 1");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var found_make_fn = false;
+    for (ops) |op| if (op == .py_make_function) { found_make_fn = true; break; };
+    try testing.expect(found_make_fn);
 }
