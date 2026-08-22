@@ -2,7 +2,9 @@ const std = @import("std");
 const cfg = @import("bytecode/cfg.zig");
 const TaggedValue = @import("TaggedValue.zig");
 const intern = @import("intern.zig");
+const bytecode = @import("bytecode.zig");
 pub const Module = @import("ir/Module.zig");
+pub const BinaryOp = bytecode.BinaryOperation;
 const assert = std.debug.assert;
 const testing = std.testing;
 
@@ -22,6 +24,8 @@ pub const OpCode = enum(u8) {
     py_truthy,
     py_binary_op,
     py_call,
+    py_load_name,  // global/builtin lookup; lhs = ObjectPool index of the name symbol
+    py_store_name, // global dict write; lhs = ObjectPool index of name, rhs = value vid
 
     pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -48,6 +52,8 @@ fn effectsOf(op: OpCode) Effects {
         .py_truthy => .{},
         .py_binary_op => .{ .reads_world = true, .writes_world = true, .can_raise = true, .can_allocate = true, .has_result = true },
         .py_call => .{ .reads_world = true, .writes_world = true, .can_raise = true, .can_allocate = true, .has_result = true },
+        .py_load_name => .{ .reads_world = true, .can_raise = true, .has_result = true },
+        .py_store_name => .{ .writes_world = true, .can_raise = true },
     };
 }
 
@@ -136,14 +142,14 @@ pub const Value = struct {
     pub const None: Value = .fromTagged(.None);
 };
 
-const BranchPayload = struct {
-    const Extra = struct {
-        then: BlockId,
-        @"else": BlockId,
-    };
+pub const BranchExtra = struct {
+    then: BlockId,
+    @"else": BlockId,
+};
 
+const BranchPayload = struct {
     predicate: u32,
-    extra: Extra,
+    extra: BranchExtra,
 };
 
 const Block = struct {
@@ -235,7 +241,7 @@ pub const Procedure = struct {
     }
 
     /// fetch and decode "extra" payloads
-    fn extraData(p: *const Procedure, comptime T: type, off: u32) T {
+    pub fn extraData(p: *const Procedure, comptime T: type, off: u32) T {
         var out: T = undefined;
         var i = off;
         inline for (std.meta.fields(T)) |f| {
@@ -263,8 +269,22 @@ pub const Procedure = struct {
         return i;
     }
 
+    /// Encode a variadic call: extra stores [callable_vid, arg0_vid, ...].
+    /// lhs = operand count (1 + argc), rhs = offset into extra.
+    pub fn addCall(p: *Procedure, bid: BlockId, operands: []const u32) !ValueId {
+        try p.extra.ensureUnusedCapacity(p.allocator, operands.len);
+        const off: u32 = @intCast(p.extra.items.len);
+        for (operands) |op| p.extra.appendAssumeCapacity(op);
+        return try p.addValue(bid, .{
+            .op = .py_call,
+            .repr = .object,
+            .lhs = @intCast(operands.len),
+            .rhs = off,
+        });
+    }
+
     pub fn addBranch(p: *Procedure, bid: BlockId, payload: BranchPayload) !ValueId {
-        const extra_offset = try p.addExtra(BranchPayload.Extra, payload.extra);
+        const extra_offset = try p.addExtra(BranchExtra, payload.extra);
         return try p.addValue(bid, .{
             .op = .branch,
             .repr = .i1,
@@ -280,7 +300,7 @@ pub const Procedure = struct {
         const rhs = p.values.items(.rhs)[term.idx()];
         switch (p.opcodeOf(term)) {
             .branch => {
-                const extra = p.extraData(BranchPayload.Extra, rhs);
+                const extra = p.extraData(BranchExtra, rhs);
                 buf[0] = extra.then;
                 buf[1] = extra.@"else";
                 return buf[0..2];
@@ -336,14 +356,14 @@ test "procedure: encoding 'extra' data" {
     const then_b = try proc.addBlock();
     const else_b = try proc.addBlock();
     const predicate_id = try proc.addValue(root, predicate);
-    const branch_extra: BranchPayload.Extra = .{ .then = then_b, .@"else" = else_b };
+    const branch_extra: BranchExtra = .{ .then = then_b, .@"else" = else_b };
 
     try testing.expectEqual(0, proc.extra.items.len);
 
     const vid = try proc.addBranch(root, .{ .predicate = predicate_id.idx(), .extra = branch_extra });
     const branch_value = proc.getValue(vid);
 
-    const payload = proc.extraData(BranchPayload.Extra, branch_value.rhs);
+    const payload = proc.extraData(BranchExtra, branch_value.rhs);
     try testing.expectEqual(branch_extra, payload);
 }
 

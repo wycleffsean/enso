@@ -16,19 +16,21 @@ const Module = @This();
 allocator: std.mem.Allocator,
 procedures: std.ArrayList(ir.Procedure) = .empty,
 object_pool: intern.ObjectPool,
+intern_pool: *const intern.StringInternPool,
 
 const BlockId = ir.BlockId;
 
-fn init(allocator: std.mem.Allocator) Module {
+fn init(allocator: std.mem.Allocator, intern_pool: *const intern.StringInternPool) Module {
     return .{
         .allocator = allocator,
         .object_pool = .init(allocator),
+        .intern_pool = intern_pool,
     };
 }
 
 pub fn build(allocator: std.mem.Allocator, bmod: *const bytecode.Module) !Module {
     const proccount = bmod.codeobject_store.len;
-    var mod: Module = .init(allocator);
+    var mod: Module = .init(allocator, bmod.intern_pool);
     try mod.procedures.ensureTotalCapacity(mod.allocator, proccount);
     for (0..proccount) |pid| {
         const co = bmod.codeobject_store.get(pid);
@@ -162,6 +164,7 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             _ = try b.emit(.{ .op = .nop, .repr = .none, .lhs = 0, .rhs = 0 });
         },
         .push_null => {
+            // Receiver slot: None means no bound receiver (module-level / builtin function).
             const v = try b.emit(.None);
             try b.push(v);
         },
@@ -171,9 +174,16 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             const v = try b.emit(val);
             try b.push(v);
         },
-        .load_name => {
-            // Global/builtin lookup — stub until runtime lookup is implemented.
-            const v = try b.emit(.{ .op = .const_obj, .repr = .tagged, .lhs = 0, .rhs = 0 });
+        .load_name => |sym| {
+            // Global/builtin lookup — not tracked by Braun SSA.
+            // The symbol index in ObjectPool identifies which name to look up at runtime.
+            const idx = try mod.object_pool.put(.{ .symbol = sym });
+            const v = try b.emit(.{
+                .op = .py_load_name,
+                .repr = .object,
+                .lhs = @intFromEnum(idx),
+                .rhs = 0,
+            });
             try b.push(v);
         },
         .load_fast => |obj| {
@@ -181,28 +191,45 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             const v = try b.readLocal(local_idx);
             try b.push(v);
         },
-        .store_name => {
-            // Global store — stub until runtime is implemented.
-            _ = b.pop();
+        .store_name => |sym| {
+            const val = b.pop();
+            const idx = try mod.object_pool.put(.{ .symbol = sym });
+            _ = try b.emit(.{
+                .op = .py_store_name,
+                .repr = .none,
+                .lhs = @intFromEnum(idx),
+                .rhs = val.idx(),
+            });
         },
         .store_fast => |obj| {
             const local_idx: ir.LocalIdx = @intCast(obj.int);
             const v = b.pop();
             try b.writeLocal(local_idx, v);
         },
-        .binary_op => {
+        .binary_op => |kind| {
             const rhs = b.pop();
             const lhs = b.pop();
-            const v = try b.emit(.{ .op = .py_binary_op, .repr = .object, .lhs = lhs.idx(), .rhs = rhs.idx() });
+            const v = try b.emit(.{ .op = .py_binary_op, .repr = .object, .origin = @intFromEnum(kind), .lhs = lhs.idx(), .rhs = rhs.idx() });
             try b.push(v);
         },
         .call => |argc| {
-            // pop argc args, then callable, then null (from push_null)
-            var i: usize = 0;
-            while (i < argc) : (i += 1) _ = b.pop();
-            const callable = b.pop();
-            _ = b.pop(); // null pushed by push_null below callable
-            const v = try b.emit(.{ .op = .py_call, .repr = .object, .lhs = callable.idx(), .rhs = 0 });
+            // Stack before CALL: [..., receiver, callable, arg0, ..., arg_{argc-1}]
+            // operands: [receiver, callable, arg0, ..., arg_{argc-1}]
+            var buf: [64]u32 = undefined;
+            const total = 2 + argc; // receiver + callable + argc args
+            const operands: []u32 = if (total <= buf.len)
+                buf[0..total]
+            else
+                try b.allocator.alloc(u32, total);
+            defer if (total > buf.len) b.allocator.free(operands);
+
+            // Pop args in LIFO order into tail of operands.
+            var i: usize = total - 1;
+            while (i >= 2) : (i -= 1) operands[i] = b.pop().idx();
+            operands[1] = b.pop().idx(); // callable
+            operands[0] = b.pop().idx(); // receiver (from push_null or load_attr)
+
+            const v = try b.proc.addCall(b.current, operands);
             try b.push(v);
         },
         .pop_top => {
@@ -231,19 +258,131 @@ test "ir/lower: hello_world" {
 
     var proc = try harness.lower("print('hello world')");
     defer proc.deinit();
+    // Value allocation order:
+    //   %v0 = nop()                       (RESUME)
+    //   %v1 = const(None)                 (PUSH_NULL → receiver)
+    //   %v2 = py_load_name("print")       (LOAD_NAME → global lookup)
+    //   %v3 = const_obj("hello world")    (LOAD_CONST)
+    //   %v4 = py_call(v1, v2, v3)         (CALL 1)
+    //   %v5 = const(None)                 (return_const)
+    //   %v6 = ret(v5)
     try testing.expectEqualSlices(
         ir.OpCode,
-        ([_]ir.OpCode{
-            .nop,      // resume
-            .const_obj, // push_null (None)
-            .const_obj, // load_name(print)  — stub
-            .const_obj, // load_const('hello world')
-            .py_call,  // call(1)
-            .const_obj, // return_const None
-            .ret,
-        })[0..],
+        ([_]ir.OpCode{ .nop, .const_obj, .py_load_name, .const_obj, .py_call, .const_obj, .ret })[0..],
         proc.values.items(.op),
     );
+    // py_call operand count = 3: receiver + callable + 1 arg
+    const call_vid = ir.ValueId.from(4);
+    try testing.expectEqual(@as(u32, 3), proc.values.items(.lhs)[call_vid.idx()]);
+    // Verify operand order: [receiver(%v1), callable(%v2), arg(%v3)]
+    const rhs = proc.values.items(.rhs)[call_vid.idx()];
+    try testing.expectEqual(@as(u32, 1), proc.extra.items[rhs + 0]); // receiver = %v1
+    try testing.expectEqual(@as(u32, 2), proc.extra.items[rhs + 1]); // callable = %v2
+    try testing.expectEqual(@as(u32, 3), proc.extra.items[rhs + 2]); // arg = %v3
+}
+
+test "ir/lower: store and load name" {
+    // x = 1; x + 1
+    // STORE_NAME discards (global write, not modeled).
+    // LOAD_NAME emits a fresh const_obj symbol stub — it's a global lookup, not a local.
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("x = 1\nx + 1");
+    defer proc.deinit();
+
+    // Expected flat value sequence:
+    //   %v0 = nop()                     (RESUME)
+    //   %v1 = const(1)                  (LOAD_CONST 1)
+    //   %v2 = py_store_name("x", %v1)   (STORE_NAME x)
+    //   %v3 = py_load_name("x")         (LOAD_NAME x)
+    //   %v4 = const(1)                  (LOAD_CONST 1)
+    //   %v5 = py_binary_op(%v3, %v4)    (BINARY_OP +)
+    //   %v6 = const(None)               (return_const)
+    //   %v7 = ret
+    const ops = proc.values.items(.op);
+    try testing.expectEqual(ir.OpCode.nop, ops[0]);
+    try testing.expectEqual(ir.OpCode.const_obj, ops[1]);          // const(1) for x=1
+    try testing.expectEqual(ir.OpCode.py_store_name, ops[2]);      // store_name(x, %v1)
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[3]);       // load_name(x)
+    try testing.expectEqual(ir.OpCode.const_obj, ops[4]);          // const(1) for literal
+    try testing.expectEqual(ir.OpCode.py_binary_op, ops[5]);
+    try testing.expectEqual(ir.OpCode.const_obj, ops[6]);          // return_const None
+    try testing.expectEqual(ir.OpCode.ret, ops[7]);
+    try testing.expectEqual(@as(usize, 8), ops.len);
+
+    // binary_op: lhs = LOAD_NAME(x) = %v3, rhs = literal 1 = %v4
+    const binop_lhs = proc.values.items(.lhs)[5];
+    const binop_rhs = proc.values.items(.rhs)[5];
+    try testing.expectEqual(@as(u32, 3), binop_lhs);
+    try testing.expectEqual(@as(u32, 4), binop_rhs);
+}
+
+test "ir/lower: call operands are complete and ordered" {
+    // print('a', 'b') — 2 args; operands must be [receiver, print, 'a', 'b'] in that order.
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("print('a', 'b')");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    // Find the py_call
+    var call_vid_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_call) { call_vid_idx = i; break; }
+    }
+    try testing.expect(call_vid_idx > 0); // found it
+
+    const lhs = proc.values.items(.lhs)[call_vid_idx]; // operand count
+    const rhs = proc.values.items(.rhs)[call_vid_idx]; // extra offset
+    try testing.expectEqual(@as(u32, 4), lhs); // receiver + callable + 2 args
+
+    // operands[0] = receiver (const None), operands[1] = callable (py_load_name),
+    // operands[2] = 'a', operands[3] = 'b'
+    const recv_vid = proc.extra.items[rhs];
+    const callable_vid = proc.extra.items[rhs + 1];
+    const arg0_vid = proc.extra.items[rhs + 2];
+    const arg1_vid = proc.extra.items[rhs + 3];
+
+    try testing.expectEqual(ir.OpCode.const_obj, proc.values.items(.op)[recv_vid]);        // receiver = None
+    try testing.expectEqual(ir.OpCode.py_load_name, proc.values.items(.op)[callable_vid]); // print lookup
+    try testing.expectEqual(ir.OpCode.const_obj, proc.values.items(.op)[arg0_vid]);     // 'a'
+    try testing.expectEqual(ir.OpCode.const_obj, proc.values.items(.op)[arg1_vid]);     // 'b'
+
+    // arg0 must come before arg1 in allocation order (left-to-right)
+    try testing.expect(arg0_vid < arg1_vid);
+}
+
+test "ir/lower: binary_op lhs and rhs are correct" {
+    // x = 1; y = 2; z = x + y
+    // binary_op lhs should be x (const 1), rhs should be y (const 2)
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("x = 1\ny = 2\nz = x + y");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var binop_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_binary_op) { binop_idx = i; break; }
+    }
+    try testing.expect(binop_idx > 0);
+
+    const lhs = proc.values.items(.lhs)[binop_idx];
+    const rhs = proc.values.items(.rhs)[binop_idx];
+
+    // lhs = LOAD_NAME(x) = py_load_name, rhs = LOAD_NAME(y) = py_load_name
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[lhs]);
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[rhs]);
+
+    // lhs (x) was loaded before rhs (y)
+    try testing.expect(lhs < rhs);
+
+    // The two constants must be distinct values (different slots in bytecode)
+    // and lhs (x=1) was emitted before rhs (y=2)
+    try testing.expect(lhs < rhs);
 }
 
 fn assertSuccession(p: *const ir.Procedure, pred: BlockId, succ: BlockId) !void {
@@ -286,7 +425,7 @@ test "ir/lower: branching" {
 
     const root_co = try harness.buildCodeObjects(code);
     const co = root_co.module.codeobject_store.get(1);
-    var mod: Module = .init(arena.allocator());
+    var mod: Module = .init(arena.allocator(), &harness.intern_pool);
     defer mod.object_pool.deinit();
     var proc = try lowerCodeObject(&mod, co);
     defer proc.deinit();

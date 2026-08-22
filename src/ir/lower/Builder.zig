@@ -22,10 +22,13 @@ const Builder = @This();
 const Incomplete = struct { bid: BlockId, local: ir.LocalIdx, phi: ValueId };
 
 pub fn init(proc: *ir.Procedure, co: bytecode.CodeObject) Builder {
-    // nlocals: count of fast local slots (params + body-assigned locals).
-    // Use at least 1 so module-level code objects with no locals don't zero-size the defs table.
     const nlocals: u16 = @max(1, @as(u16, @intCast(co.co_nlocals)));
-    return .{ .co = co, .proc = proc, .allocator = proc.allocator, .nlocals = nlocals };
+    return .{
+        .co = co,
+        .proc = proc,
+        .allocator = proc.allocator,
+        .nlocals = nlocals,
+    };
 }
 
 pub fn deinit(b: *Builder) void {
