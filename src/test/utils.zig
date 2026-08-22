@@ -90,6 +90,7 @@ pub const Example = struct {
     normalize_bytecode: bool = false,
     test_vm: bool = true,
     test_vm_comptime: bool = false,
+    test_mir: bool = false,
 
     const Self = @This();
 
@@ -117,6 +118,7 @@ pub const Example = struct {
 pub const examples = [_]Example{
     .{
         .name = "examples_none",
+        .test_mir = true,
     },
     .{
         .name = "examples_hello_world",

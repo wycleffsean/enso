@@ -10,6 +10,7 @@ const mir = @import("../mir.zig");
 const TaggedValue = @import("../TaggedValue.zig");
 const backend = @import("../backend.zig");
 const intern = @import("../intern.zig");
+const test_utils = @import("../test/utils.zig");
 
 const Backend = backend.Backend;
 const CompiledModule = backend.CompiledModule;
@@ -177,6 +178,44 @@ pub const MirBackend = struct {
         }
     }
 };
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+const testing = std.testing;
+
+fn testMirExample(comptime example: test_utils.Example) !void {
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+    var mod = try harness.lowerModule(testing.allocator, example.source());
+    defer mod.deinit();
+
+    var mir_backend = try MirBackend.init(testing.allocator);
+    defer mir_backend.deinit();
+
+    var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer stdout.deinit();
+
+    const compiled = try mir_backend.compileModule(&mod);
+    defer compiled.deinit();
+
+    // Run the module.  Side-effect stdout (e.g. from print calls emitted by
+    // the JIT) would be captured in `stdout`; the return value is separate.
+    // The allocating writer above is wired for future use once the backend
+    // gains a stdout parameter; for now it captures nothing.
+    _ = compiled.call();
+
+    testing.expectEqualStrings(example.stdout(), stdout.written()) catch |err| {
+        std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
+        return err;
+    };
+}
+
+test "MirBackend: example fixtures" {
+    inline for (test_utils.examples) |example| {
+        if (!example.test_mir) continue;
+        try testMirExample(example);
+    }
+}
 
 // ── MirCompiledModule ────────────────────────────────────────────────────────
 
