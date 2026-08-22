@@ -528,6 +528,65 @@ test "ir/lower: function args map to arg() nodes via Braun" {
     try testing.expectEqual(ir.BinaryOp.add, proc.values.get(3).binaryOpKind());
 }
 
+test "ir/lower: method call uses object as receiver" {
+    // obj.method(a, b) must produce:
+    //   py_call(obj, py_load_attr(obj, "method"), a, b)
+    // where operands[0] = receiver = py_load_name("obj")
+    //       operands[1] = callable = py_load_attr(_, "method")
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("obj.method(a, b)");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    // Find py_call
+    var call_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_call) { call_idx = i; break; }
+    }
+    try testing.expect(call_idx > 0);
+
+    const count = proc.values.items(.lhs)[call_idx]; // operand count: receiver + callable + 2 args
+    const off = proc.values.items(.rhs)[call_idx];   // extra offset
+    try testing.expectEqual(@as(u32, 4), count);
+
+    const recv_vid = proc.extra.items[off + 0];
+    const callable_vid = proc.extra.items[off + 1];
+
+    // receiver must be a py_load_name (the object, not const(None))
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[recv_vid]);
+    // callable must be a py_load_attr
+    try testing.expectEqual(ir.OpCode.py_load_attr, ops[callable_vid]);
+    // py_load_attr's lhs is the object it reads the attribute from (another load of obj)
+    const attr_obj_vid = proc.values.items(.lhs)[callable_vid];
+    try testing.expectEqual(ir.OpCode.py_load_name, ops[attr_obj_vid]);
+}
+
+test "ir/lower: free function call uses const(None) as receiver" {
+    // print(x) should have const(None) as receiver, not an object reference.
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower("print(x)");
+    defer proc.deinit();
+
+    const ops = proc.values.items(.op);
+    var call_idx: usize = 0;
+    for (ops, 0..) |op, i| {
+        if (op == .py_call) { call_idx = i; break; }
+    }
+    try testing.expect(call_idx > 0);
+
+    const off = proc.values.items(.rhs)[call_idx];
+    const recv_vid = proc.extra.items[off + 0];
+    // receiver must be const(None) (tagged immediate)
+    try testing.expectEqual(ir.OpCode.const_obj, ops[recv_vid]);
+    // receiver is a tagged immediate (None), not an object pool ref
+    const recv_repr = proc.values.items(.repr)[recv_vid];
+    try testing.expectEqualStrings("tagged", @tagName(recv_repr));
+}
+
 test "ir/lower: make_function in module emits py_make_function" {
     var harness = try test_utils.CompilerHarness.create(testing.allocator);
     defer harness.deinit();

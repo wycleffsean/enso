@@ -1240,8 +1240,19 @@ pub const Module = struct {
                 },
                 .call => |call| {
                     const len = call.args.items.len;
-                    try self.append(.{ .push_null = {} }); // TODO: eventually we'll need to push receiver here
-                    try self.generateInsns(call.ref, insns);
+                    if (call.ref.* == .field_access) {
+                        // Method call: emit obj twice (receiver + input to load_attr),
+                        // so after load_attr the stack is [obj, attr, arg0, ...].
+                        const fa = call.ref.field_access;
+                        try self.generateInsns(fa.lhs, insns); // receiver (stays on stack)
+                        try self.generateInsns(fa.lhs, insns); // object for load_attr to consume
+                        const attr_sym = try self.intern_pool.put(fa.rhs.name.value);
+                        try self.append(.{ .load_attr = attr_sym }); // pops obj, pushes attr
+                    } else {
+                        // Free function call: no receiver.
+                        try self.append(.{ .push_null = {} });
+                        try self.generateInsns(call.ref, insns);
+                    }
                     for (call.args.items) |node| {
                         try self.generateInsns(node, insns);
                     }
