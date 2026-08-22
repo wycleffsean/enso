@@ -37,6 +37,8 @@ pub const OpCode = enum(u8) {
     py_build_set,     // {e0, ...}; lhs = count, rhs = extra offset of element vids
     py_build_map,     // {k0: v0, ...}; lhs = count (pairs), rhs = extra offset of [k0,v0,...] vids
     py_list_extend,   // list.extend(iterable); lhs = list vid, rhs = iterable vid; result = same list
+    py_get_iter,      // iter(obj); lhs = object vid
+    py_for_iter,      // advance iterator; lhs = iterator vid, rhs = extra offset of ForIterExtra
 
     pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -74,6 +76,8 @@ fn effectsOf(op: OpCode) Effects {
         .py_build_set => .{ .can_allocate = true, .can_raise = true, .has_result = true },
         .py_build_map => .{ .can_allocate = true, .has_result = true },
         .py_list_extend => .{ .writes_world = true, .can_raise = true, .has_result = true },
+        .py_get_iter => .{ .can_allocate = true, .can_raise = true, .has_result = true },
+        .py_for_iter => .{ .reads_world = true, .can_raise = true, .has_result = true, .terminator = true },
     };
 }
 
@@ -182,6 +186,11 @@ pub const BranchExtra = struct {
     @"else": BlockId,
 };
 
+pub const ForIterExtra = struct {
+    body: BlockId,  // success edge: item is the result of py_for_iter
+    exit: BlockId,  // exhausted edge: iterator is consumed
+};
+
 const BranchPayload = struct {
     predicate: u32,
     extra: BranchExtra,
@@ -262,7 +271,7 @@ pub const Procedure = struct {
     }
 
     /// Extra Payloads - borrowing this DoD from Zig's own compiler
-    fn addExtra(p: *Procedure, comptime T: type, payload: T) !u32 {
+    pub fn addExtra(p: *Procedure, comptime T: type, payload: T) !u32 {
         const fields = std.meta.fields(T);
         // here we're assuming all fields are 32 bits
         try p.extra.ensureUnusedCapacity(p.allocator, fields.len);
@@ -354,6 +363,12 @@ pub const Procedure = struct {
                 const extra = p.extraData(BranchExtra, rhs);
                 buf[0] = extra.then;
                 buf[1] = extra.@"else";
+                return buf[0..2];
+            },
+            .py_for_iter => {
+                const extra = p.extraData(ForIterExtra, rhs);
+                buf[0] = extra.body;
+                buf[1] = extra.exit;
                 return buf[0..2];
             },
             .jump => {

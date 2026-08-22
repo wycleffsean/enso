@@ -1361,7 +1361,10 @@ pub const Module = struct {
                     const jump_index = @as(i64, @intCast(for_iter_mark)) - @as(i64, @intCast(insns.items.len));
                     try self.append(.{ .jump_backward = .{ .delta = jump_index } });
                     try self.append(.{ .end_for = {} });
-                    insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark);
+                    // delta = target_index - (for_iter_index + 1)
+                    // target = end_for = insns.items.len - 1 (just appended)
+                    // so delta = (insns.items.len - 1) - (for_iter_mark + 1) = insns.items.len - for_iter_mark - 2
+                    insns.items[for_iter_mark].for_iter.delta = @intCast(insns.items.len - for_iter_mark - 2);
                 },
                 .fn_decl => |fn_decl| {
                     // handle the suite in a different co

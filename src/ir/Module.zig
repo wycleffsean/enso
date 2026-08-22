@@ -150,6 +150,24 @@ fn lowerTerminator(_: *Module, b: *Builder, insn: bytecode.Insn, successors: []c
                 .extra = .{ .then = then_bid, .@"else" = else_bid },
             });
         },
+        .for_iter => {
+            // Iterator is TOS. FOR_ITER: on success (fallthrough) push next item and continue;
+            // on exhaustion (jump) pop iterator and go to exit.
+            // successors[0] = body (fallthrough), successors[1] = exit (jump).
+            const iter_vid = b.peek(0); // iterator stays on stack, don't pop
+            const body_bid: ir.BlockId = if (successors.len > 0) .from(successors[0].to) else .none;
+            const exit_bid: ir.BlockId = if (successors.len > 1) .from(successors[1].to) else .none;
+            const extra_off = try b.proc.addExtra(ir.ForIterExtra, .{ .body = body_bid, .exit = exit_bid });
+            const item_vid = try b.proc.addValue(b.current, .{
+                .op = .py_for_iter,
+                .repr = .object,
+                .lhs = iter_vid.idx(),
+                .rhs = extra_off,
+            });
+            // Push the item onto the abstract stack so the loop body block starts with it at TOS.
+            // (The iterator remains beneath it; end_for in the exit block pops it.)
+            try b.push(item_vid);
+        },
         .jump_forward, .jump_backward, .jump_backward_no_interrupt => {
             const target: ir.BlockId = if (successors.len > 0) .from(successors[0].to) else .none;
             _ = try b.emit(.{ .op = .jump, .repr = .none, .lhs = @intFromEnum(target), .rhs = 0 });
@@ -382,6 +400,15 @@ fn lowerInsn(mod: *Module, b: *Builder, insn: bytecode.Insn) !void {
             const v = try b.emit(.{ .op = .py_list_extend, .repr = .object, .lhs = list_vid.idx(), .rhs = iterable.idx() });
             // Replace the list slot with the new value representing the extended list.
             b.stack.items[b.stack.items.len - i] = v;
+        },
+        .get_iter => {
+            const obj = b.pop();
+            const v = try b.emit(.{ .op = .py_get_iter, .repr = .object, .lhs = obj.idx(), .rhs = 0 });
+            try b.push(v);
+        },
+        .end_for => {
+            // The iterator is at TOS in the exit block; consuming it here means the loop is done.
+            _ = b.pop();
         },
         .pop_top => {
             _ = b.pop();
@@ -719,6 +746,78 @@ test "ir/lower: build_list literal uses list_extend" {
     // extend's lhs must be the empty list
     const extend_lhs = proc.values.items(.lhs)[extend_idx];
     try testing.expectEqual(ir.OpCode.py_build_list, ops[extend_lhs]);
+}
+
+test "ir/lower: for loop structure" {
+    // for x in items: print(x)
+    // Expected blocks:
+    //   bb0: nop, py_get_iter, jump(bb1)
+    //   bb1: py_for_iter(iter, body:bb2, exit:bb3)   ← loop header
+    //   bb2: store x, call print(x), jump(bb1)       ← loop body
+    //   bb3: const(None), ret                        ← exit
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower(
+        \\for x in items:
+        \\    print(x)
+    );
+    defer proc.deinit();
+
+    try testing.expectEqual(@as(usize, 4), proc.blocks.items.len);
+
+    // Loop header block (bb1) must contain exactly one py_for_iter.
+    const bb1_values = proc.blocks.items[1].values.items;
+    try testing.expectEqual(@as(usize, 1), bb1_values.len);
+    try testing.expectEqual(ir.OpCode.py_for_iter, proc.values.items(.op)[bb1_values[0].idx()]);
+
+    // py_for_iter must be a terminator.
+    try testing.expect(ir.OpCode.py_for_iter.isTerminator());
+
+    // py_for_iter successors: body = bb2, exit = bb3.
+    const for_iter_vid = bb1_values[0];
+    const fi_rhs = proc.values.items(.rhs)[for_iter_vid.idx()];
+    const fi_extra = proc.extraData(ir.ForIterExtra, fi_rhs);
+    try testing.expectEqual(ir.BlockId.from(2), fi_extra.body);
+    try testing.expectEqual(ir.BlockId.from(3), fi_extra.exit);
+
+    // bb0 must contain py_get_iter.
+    var has_get_iter = false;
+    for (proc.blocks.items[0].values.items) |vid| {
+        if (proc.values.items(.op)[vid.idx()] == .py_get_iter) has_get_iter = true;
+    }
+    try testing.expect(has_get_iter);
+
+    // loop body (bb2) must jump back to the loop header (bb1).
+    var buf: [8]ir.BlockId = undefined;
+    const body_succs = proc.successors(ir.BlockId.from(2), &buf);
+    try testing.expectEqual(@as(usize, 1), body_succs.len);
+    try testing.expectEqual(ir.BlockId.from(1), body_succs[0]);
+}
+
+test "ir/lower: for loop iteration value is py_for_iter result" {
+    // The loop variable (x) is the direct result of py_for_iter — confirmed by
+    // checking that py_store_name's value operand is the py_for_iter vid.
+    var harness = try test_utils.CompilerHarness.create(testing.allocator);
+    defer harness.deinit();
+
+    var proc = try harness.lower(
+        \\for x in items:
+        \\    print(x)
+    );
+    defer proc.deinit();
+
+    // Find py_for_iter vid (it's the only value in bb1).
+    const for_iter_vid = proc.blocks.items[1].values.items[0];
+
+    // First instruction in bb2 should be py_store_name("x", <for_iter_vid>).
+    const bb2_vals = proc.blocks.items[2].values.items;
+    try testing.expect(bb2_vals.len > 0);
+    const store_op = proc.values.items(.op)[bb2_vals[0].idx()];
+    try testing.expectEqual(ir.OpCode.py_store_name, store_op);
+    // rhs of py_store_name is the value being stored = the for_iter result.
+    const store_rhs = proc.values.items(.rhs)[bb2_vals[0].idx()];
+    try testing.expectEqual(for_iter_vid.idx(), store_rhs);
 }
 
 test "ir/lower: method call uses object as receiver" {

@@ -109,6 +109,15 @@ const FormatOp = struct {
             },
             .py_make_function => try writer.print("py_make_function({d})", .{v.lhs}),
             .py_list_extend => try writer.print("py_list_extend({f}, {f})", .{ self.ref(v.lhs), self.ref(v.rhs) }),
+            .py_get_iter => try writer.print("py_get_iter({f})", .{self.ref(v.lhs)}),
+            .py_for_iter => {
+                const extra = self.proc.extraData(ir.ForIterExtra, v.rhs);
+                try writer.print("py_for_iter({f}, body:{f}, exit:{f})", .{
+                    self.ref(v.lhs),
+                    FormatBlock{ .bid = extra.body },
+                    FormatBlock{ .bid = extra.exit },
+                });
+            },
             .py_build_list, .py_build_tuple, .py_build_set, .py_build_map => {
                 const name = @tagName(v.op);
                 const count = v.lhs;
