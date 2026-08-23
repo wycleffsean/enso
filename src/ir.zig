@@ -56,7 +56,7 @@ const Effects = packed struct(u8) {
     _padding: i1 = 0,
 };
 
-fn effectsOf(op: OpCode) Effects {
+pub fn effectsOf(op: OpCode) Effects {
     return switch (op) {
         .nop, .identity, .phi, .upsilon => .{},
         .branch, .jump, .ret => .{ .terminator = true },

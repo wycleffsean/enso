@@ -9,6 +9,7 @@ const ir = @import("ir.zig");
 const EnsoCtx = @import("runtime/ctx.zig").EnsoCtx;
 pub const MirBackend = @import("backend/mir.zig").MirBackend;
 pub const BaselineBackend = @import("backend/baseline.zig").BaselineBackend;
+pub const comptime_eval = @import("backend/comptime.zig");
 
 /// A successfully compiled module.  The top-level body is called with a
 /// runtime context and returns a TaggedValue (as u64 bits).
