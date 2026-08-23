@@ -91,6 +91,7 @@ pub const Example = struct {
     test_vm: bool = true,
     test_vm_comptime: bool = false,
     test_mir: bool = false,
+    test_baseline: bool = false,
 
     const Self = @This();
 
@@ -119,10 +120,12 @@ pub const examples = [_]Example{
     .{
         .name = "examples_none",
         .test_mir = true,
+        .test_baseline = true,
     },
     .{
         .name = "examples_hello_world",
         .test_mir = true,
+        .test_baseline = true,
     },
     .{
         .name = "examples_expressions",

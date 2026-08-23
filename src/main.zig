@@ -267,6 +267,7 @@ test {
     _ = runtime;
     _ = @import("backend.zig");
     _ = @import("backend/mir.zig");
+    _ = @import("backend/baseline.zig");
     _ = @import("lex/lexer_test.zig");
     _ = @import("parse/grammar_test.zig");
 }
