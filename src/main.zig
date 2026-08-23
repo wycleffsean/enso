@@ -13,6 +13,7 @@ const FormatModule = @import("ir/format.zig").FormatModule;
 const runtime = @import("runtime.zig");
 const MirBackend = @import("backend.zig").MirBackend;
 const TaggedValue = @import("TaggedValue.zig");
+const EnsoCtx = @import("runtime/ctx.zig").EnsoCtx;
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
 
@@ -78,15 +79,19 @@ fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     const b = mir_backend.backend();
     defer b.deinit();
 
-    const compiled = try b.compileModule(&mod);
-    defer compiled.deinit();
-
-    const result_bits = compiled.call();
-    const result: TaggedValue = .{ .bits = result_bits };
-
     var stdout_buf: [256]u8 = undefined;
     var stdout_file_writer: std.Io.File.Writer = .init(.stdout(), io, &stdout_buf);
     const stdout = &stdout_file_writer.interface;
+
+    const ectx = try EnsoCtx.init(allocator, stdout, mod.intern_pool, &mod.object_pool);
+    defer ectx.deinit();
+
+    const compiled = try b.compileModule(&mod);
+    defer compiled.deinit();
+
+    const result_bits = compiled.call(ectx);
+    const result: TaggedValue = .{ .bits = result_bits };
+
     try stdout.print("{f}\n", .{&result});
     try stdout.flush();
 }
@@ -261,6 +266,7 @@ test {
     _ = ir;
     _ = runtime;
     _ = @import("backend.zig");
+    _ = @import("backend/mir.zig");
     _ = @import("lex/lexer_test.zig");
     _ = @import("parse/grammar_test.zig");
 }

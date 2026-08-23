@@ -132,9 +132,21 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
         // .filters = test_filters,
     });
+    unit_tests.root_module.linkLibrary(mir.mir_core);
+    unit_tests.root_module.linkLibrary(mir.c2mir);
+    unit_tests.root_module.linkLibrary(mir.mir2c);
+    unit_tests.root_module.addIncludePath(mir_dep.path("."));
+    unit_tests.root_module.addIncludePath(mir_dep.path("c2mir"));
+    unit_tests.root_module.addIncludePath(mir_dep.path("mir2c"));
+    unit_tests.root_module.addAnonymousImport("mir_abi", .{
+        .root_source_file = mir_abi_file,
+    });
+    unit_tests.step.dependOn(&copy_mir_abi.step);
+    unit_tests.root_module.addImport("mir", mir_mod);
     const python_examples_mod = try pythonDisExamples(b);
     python_examples_mod.addImport("enso", unit_tests.root_module);
     unit_tests.root_module.addImport("disassembled_examples", python_examples_mod);

@@ -6,24 +6,24 @@
 /// `CompiledModule` handle the caller can then execute.
 const std = @import("std");
 const ir = @import("ir.zig");
+const EnsoCtx = @import("runtime/ctx.zig").EnsoCtx;
 pub const MirBackend = @import("backend/mir.zig").MirBackend;
 
-/// A successfully compiled module.  The top-level body of the module is
-/// callable as a zero-argument C function returning u64 (a TaggedValue)
+/// A successfully compiled module.  The top-level body is called with a
+/// runtime context and returns a TaggedValue (as u64 bits).
 pub const CompiledModule = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
-        /// Call the module's top-level body.  Returns the TaggedValue produced
-        /// by the module's final `ret` instruction.
-        call: *const fn (ptr: *anyopaque) u64,
+        /// Call the module's top-level body with the given runtime context.
+        call: *const fn (ptr: *anyopaque, ctx: *EnsoCtx) u64,
         /// Release any resources held by this CompiledModule.
         deinit: *const fn (ptr: *anyopaque) void,
     };
 
-    pub fn call(self: CompiledModule) u64 {
-        return self.vtable.call(self.ptr);
+    pub fn call(self: CompiledModule, ctx: *EnsoCtx) u64 {
+        return self.vtable.call(self.ptr, ctx);
     }
 
     pub fn deinit(self: CompiledModule) void {

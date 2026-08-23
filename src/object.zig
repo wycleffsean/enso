@@ -72,7 +72,7 @@ pub const Object = union(enum) {
 
 pub const FormatObject = struct {
     obj: *const Object,
-    intern_pool: *intern.StringInternPool,
+    intern_pool: *const intern.StringInternPool,
     const Self = @This();
 
     pub fn format(self: *const Self, writer: *std.Io.Writer) !void {

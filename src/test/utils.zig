@@ -122,6 +122,7 @@ pub const examples = [_]Example{
     },
     .{
         .name = "examples_hello_world",
+        .test_mir = true,
     },
     .{
         .name = "examples_expressions",

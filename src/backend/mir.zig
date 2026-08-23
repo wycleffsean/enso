@@ -10,8 +10,12 @@ const mir = @import("../mir.zig");
 const TaggedValue = @import("../TaggedValue.zig");
 const backend = @import("../backend.zig");
 const intern = @import("../intern.zig");
+const object = @import("../object.zig");
+const ctx_mod = @import("../runtime/ctx.zig");
+const core = @import("../runtime/core.zig");
 const test_utils = @import("../test/utils.zig");
 
+const EnsoCtx = ctx_mod.EnsoCtx;
 const Backend = backend.Backend;
 const CompiledModule = backend.CompiledModule;
 
@@ -19,7 +23,7 @@ const CompiledModule = backend.CompiledModule;
 
 pub const MirBackend = struct {
     allocator: std.mem.Allocator,
-    ctx: mir.Context,
+    mctx: mir.Context,
 
     const Self = @This();
 
@@ -27,16 +31,16 @@ pub const MirBackend = struct {
         const self = try allocator.create(Self);
         self.* = .{
             .allocator = allocator,
-            .ctx = try mir.Context.init(),
+            .mctx = try mir.Context.init(),
         };
-        self.ctx.genInit();
-        self.ctx.genSetOptimizeLevel(0); // regalloc+codegen only for now
+        self.mctx.genInit();
+        self.mctx.genSetOptimizeLevel(0); // regalloc+codegen only for now
         return self;
     }
 
     pub fn deinit(self: *Self) void {
-        self.ctx.genFinish();
-        self.ctx.deinit();
+        self.mctx.genFinish();
+        self.mctx.deinit();
         self.allocator.destroy(self);
     }
 
@@ -69,26 +73,59 @@ pub const MirBackend = struct {
 
     fn compileModule(self: *Self, mod: *const ir.Module) !CompiledModule {
         // MIR allows only one module open at a time.
-        var mir_mod = mir.Module.init(&self.ctx, "<enso>");
+        var mir_mod = mir.Module.init(&self.mctx, "<enso>");
         errdefer mir_mod.finish();
 
-        // Compile the first procedure (the module's top-level body).
-        // The function signature is: i64 <name>()
         if (mod.procedures.items.len == 0) return error.EmptyModule;
         const proc = &mod.procedures.items[0];
 
-        const func_item = try compileProcedure(self, &mir_mod, proc);
+        // Declare imports for runtime shims (resolved at link time).
+        const import_load_name = mir_mod.newImport("enso_py_load_name");
+        const import_py_call = mir_mod.newImport("enso_py_call");
+
+        // Build prototypes for the shims so MIR can type-check calls.
+        // enso_py_load_name(*ctx, sym_idx) -> i64
+        const proto_load_name = mir_mod.newProtoArr("p_enso_py_load_name", &.{mir.c.MIR_T_I64}, &.{
+            .{ .type = mir.c.MIR_T_I64, .name = "ctx", .size = 0 },
+            .{ .type = mir.c.MIR_T_I64, .name = "sym", .size = 0 },
+        });
+        // enso_py_call(*ctx, receiver, callable, args_ptr, nargs) -> i64
+        const proto_py_call = mir_mod.newProtoArr("p_enso_py_call", &.{mir.c.MIR_T_I64}, &.{
+            .{ .type = mir.c.MIR_T_I64, .name = "ctx", .size = 0 },
+            .{ .type = mir.c.MIR_T_I64, .name = "receiver", .size = 0 },
+            .{ .type = mir.c.MIR_T_I64, .name = "callable", .size = 0 },
+            .{ .type = mir.c.MIR_T_I64, .name = "args_ptr", .size = 0 },
+            .{ .type = mir.c.MIR_T_I64, .name = "nargs", .size = 0 },
+        });
+
+        const imports: Imports = .{
+            .load_name = import_load_name,
+            .py_call = import_py_call,
+            .proto_load_name = proto_load_name,
+            .proto_py_call = proto_py_call,
+        };
+
+        const func_item = try compileProcedure(self, &mir_mod, proc, mod, &imports);
 
         mir_mod.finish();
-        self.ctx.loadModule(mir_mod.m);
-        self.ctx.link(mir.c.MIR_set_gen_interface, null);
+        self.mctx.loadModule(mir_mod.m);
 
-        // The function pointer after JIT codegen lives at func_item.*.addr.
+        // Resolve runtime shims by address.
+        const resolver = struct {
+            fn resolve(name: [*c]const u8) callconv(.c) ?*anyopaque {
+                const n = std.mem.span(name);
+                if (std.mem.eql(u8, n, "enso_py_load_name")) return @ptrCast(@constCast(&core.enso_py_load_name));
+                if (std.mem.eql(u8, n, "enso_py_call")) return @ptrCast(@constCast(&core.enso_py_call));
+                return null;
+            }
+        }.resolve;
+
+        self.mctx.link(mir.c.MIR_set_gen_interface, resolver);
+
         const raw_addr = func_item.*.addr;
-        const ModFn = *const fn () callconv(.c) u64;
+        const ModFn = *const fn (ctx: u64) callconv(.c) u64;
         const fn_ptr: ModFn = @ptrCast(@alignCast(raw_addr));
 
-        // Box the fn_ptr in a heap allocation so CompiledModule can hold it.
         const box = try self.allocator.create(MirCompiledModule);
         box.* = .{ .fn_ptr = fn_ptr, .allocator = self.allocator };
         return .{
@@ -97,17 +134,34 @@ pub const MirBackend = struct {
         };
     }
 
-    fn compileProcedure(self: *Self, mir_mod: *mir.Module, proc: *const ir.Procedure) !mir.c.MIR_item_t {
-        const res_types = [_]mir.c.MIR_type_t{mir.c.MIR_T_I64};
-        const no_args: []const mir.c.MIR_var_t = &.{};
+    /// Imported shim items, valid for the duration of module construction.
+    const Imports = struct {
+        load_name: mir.c.MIR_item_t,
+        py_call: mir.c.MIR_item_t,
+        proto_load_name: mir.c.MIR_item_t,
+        proto_py_call: mir.c.MIR_item_t,
+    };
 
-        // Build a null-terminated name.  proc.name is already a slice.
+    fn compileProcedure(
+        self: *Self,
+        mir_mod: *mir.Module,
+        proc: *const ir.Procedure,
+        mod: *const ir.Module,
+        imports: *const Imports,
+    ) !mir.c.MIR_item_t {
+        const res_types = [_]mir.c.MIR_type_t{mir.c.MIR_T_I64};
+        // First arg: *EnsoCtx passed as u64.
+        var args = [_]mir.c.MIR_var_t{.{ .type = mir.c.MIR_T_I64, .name = "ctx_ptr", .size = 0 }};
+
         var name_buf: [256]u8 = undefined;
         const name_z = try std.fmt.bufPrintZ(&name_buf, "{s}", .{proc.name});
 
-        var fb = mir_mod.newFuncArr(name_z, &res_types, no_args);
+        var fb = mir_mod.newFuncArr(name_z, &res_types, &args);
 
-        // Allocate one I64 MIR reg per SSA value so we can reference any vid.
+        // ctx_ptr arg reg — holds the *EnsoCtx as a raw u64.
+        const ctx_reg = fb.arg("ctx_ptr");
+
+        // Allocate one I64 MIR reg per SSA value.
         var reg_buf: [256]u8 = undefined;
         const nvals = proc.values.len;
         const regs = try self.allocator.alloc(mir.c.MIR_reg_t, nvals);
@@ -117,10 +171,9 @@ pub const MirBackend = struct {
             regs[i] = fb.reg(mir.c.MIR_T_I64, reg_name);
         }
 
-        // Walk every block in order, then every value in the block.
         for (proc.blocks.items) |*block| {
             for (block.values.items) |vid| {
-                try emitValue(self, &fb, proc, regs, vid);
+                try emitValue(self, &fb, proc, mod, regs, ctx_reg, imports, vid);
             }
         }
 
@@ -132,50 +185,127 @@ pub const MirBackend = struct {
         self: *Self,
         fb: *mir.FuncBuilder,
         proc: *const ir.Procedure,
+        mod: *const ir.Module,
         regs: []const mir.c.MIR_reg_t,
+        ctx_reg: mir.c.MIR_reg_t,
+        imports: *const Imports,
         vid: ir.ValueId,
     ) !void {
-        const ctx = &self.ctx;
+        const mctx = &self.mctx;
         const idx = vid.idx();
         const v = proc.values.get(idx);
         const dest = regs[idx];
 
         switch (v.op) {
-            .nop, .identity => {}, // nothing to emit
+            .nop, .identity => {},
 
             .const_obj => {
-                // Encode the constant as a 64-bit integer (TaggedValue bits).
                 const bits: u64 = switch (v.repr) {
                     .tagged => TaggedValue.assemble(v.lhs, v.rhs).bits,
-                    else => TaggedValue.None.bits, // fallback
+                    .object => blk: {
+                        // Box a pointer to the object pool entry as a TaggedValue.
+                        const pool_idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.lhs);
+                        // getConst returns by value; we need a stable pointer.
+                        // The pool does not grow after lowering, so the slice is stable.
+                        const obj_ptr = &mod.object_pool.pool.entries.items(.key)[@intFromEnum(pool_idx)];
+                        break :blk TaggedValue.fromPointer(obj_ptr).bits;
+                    },
+                    else => TaggedValue.None.bits,
                 };
-                fb.append(mir.insn.fixed(ctx, mir.c.MIR_MOV, &.{
-                    mir.op.reg(ctx, dest),
-                    mir.op.u(ctx, bits),
+                fb.append(mir.insn.fixed(mctx, mir.c.MIR_MOV, &.{
+                    mir.op.reg(mctx, dest),
+                    mir.op.u(mctx, bits),
                 }));
+            },
+
+            .py_load_name => {
+                // lhs = ObjectPool index of the name symbol object.
+                // Resolve at compile time if it's a known builtin; otherwise emit a runtime call.
+                const pool_idx: intern.ObjectPool.ObjectIndex = @enumFromInt(v.lhs);
+                const obj = mod.object_pool.getConst(pool_idx);
+                const sym = obj.symbol;
+                const name = mod.intern_pool.get(sym);
+                if (core.builtinByName(name)) |bid| {
+                    // Known builtin — fold to a constant.
+                    fb.append(mir.insn.fixed(mctx, mir.c.MIR_MOV, &.{
+                        mir.op.reg(mctx, dest),
+                        mir.op.u(mctx, core.builtinValue(bid).bits),
+                    }));
+                } else {
+                    // Unknown name — emit a runtime lookup.
+                    fb.call(&.{
+                        mir.op.ref(mctx, imports.proto_load_name),
+                        mir.op.ref(mctx, imports.load_name),
+                        mir.op.reg(mctx, dest),
+                        mir.op.reg(mctx, ctx_reg),
+                        mir.op.u(mctx, @as(u64, sym)),
+                    });
+                }
+            },
+
+            .py_call => {
+                // extra layout: [receiver_vid, callable_vid, arg0_vid, ...]
+                // lhs = total operand count (receiver + callable + nargs)
+                const total: u32 = v.lhs;
+                const nargs: u32 = total - 2;
+                const off: u32 = v.rhs;
+                const receiver_reg = regs[proc.extra.items[off + 0]];
+                const callable_reg = regs[proc.extra.items[off + 1]];
+
+                // ALLOCA args_buf, nargs * 8  (may be 0)
+                const args_buf_reg = try allocTempReg(fb, "args_buf");
+                fb.append(mir.insn.fixed(mctx, mir.c.MIR_ALLOCA, &.{
+                    mir.op.reg(mctx, args_buf_reg),
+                    mir.op.u(mctx, @as(u64, nargs) * 8),
+                }));
+
+                // Store each arg into the buffer.
+                for (0..nargs) |a| {
+                    const arg_reg = regs[proc.extra.items[off + 2 + a]];
+                    fb.append(mir.insn.fixed(mctx, mir.c.MIR_MOV, &.{
+                        mir.op.mem(mctx, mir.c.MIR_T_I64, @intCast(a * 8), args_buf_reg, 0, 1),
+                        mir.op.reg(mctx, arg_reg),
+                    }));
+                }
+
+                fb.call(&.{
+                    mir.op.ref(mctx, imports.proto_py_call),
+                    mir.op.ref(mctx, imports.py_call),
+                    mir.op.reg(mctx, dest),
+                    mir.op.reg(mctx, ctx_reg),
+                    mir.op.reg(mctx, receiver_reg),
+                    mir.op.reg(mctx, callable_reg),
+                    mir.op.reg(mctx, args_buf_reg),
+                    mir.op.u(mctx, nargs),
+                });
             },
 
             .ret => {
                 const val_reg = regs[v.lhs];
-                fb.ret(&.{mir.op.reg(ctx, val_reg)});
+                fb.ret(&.{mir.op.reg(mctx, val_reg)});
             },
 
-            .jump => {
-                // Fallthrough within a linear procedure — no MIR insn needed
-                // when blocks are emitted in order.  Label-based jumps are
-                // required once we handle branching; leave that for later.
-            },
+            .jump => {},
 
             else => {
-                // Unimplemented op: emit a MOV of None so the reg is defined
-                // (keeps MIR happy) and leave a debug marker.
                 std.debug.print("MIR backend: unimplemented op {s} at %v{d}\n", .{ @tagName(v.op), idx });
-                fb.append(mir.insn.fixed(ctx, mir.c.MIR_MOV, &.{
-                    mir.op.reg(ctx, dest),
-                    mir.op.u(ctx, TaggedValue.None.bits),
+                fb.append(mir.insn.fixed(mctx, mir.c.MIR_MOV, &.{
+                    mir.op.reg(mctx, dest),
+                    mir.op.u(mctx, TaggedValue.None.bits),
                 }));
             },
         }
+    }
+
+    // Temp reg counter — unique per compilation unit is sufficient since MIR
+    // names are scoped to the current function.
+    var temp_reg_counter: u32 = 0;
+
+    fn allocTempReg(fb: *mir.FuncBuilder, comptime prefix: []const u8) !mir.c.MIR_reg_t {
+        var buf: [64]u8 = undefined;
+        temp_reg_counter +%= 1;
+        const name = try std.fmt.bufPrintZ(&buf, prefix ++ "_{d}", .{temp_reg_counter});
+        return fb.reg(mir.c.MIR_T_I64, name);
     }
 };
 
@@ -187,6 +317,7 @@ fn testMirExample(comptime example: test_utils.Example) !void {
     var harness = try test_utils.CompilerHarness.create(testing.allocator);
     defer harness.deinit();
     var mod = try harness.lowerModule(testing.allocator, example.source());
+    // mod must outlive compiled (compiled holds pointers into object_pool).
     defer mod.deinit();
 
     var mir_backend = try MirBackend.init(testing.allocator);
@@ -198,11 +329,15 @@ fn testMirExample(comptime example: test_utils.Example) !void {
     const compiled = try mir_backend.compileModule(&mod);
     defer compiled.deinit();
 
-    // Run the module.  Side-effect stdout (e.g. from print calls emitted by
-    // the JIT) would be captured in `stdout`; the return value is separate.
-    // The allocating writer above is wired for future use once the backend
-    // gains a stdout parameter; for now it captures nothing.
-    _ = compiled.call();
+    const ectx = try EnsoCtx.init(
+        testing.allocator,
+        &stdout.writer,
+        mod.intern_pool,
+        &mod.object_pool,
+    );
+    defer ectx.deinit();
+
+    _ = compiled.call(ectx);
 
     testing.expectEqualStrings(example.stdout(), stdout.written()) catch |err| {
         std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
@@ -220,12 +355,12 @@ test "MirBackend: example fixtures" {
 // ── MirCompiledModule ────────────────────────────────────────────────────────
 
 const MirCompiledModule = struct {
-    fn_ptr: *const fn () callconv(.c) u64,
+    fn_ptr: *const fn (ctx: u64) callconv(.c) u64,
     allocator: std.mem.Allocator,
 
-    fn vtableCall(ptr: *anyopaque) u64 {
+    fn vtableCall(ptr: *anyopaque, ectx: *EnsoCtx) u64 {
         const self: *MirCompiledModule = @ptrCast(@alignCast(ptr));
-        return self.fn_ptr();
+        return self.fn_ptr(@intFromPtr(ectx));
     }
 
     fn vtableDeinit(ptr: *anyopaque) void {

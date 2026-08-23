@@ -265,7 +265,10 @@ pub const FuncBuilder = struct {
     ///   [2..2+nres) result destinations
     ///   remaining: args
     pub fn call(self: *FuncBuilder, ops: []const abi.MIR_op_t) void {
-        const isn = c.MIR_new_call_insn(self.ctx.ctx, ops.len, ops.ptr);
+        // MIR_new_call_insn is variadic — passing a slice pointer as a vararg
+        // would be wrong.  MIR_new_insn_arr accepts a proper array pointer and
+        // works for CALL as well as fixed-arity insns.
+        const isn = MIR_new_insn_arr(self.ctx.ctx, c.MIR_CALL, ops.len, ops.ptr);
         self.append(isn);
     }
 };

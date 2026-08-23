@@ -67,21 +67,33 @@ inline fn is(value: TaggedValue, kind: Tag) bool {
     return value.tag() == kind;
 }
 
-fn pointer(ptr: *void) TaggedValue {
+pub fn fromPointer(ptr: *const anyopaque) TaggedValue {
     const raw = @intFromPtr(ptr);
     assert((raw >> TagShift) == 0);
-
     return .{ .bits = raw | @as(u64, @intFromEnum(Tag.pointer)) << TagShift };
 }
 
-fn asPointer(value: TaggedValue) *void {
+pub fn asPointer(value: TaggedValue) *anyopaque {
     assert(value.is(.pointer));
-
     return @ptrFromInt(value.bits & ((@as(u64, 1) << TagShift) - 1));
+}
+
+pub inline fn isPointer(value: TaggedValue) bool {
+    return value.is(.pointer);
 }
 
 pub fn integer(int: i60) TaggedValue {
     return .{ .bits = setTag(@bitCast(int), .integer) };
+}
+
+pub inline fn isInteger(value: TaggedValue) bool {
+    return value.is(.integer);
+}
+
+/// Decode an integer payload without asserting — only safe after `isInteger()`.
+pub inline fn asIntegerUnchecked(value: TaggedValue) i60 {
+    const payload: u60 = @intCast(value.bits & PayloadMask);
+    return @bitCast(payload);
 }
 
 fn asInteger(value: TaggedValue) i60 {
@@ -102,7 +114,7 @@ test "values: none" {
 
 test "values: pointers" {
     var x: u8 = 99;
-    const value = TaggedValue.pointer(@ptrCast(&x));
+    const value = TaggedValue.fromPointer(@ptrCast(&x));
     try testing.expect(value.is(.pointer));
 
     const ptr: *u8 = @ptrCast(value.asPointer());
