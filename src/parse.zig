@@ -1,4 +1,5 @@
 const std = @import("std");
+const diagnostic = @import("diagnostic.zig");
 const assert = std.debug.assert;
 const testing = std.testing;
 const lex = @import("lex.zig");
@@ -304,7 +305,7 @@ pub const Parser = struct {
         UnhandledPrecedence,
         UnexpectedToken,
         UnexpectedEndOfStream,
-    } || lex.Lexer.Error ||
+    } || lex.Lexer.Error || diagnostic.Error ||
         std.fmt.ParseIntError || std.mem.Allocator.Error;
 
     pub fn init(allocator: std.mem.Allocator, buffer: []const u8) Self {
@@ -1959,20 +1960,14 @@ test "parse: array literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[1,");
-        testing.expectError(Parser.Error.UnexpectedEndOfStream, parser.parseSimpleExpression()) catch |err| {
-            highlightSource("Unclosed array literal", "[1,", parser.peek());
-            return err;
-        };
+        try testing.expectError(Parser.Error.UnexpectedEndOfStream, parser.parseSimpleExpression());
     }
     { // illegal trailing comma
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[,]");
-        testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression()) catch |err| {
-            highlightSource("Illegal trailiing comma", "[,]", parser.peek());
-            return err;
-        };
+        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression());
     }
 }
 
@@ -2199,37 +2194,6 @@ test "parse: imports" {
     }
 }
 
-// TODO: move this formatting stuff somewhere else
-// also this is fragile and doesn't totally work right BUT leaving this broken starting
-// point because it's still useful
-pub fn highlightSource(filename: []const u8, source: []const u8, token: ?lex.Token) void {
-    //ansi escape codes
-    const esc = "\x1B";
-    const csi = esc ++ "[";
-
-    const ansi_reset = csi ++ "0m";
-    const ansi_bold = csi ++ "1m";
-    const highlight_red = csi ++ "4:3m" ++ csi ++ "58;2;240;143;104m";
-    const highlight_end = csi ++ "59m" ++ csi ++ "4:0m";
-
-    std.debug.print("\n{s}# {s}{s}\n", .{ ansi_bold, filename, ansi_reset });
-    if (token) |tok| {
-        var iter = std.mem.splitSequence(u8, source, "\n");
-        var i: usize = 0;
-        const location = tok.getLocation();
-        while (iter.next()) |line| {
-            i += 1;
-            if (i != location.line) continue;
-            const raw_index = if (location.col > 0) location.col - 1 else 0;
-            const index = @min(raw_index, line.len);
-            const beforeHighlight = line[0..index];
-            const highlight = line[beforeHighlight.len..];
-            std.debug.print("\t{d}: {s}{s}{s}{s}\n", .{ location.line, beforeHighlight, highlight_red, highlight, highlight_end });
-        }
-    }
-    std.debug.print("\n\n\n", .{});
-}
-
 test "parse: example fixtures" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     const allocator = arena.allocator();
@@ -2239,7 +2203,10 @@ test "parse: example fixtures" {
         if (!example.test_parse) continue;
         var parser = Parser.init(allocator, example.source());
         _ = parser.parse() catch |err| {
-            highlightSource(example.path(), example.source(), parser.peek());
+            switch (err) {
+                diagnostic.Error.DiagnosticError => try diagnostic.printDiagnostics(testing.io, testing.allocator),
+                else => std.debug.print("\n*** An error has occurred which should be emitted as a diagnostic ***\n", .{}),
+            }
             return err;
         };
     }

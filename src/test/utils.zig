@@ -7,6 +7,7 @@ const intern = @import("../intern.zig");
 const bytecode = @import("../bytecode.zig");
 // const ssa = @import("../ir/legacy/ssa.zig");
 const eir = @import("../ir.zig");
+
 pub const CompilerHarness = struct {
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
@@ -35,7 +36,7 @@ pub const CompilerHarness = struct {
     pub fn doParse(self: *Self, code: []const u8) ParseError!*const parse.AstNode {
         var parser = parse.Parser.init(self.allocator, code);
         return parser.parse() catch |err| {
-            parse.highlightSource("<<test>>", code, parser.peeked);
+            // TODO - diagnostic.printDiagnostics - but we don't have an io object
             return err;
         };
     }

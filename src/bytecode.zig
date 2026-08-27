@@ -1,4 +1,5 @@
 const std = @import("std");
+const diagnostic = @import("diagnostic.zig");
 const parse = @import("parse.zig");
 const intern = @import("intern.zig");
 pub const Cfg = @import("bytecode/cfg.zig");
@@ -1458,12 +1459,6 @@ test "bytecode: example fixtures" {
             std.debug.print("\n----- failing: {s} ------\n\n", .{example.path()});
             return err;
         };
-        // if (!example.test_parse) continue;
-        // var parser = Parser.init(allocator, example.source());
-        // _ = parser.parse() catch |err| {
-        //     highlightSource(example.path(), example.source(), parser.peek());
-        //     return err;
-        // };
     }
 }
 

@@ -26,19 +26,19 @@ pub const OpCode = enum(u8) {
     py_truthy,
     py_binary_op,
     py_call,
-    py_load_name,     // global/builtin lookup; lhs = ObjectPool index of the name symbol
-    py_store_name,    // global dict write; lhs = ObjectPool index of name, rhs = value vid
+    py_load_name, // global/builtin lookup; lhs = ObjectPool index of the name symbol
+    py_store_name, // global dict write; lhs = ObjectPool index of name, rhs = value vid
     py_make_function, // create function object; lhs = codeobject index in bytecode store
-    py_compare_op,    // rich comparison; repr = CompareOp kind, lhs = left vid, rhs = right vid
-    py_unary_op,      // unary op; lhs = operand vid, rhs = UnaryOp kind
-    py_load_attr,     // attribute load; lhs = object vid, rhs = ObjectPool index of name symbol
-    py_build_list,    // [e0, ...]; lhs = count, rhs = extra offset of element vids
-    py_build_tuple,   // (e0, ...); lhs = count, rhs = extra offset of element vids
-    py_build_set,     // {e0, ...}; lhs = count, rhs = extra offset of element vids
-    py_build_map,     // {k0: v0, ...}; lhs = count (pairs), rhs = extra offset of [k0,v0,...] vids
-    py_list_extend,   // list.extend(iterable); lhs = list vid, rhs = iterable vid; result = same list
-    py_get_iter,      // iter(obj); lhs = object vid
-    py_for_iter,      // advance iterator; lhs = iterator vid, rhs = extra offset of ForIterExtra
+    py_compare_op, // rich comparison; repr = CompareOp kind, lhs = left vid, rhs = right vid
+    py_unary_op, // unary op; lhs = operand vid, rhs = UnaryOp kind
+    py_load_attr, // attribute load; lhs = object vid, rhs = ObjectPool index of name symbol
+    py_build_list, // [e0, ...]; lhs = count, rhs = extra offset of element vids
+    py_build_tuple, // (e0, ...); lhs = count, rhs = extra offset of element vids
+    py_build_set, // {e0, ...}; lhs = count, rhs = extra offset of element vids
+    py_build_map, // {k0: v0, ...}; lhs = count (pairs), rhs = extra offset of [k0,v0,...] vids
+    py_list_extend, // list.extend(iterable); lhs = list vid, rhs = iterable vid; result = same list
+    py_get_iter, // iter(obj); lhs = object vid
+    py_for_iter, // advance iterator; lhs = iterator vid, rhs = extra offset of ForIterExtra
 
     pub inline fn isTerminator(op: OpCode) bool {
         return effectsOf(op).terminator;
@@ -90,7 +90,7 @@ const Repr = enum(u8) {
     ptr, // raw pointer
     object, // owned *Object reference
     tagged, // high bit tagged immediate value or *Object
-    _,  // allows arbitrary u8 values for opcode-specific repurposing (e.g. operator kinds)
+    _, // allows arbitrary u8 values for opcode-specific repurposing (e.g. operator kinds)
 
     fn needsBoxing(r: Repr) bool {
         return switch (r) {
@@ -187,16 +187,14 @@ pub const BranchExtra = struct {
 };
 
 pub const ForIterExtra = struct {
-    body: BlockId,  // success edge: item is the result of py_for_iter
-    exit: BlockId,  // exhausted edge: iterator is consumed
+    body: BlockId, // success edge: item is the result of py_for_iter
+    exit: BlockId, // exhausted edge: iterator is consumed
 };
 
 const BranchPayload = struct {
     predicate: u32,
     extra: BranchExtra,
 };
-
-
 
 const Block = struct {
     // TODO: would a span into the procedure's values would be better?
