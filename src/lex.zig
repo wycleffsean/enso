@@ -112,7 +112,7 @@ pub const TokenTag = enum {
     yield_kw,
 };
 
-const Location = struct { indent: IndentLength = 0, line: LineLength, col: ColLength };
+pub const Location = struct { indent: IndentLength = 0, line: LineLength, col: ColLength };
 const Bare = struct { loc: Location };
 const Identifier = struct {
     value: []const u8,

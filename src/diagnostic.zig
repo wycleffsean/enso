@@ -1,163 +1,167 @@
 const std = @import("std");
+const lex = @import("lex.zig");
+
+pub const Location = lex.Location;
 
 pub const Error = error{
     DiagnosticError,
     TooManyDiagnostics,
 };
 
-const SourceSpan = struct {
-    filepath_buf: [std.Io.Dir.max_path_bytes]u8,
-    filepath: []const u8,
-    line: usize,
-    column: usize,
-
-    pub fn init(line: usize, column: usize, fmt: []const u8, args: anytype) SourceSpan {
-        var span: SourceSpan = undefined;
-
-        // we already have max path bytes buffer, technically
-        // that could fail but a panic is fine in this case
-        span.filepath = std.fmt.bufPrint(&span.filepath_buf, fmt, args) catch unreachable;
-        span.line = line;
-        span.column = column;
-
-        return span;
-    }
-};
-
-const Severity = enum {
-    debug,
-    warn,
-    @"error",
-};
+const Severity = enum { debug, warn, @"error" };
 
 const Diagnostic = struct {
     severity: Severity,
-    source: ?SourceSpan,
     err: ?anyerror,
-    message_buf: [100]u8,
+    /// Stable slice — caller owns the memory for the parser's lifetime.
+    filename: ?[]const u8,
+    location: ?Location,
+    message_buf: [256]u8,
     message: []const u8,
 };
 
 const DiagnosticContext = struct {
     const max = 100;
-    i: u8 = 0,
+    count: u8 = 0,
     diagnostics: [max]Diagnostic = undefined,
 
     const init: DiagnosticContext = .{};
 
     fn emit(self: *DiagnosticContext, diag: Diagnostic) Error!void {
-        if (self.i < max) {
-            self.diagnostics[self.i] = diag;
-            self.i += 1;
-        } else {
-            return error.TooManyDiagnostics;
-        }
+        if (self.count >= max) return error.TooManyDiagnostics;
+        self.diagnostics[self.count] = diag;
+        self.count += 1;
     }
 };
 
-var diagnostic_context: DiagnosticContext = .init;
+var context: DiagnosticContext = .init;
 
-fn emit(severity: Severity, comptime message_fmt: []const u8, args: anytype, source: ?SourceSpan, err: ?anyerror) Error!void {
+fn emit(
+    severity: Severity,
+    err: ?anyerror,
+    filename: ?[]const u8,
+    location: ?Location,
+    comptime fmt: []const u8,
+    args: anytype,
+) Error!void {
     var diag: Diagnostic = undefined;
-
     diag.severity = severity;
-    diag.message = std.fmt.bufPrint(&diag.message_buf, message_fmt, args) catch {};
-    diag.source = source;
     diag.err = err;
-
-    try diagnostic_context.emit(diag);
-
-    if (err) |_| return error.DiagnosticError;
+    diag.filename = filename;
+    diag.location = location;
+    diag.message = std.fmt.bufPrint(&diag.message_buf, fmt, args) catch msg: {
+        const truncated = "(message truncated)";
+        @memcpy(diag.message_buf[0..truncated.len], truncated);
+        break :msg diag.message_buf[0..truncated.len];
+    };
+    // Fix up the message slice to point into *this entry's* buffer after copy.
+    const msg_len = diag.message.len;
+    try context.emit(diag);
+    const entry = &context.diagnostics[context.count - 1];
+    entry.message = entry.message_buf[0..msg_len];
+    if (err != null) return error.DiagnosticError;
 }
 
-pub fn debug(comptime message_fmt: []const u8, args: anytype) void {
-    emit(.debug, message_fmt, args, null) catch {};
+pub fn debug(comptime fmt: []const u8, args: anytype) void {
+    emit(.debug, null, null, null, fmt, args) catch {};
 }
 
-pub fn warn(comptime message_fmt: []const u8, args: anytype, source: ?SourceSpan) void {
-    emit(.warn, message_fmt, args, source, null) catch {};
+pub fn warn(filename: ?[]const u8, location: ?Location, comptime fmt: []const u8, args: anytype) void {
+    emit(.warn, null, filename, location, fmt, args) catch {};
 }
 
-pub fn fail(err: anyerror, comptime message_fmt: []const u8, args: anytype, source: ?SourceSpan) Error!void {
-    try emit(.@"error", message_fmt, args, source, err);
+pub fn fail(
+    err: anyerror,
+    filename: ?[]const u8,
+    location: ?Location,
+    comptime fmt: []const u8,
+    args: anytype,
+) Error {
+    emit(.@"error", err, filename, location, fmt, args) catch |e| return e;
+    return error.DiagnosticError;
 }
 
-pub const DiagnosticFormat = struct {
-    diagnostic: Diagnostic,
-    source: []const u8,
+fn renderDiagnostic(
+    writer: *std.Io.Writer,
+    diag: *const Diagnostic,
+    source: ?[]const u8,
+) std.Io.Writer.Error!void {
+    const esc = "\x1B";
+    const csi = esc ++ "[";
+    const ansi_reset = csi ++ "0m";
+    const bold = csi ++ "1m";
+    const highlight = csi ++ "4:3m" ++ csi ++ "58;2;240;143;104m";
+    const highlight_end = csi ++ "59m" ++ csi ++ "4:0m";
 
-    fn initReadFile(allocator: std.mem.Allocator, io: std.Io, diagnostic: Diagnostic) !DiagnosticFormat {
-        if (diagnostic.source) |source_location| {
-            const filepath = source_location.filepath;
+    const severity_label = switch (diag.severity) {
+        .debug => "debug",
+        .warn => "warning",
+        .@"error" => "error",
+    };
+    try writer.print("{s}: {s}\n", .{ severity_label, diag.message });
 
-            std.debug.assert(std.fs.path.isAbsolute(filepath));
+    if (diag.location) |loc| {
+        const file = diag.filename orelse "<unknown>";
+        try writer.print("{s}{s}:{d}:{d}{s}\n", .{ bold, file, loc.line, loc.col, ansi_reset });
 
-            const dirpath = std.fs.path.dirname(filepath).?; // fair because of the assertion
-            const filename = std.fs.path.basename(filepath);
-
-            const dir = try std.Io.Dir.openDirAbsolute(io, dirpath, .{});
-            defer dir.close(io);
-            const source = try dir.readFileAlloc(io, filename, allocator, .unlimited);
-
-            return .{
-                .diagnostic = diagnostic,
-                .source = source,
-            };
-        } else {
-            return .{
-                .diagnostic = diagnostic,
-                .source = "",
-            };
-        }
-    }
-
-    pub fn deinit(self: *const DiagnosticFormat, allocator: std.mem.Allocator) void {
-        if (self.diagnostic.source) |_|
-            allocator.free(self.source);
-    }
-
-    pub fn format(self: *const DiagnosticFormat, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        //ansi escape codes
-        const esc = "\x1B";
-        const csi = esc ++ "[";
-
-        const ansi_reset = csi ++ "0m";
-        const ansi_bold = csi ++ "1m";
-        const highlight_red = csi ++ "4:3m" ++ csi ++ "58;2;240;143;104m";
-        const highlight_end = csi ++ "59m" ++ csi ++ "4:0m";
-
-        try writer.print("{s}\n", .{self.diagnostic.message});
-        if (self.diagnostic.source) |source_location| {
-            try writer.print("\n{s}# {s}{s}\n", .{ ansi_bold, source_location.filepath, ansi_reset });
-            var iter = std.mem.splitSequence(u8, self.source, "\n");
-            var i: usize = 0;
-            while (iter.next()) |line| {
-                i += 1;
-                if (i != source_location.line) continue;
-                const raw_index = if (source_location.column > 0) source_location.column - 1 else 0;
-                const index = @min(raw_index, line.len);
-                const beforeHighlight = line[0..index];
-                const highlight = line[beforeHighlight.len..];
-                try writer.print("\t{d}: {s}{s}{s}{s}\n", .{ source_location.line, beforeHighlight, highlight_red, highlight, highlight_end });
+        if (source) |src| {
+            var lines = std.mem.splitScalar(u8, src, '\n');
+            var n: usize = 0;
+            while (lines.next()) |line| {
+                n += 1;
+                if (n != loc.line) continue;
+                const col = if (loc.col > 0) loc.col - 1 else 0;
+                const idx = @min(col, line.len);
+                try writer.print("\t{d}: {s}{s}{s}{s}\n", .{
+                    loc.line,
+                    line[0..idx],
+                    highlight,
+                    line[idx..],
+                    highlight_end,
+                });
+                break;
             }
         }
-        try writer.writeAll("\n\n");
     }
-};
+    try writer.writeByte('\n');
+}
 
-/// This is usually used inside of a catch, so we forward the error that
-/// was captured by the diagnostic
-pub fn printDiagnostics(io: std.Io, allocator: std.mem.Allocator) anyerror!void {
-    for (0..diagnostic_context.i) |i| {
-        const diagnostic = diagnostic_context.diagnostics[i];
-        const formatter: DiagnosticFormat = try .initReadFile(allocator, io, diagnostic);
-        defer formatter.deinit(allocator);
+/// Print all collected diagnostics to stderr.  Pass `source` when the input
+/// was an inline string (no file to read); pass null to read from `filename`.
+/// Re-raises the first error diagnostic after rendering.
+pub fn printDiagnostics(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    source: ?[]const u8,
+) anyerror!void {
+    var buf: [1024]u8 = undefined;
+    var fw: std.Io.File.Writer = .init(.stderr(), io, &buf);
+    const w = &fw.interface;
 
-        var buf: [1024]u8 = undefined;
-        var stderr_writer = std.Io.File.stderr().writer(io, &buf).interface;
-        try formatter.format(&stderr_writer);
-        try stderr_writer.flush();
+    var first_err: ?anyerror = null;
 
-        if (diagnostic.err) |err| return err;
+    for (context.diagnostics[0..context.count]) |*diag| {
+        var owned: ?[]const u8 = null;
+        defer if (owned) |o| allocator.free(o);
+
+        const src: ?[]const u8 = if (source != null)
+            source
+        else if (diag.filename) |path| blk: {
+            owned = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch null;
+            break :blk owned;
+        } else null;
+
+        try renderDiagnostic(w, diag, src);
+
+        if (diag.err) |e| {
+            if (first_err == null) first_err = e;
+        }
     }
+
+    try fw.interface.flush();
+    if (first_err) |e| return e;
+}
+
+pub fn reset() void {
+    context = .init;
 }

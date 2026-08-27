@@ -291,6 +291,7 @@ pub const Parser = struct {
     lexer: lex.Lexer,
     peeked: ?Token = null,
     last_taken: ?Token = null,
+    filename: ?[]const u8 = null,
     // sometimes there is enough ambiguity in the lanaguage
     // that we have to rewind the parser and pursue another path.
     // rather than rewind the token stream and bother parsing again,
@@ -299,17 +300,28 @@ pub const Parser = struct {
 
     const Self = @This();
 
-    pub const Error = error{
+    const ParseError = error{
         NullDenotationUnhandled,
         LeftDenotationUnhandled,
         UnhandledPrecedence,
         UnexpectedToken,
         UnexpectedEndOfStream,
-    } || lex.Lexer.Error || diagnostic.Error ||
+    };
+    pub const Error = ParseError || lex.Lexer.Error || diagnostic.Error ||
         std.fmt.ParseIntError || std.mem.Allocator.Error;
 
     pub fn init(allocator: std.mem.Allocator, buffer: []const u8) Self {
         return .{ .allocator = allocator, .lexer = lex.Lexer{ .buffer = buffer } };
+    }
+
+    pub fn initWithFilename(allocator: std.mem.Allocator, buffer: []const u8, filename: ?[]const u8) Self {
+        return .{ .allocator = allocator, .lexer = lex.Lexer{ .buffer = buffer }, .filename = filename };
+    }
+
+    fn currentLocation(self: *const Self) ?diagnostic.Location {
+        if (self.peeked) |t| return t.getLocation();
+        if (self.last_taken) |t| return t.getLocation();
+        return null;
     }
 
     pub fn parse(self: *Self) Error!*const AstNode {
@@ -498,7 +510,14 @@ pub const Parser = struct {
             _ = self.take() catch unreachable;
             return;
         }
-        return Error.UnexpectedToken;
+        const token = if (self.peek()) |t| @tagName(t) else "<None>";
+        return diagnostic.fail(
+            Error.UnexpectedToken,
+            self.filename,
+            self.currentLocation(),
+            "expected: {s}, got: {s}",
+            .{ @tagName(tag), token },
+        );
     }
 
     fn expectAndSkipOptional(self: *Self, tag: lex.TokenTag) bool {
@@ -513,11 +532,23 @@ pub const Parser = struct {
         if (self.expect(tag)) {
             return self.take();
         }
-        return Error.UnexpectedToken;
+        return diagnostic.fail(
+            Error.UnexpectedToken,
+            self.filename,
+            self.currentLocation(),
+            "expected {s}",
+            .{@tagName(tag)},
+        );
     }
 
     fn illegal(self: *Self, tag: lex.TokenTag) Error!void {
-        if (self.expect(tag)) return Error.UnexpectedToken;
+        if (self.expect(tag)) return diagnostic.fail(
+            Error.UnexpectedToken,
+            self.filename,
+            self.currentLocation(),
+            "unexpected {s}",
+            .{@tagName(tag)},
+        );
         return;
     }
 
@@ -573,18 +604,35 @@ pub const Parser = struct {
     }
 
     fn nullDenotationUnhandled(self: *Self) Error!*AstNode {
-        log.err("oh no! we don't handle this null denotation: {any}", .{try self.take()});
-        return Error.NullDenotationUnhandled;
+        const token = try self.take();
+        return diagnostic.fail(
+            Error.NullDenotationUnhandled,
+            self.filename,
+            self.currentLocation(),
+            "unexpected token: {any}",
+            .{token},
+        );
     }
 
     fn nullDenotationIllegal(self: *Self) Error!*AstNode {
-        _ = self;
-        return Error.UnexpectedToken;
+        return diagnostic.fail(
+            Error.UnexpectedToken,
+            self.filename,
+            self.currentLocation(),
+            "unexpected token",
+            .{},
+        );
     }
 
     fn leftDenotationUnhandled(self: *Self, lhs: *AstNode) Error!*AstNode {
-        log.err("oh no! we don't handle this denotation: lhs: {any}, token: {any}", .{ lhs, try self.take() });
-        return Error.LeftDenotationUnhandled;
+        _ = lhs;
+        return diagnostic.fail(
+            Error.LeftDenotationUnhandled,
+            self.filename,
+            self.currentLocation(),
+            "unexpected token: {any}",
+            .{try self.take()},
+        );
     }
 
     fn parsePass(self: *Self) Error!*AstNode {
@@ -1967,7 +2015,7 @@ test "parse: array literal" {
         const allocator = arena.allocator();
         defer arena.deinit();
         var parser = Parser.init(allocator, "[,]");
-        try testing.expectError(Parser.Error.UnexpectedToken, parser.parseSimpleExpression());
+        try testing.expectError(error.DiagnosticError, parser.parseSimpleExpression());
     }
 }
 
@@ -2204,7 +2252,7 @@ test "parse: example fixtures" {
         var parser = Parser.init(allocator, example.source());
         _ = parser.parse() catch |err| {
             switch (err) {
-                diagnostic.Error.DiagnosticError => try diagnostic.printDiagnostics(testing.io, testing.allocator),
+                diagnostic.Error.DiagnosticError => try diagnostic.printDiagnostics(testing.io, testing.allocator, example.source()),
                 else => std.debug.print("\n*** An error has occurred which should be emitted as a diagnostic ***\n", .{}),
             }
             return err;

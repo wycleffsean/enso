@@ -14,6 +14,7 @@ const runtime = @import("runtime.zig");
 const MirBackend = @import("backend.zig").MirBackend;
 const TaggedValue = @import("TaggedValue.zig");
 const EnsoCtx = @import("runtime/ctx.zig").EnsoCtx;
+const diagnostic = @import("diagnostic.zig");
 const testing = std.testing;
 const test_utils = @import("test/utils.zig");
 
@@ -72,7 +73,13 @@ fn repl() void {
 fn interpret(allocator: std.mem.Allocator, io: std.Io, code: []const u8) !void {
     var harness = try test_utils.CompilerHarness.create(allocator);
     defer harness.deinit();
-    var mod = try harness.lowerModule(allocator, code);
+    var mod = harness.lowerModule(allocator, code) catch |err| {
+        if (err == error.DiagnosticError) {
+            diagnostic.printDiagnostics(io, allocator, code) catch {};
+            std.process.exit(1);
+        }
+        return err;
+    };
     defer mod.deinit();
 
     var mir_backend = try MirBackend.init(allocator);
